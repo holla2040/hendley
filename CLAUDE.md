@@ -74,8 +74,9 @@ pytest                      # tests live in tests/ (run once present)
 ruff check .                # line-length 100, target py310
 ```
 
-Optional `privacy` extra (`cryptography>=42`) is for RSA field tokenization on
-order placement only — not needed for read-only parts queries.
+The `.keys` RSA "Tokenization Key" block (for order-placement field encryption)
+is currently **unused** — `config.py` does not parse it and no code consumes it.
+It would only be needed if/when order placement is implemented.
 
 ## Conventions
 

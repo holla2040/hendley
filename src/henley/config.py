@@ -8,15 +8,9 @@ file is the one issued by JLCPCB and looks like::
         Accesskey: <your-access-key>
         SecretKey: <your-secret-key>
 
-    Tokenization Key RSA
-        Public:
-    <base64-rsa-public-key>
-        Private
-    <base64-rsa-private-key>
-
-The RSA tokenization key is only used for order placement (encrypting
-sensitive fields such as shipping addresses); read-only parts queries do not
-need it, so it is parsed best-effort and may be absent.
+Only these three fields are used. (The JLCPCB ``.keys`` file also contains an
+RSA "Tokenization Key" block intended for encrypting sensitive order-placement
+fields, but Henley does not implement order placement and ignores it entirely.)
 """
 
 from __future__ import annotations
@@ -47,8 +41,6 @@ class Credentials:
     app_id: str
     access_key: str
     secret_key: str
-    rsa_public_b64: str | None = None
-    rsa_private_b64: str | None = None
 
 
 @dataclass(frozen=True)
@@ -60,11 +52,10 @@ class Settings:
 def _parse_keys(text: str) -> Credentials:
     """Parse the JLCPCB ``.keys`` file.
 
-    The format is YAML-ish but not strictly valid YAML (the RSA section has
-    bare labels and unindented base64 blocks), so we parse it line by line.
+    Only the ``AppID`` / ``Accesskey`` / ``SecretKey`` pairs are read; any other
+    blocks in the file (e.g. the RSA tokenization key) are ignored.
     """
     app_id = access_key = secret_key = None
-    rsa_public = rsa_private = None
 
     # Simple ``Label: value`` pairs (AppID / Accesskey / SecretKey).
     for key, attr in (("AppID", "app_id"), ("Accesskey", "access_key"), ("SecretKey", "secret_key")):
@@ -78,25 +69,6 @@ def _parse_keys(text: str) -> Credentials:
             else:
                 secret_key = value
 
-    # RSA blocks: a "Public"/"Private" label followed by a long base64 line.
-    lines = text.splitlines()
-    pending = None  # which key the next base64 line fills
-    for line in lines:
-        stripped = line.strip()
-        low = stripped.lower().rstrip(":")
-        if low == "public":
-            pending = "public"
-            continue
-        if low == "private":
-            pending = "private"
-            continue
-        if pending and re.fullmatch(r"[A-Za-z0-9+/=]{40,}", stripped):
-            if pending == "public":
-                rsa_public = stripped
-            else:
-                rsa_private = stripped
-            pending = None
-
     missing = [n for n, v in (("AppID", app_id), ("Accesskey", access_key), ("SecretKey", secret_key)) if not v]
     if missing:
         raise ValueError(f".keys is missing required field(s): {', '.join(missing)}")
@@ -105,8 +77,6 @@ def _parse_keys(text: str) -> Credentials:
         app_id=app_id,
         access_key=access_key,
         secret_key=secret_key,
-        rsa_public_b64=rsa_public,
-        rsa_private_b64=rsa_private,
     )
 
 

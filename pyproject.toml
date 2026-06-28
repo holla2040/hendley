@@ -15,9 +15,6 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# RSA field tokenization is only needed for order placement (addresses, etc.),
-# not for read-only parts queries. Keep the core install dependency-light.
-privacy = ["cryptography>=42"]
 dev = ["pytest>=8", "ruff>=0.4"]
 
 [project.scripts]

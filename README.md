@@ -75,7 +75,6 @@ pip install -e .
 Optional extras:
 
 ```bash
-pip install -e ".[privacy]"   # cryptography — RSA field tokenization for order placement
 pip install -e ".[dev]"       # pytest, ruff
 ```
 
@@ -97,16 +96,12 @@ never be committed).
        AppID:     <your-app-id>
        Accesskey: <your-access-key>
        SecretKey: <your-secret-key>
-
-   Tokenization Key RSA
-       Public:
-   <base64-rsa-public-key>
-       Private
-   <base64-rsa-private-key>
    ```
 
-   The `Tokenization Key RSA` block is only needed for **order placement** and
-   may be omitted for read-only parts queries.
+   These three fields are all Henley uses. The JLCPCB `.keys` file may also
+   contain an RSA "Tokenization Key" block — Henley **ignores it** (it would
+   only matter for order placement, which is not implemented), so you can leave
+   it in or strip it out.
 3. Alternatively, point `HENLEY_KEYS` at a `.keys` file elsewhere
    (see [Environment variables](#environment-variables)).
 
@@ -181,17 +176,13 @@ JLCAPI:
     AppID:     <your-app-id>
     Accesskey: <your-access-key>
     SecretKey: <your-secret-key>
-
-Tokenization Key RSA
-    Public:
-<base64-rsa-public-key>
-    Private
-<base64-rsa-private-key>
 ```
 
-The `Tokenization Key RSA` block is only used for **order placement** (it
-encrypts sensitive fields such as shipping addresses). Read-only parts queries
-do not need it, so it is parsed best-effort and may be absent.
+Henley reads only the `AppID`, `Accesskey`, and `SecretKey` fields. The JLCPCB
+`.keys` file as issued also includes an RSA "Tokenization Key" block (for
+encrypting order-placement fields such as shipping addresses); Henley does not
+implement order placement and **ignores that block entirely**, so it is optional
+and may be omitted.
 
 ### Environment variables
 
@@ -265,9 +256,8 @@ netsh interface portproxy delete v4tov4 listenaddress=0.0.0.0 listenport=27182
 
 ## Security
 
-- `.keys` holds your AppID, access key, secret key, and (optionally) an RSA
-  tokenization keypair. It is listed in `.gitignore` and must **never** be
-  committed.
+- `.keys` holds your AppID, access key, and secret key. It is listed in
+  `.gitignore` and must **never** be committed.
 - Credentials are loaded only at runtime; nothing is hardcoded in the source.
 - `*.pem` and `*.key` files are also git-ignored.
 
@@ -327,11 +317,11 @@ on **horton** (the Linux dev box), session
    `src/henley/fusion.py`.
 
 2. **PCBA order automation.** The JLC SDK also exposes PCB order endpoints
-   (`uploadGerber`, calculate price, create order). Address and other sensitive
-   fields are RSA-tokenized using the `Tokenization Key RSA` in `.keys`; the
-   optional `privacy` extra (`cryptography`) covers this. These endpoints are
-   mapped in [`docs/api-reference.md`](docs/api-reference.md) but not yet
-   wrapped.
+   (`uploadGerber`, calculate price, create order), where address and other
+   sensitive fields must be RSA-tokenized with the `.keys` RSA key. These
+   endpoints are mapped in [`docs/api-reference.md`](docs/api-reference.md) but
+   not yet wrapped — when they are, this is where the RSA tokenization key (and
+   a `cryptography` dependency) would come back in.
 
 ## License
 
