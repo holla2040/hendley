@@ -17,6 +17,36 @@ reverse-engineered API contract is documented in
 > Core + Business SDK jars from JLCPCB yourself and drop them in a local `sdk/`
 > directory (git-ignored).
 
+## Why Henley
+
+In *The Great Escape*, Hendley is **"the Scrounger"** — the guy who quietly goes
+out and comes back with whatever the team needs. That's the job here: Henley
+scrounges JLCPCB so you don't have to sit on the JLC parts site hand-searching
+for components, stock, and equivalents.
+
+A concrete example. Say your schematic is full of **0603** resistors, each
+already tagged with a JLC/LCSC part number, and you decide to move the whole
+board to **0402** to save space. Now you need, for *every* resistor, the
+equivalent **0402** part that:
+
+- matches the electrical spec (resistance, tolerance, power rating, …),
+- is actually **in stock** at JLCPCB, and
+- ideally is a Basic/preferred assembly part to keep PCBA cost down.
+
+Doing that by hand — one web search per part — is exactly the tedium Henley is
+meant to remove. You point Henley at the design, and it goes and finds the
+matching, in-stock parts for you.
+
+**Where this is heading.** Today the Fusion Electronics API is read-only, so
+Henley reads the design, looks up each part, and reports what it found. Once
+Fusion Electronics gains **write** capability, Henley will close the loop: for
+each 0603 part, query JLC for the equivalent 0402 part that has stock and
+matching specs, then **write the new JLC part number straight back into the
+schematic** at the new package size — turning a whole-board package migration
+from a day of manual searching into a single query. That is the point of all
+this: validate availability and source equivalents automatically, so JLCPCB
+**PCBA** orders go out faster and with fewer surprises.
+
 ## What it does today
 
 Read-only component (parts inventory) endpoints, signed with JLCPCB's `JOP`
