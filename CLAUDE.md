@@ -80,8 +80,13 @@ See README "Reading from Fusion Electronics".
 - `api.jlcpcb.com` is the developer **portal / console**, NOT the API host.
 - Empirically verified: a **valid** signature → `HTTP 403 {"code":403,...
   insufficient permissions...}`; a **wrong** signature → `HTTP 401 {"code":401,
-  ...signature verify failed}`. So signing is correct; the account just needs
-  the component API permission enabled in the JLC console.
+  ...signature verify failed}`. So signing is correct.
+- **The earlier 403 was an account-under-review state, not a missing
+  permission.** The account is no longer under review, and all four Parts
+  component endpoints (`getComponentInfos`, `getComponentLibraryList`,
+  `getPrivateComponentLibrary`, `getComponentDetailByCode`) now show **Enabled**
+  in the JLC console (Manage Apps → App Setting → Service → Parts). The component
+  API should now return `200`.
 
 ## Run / test
 

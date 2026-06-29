@@ -53,3 +53,17 @@ def test_nonce_is_32_chars_and_varies():
     a, b = auth.make_nonce(), auth.make_nonce()
     assert len(a) == 32 and len(b) == 32
     assert a != b
+
+
+def test_file_upload_signs_empty_payload():
+    # Multipart upload routes sign an empty payload (the file is not in the
+    # string-to-sign) — verified against the live API.
+    hdr = auth.authorization_header(
+        app_id="APP", access_key="AK", secret_key="SK",
+        method="POST", canonical_uri="/overseas/openapi/pcb/uploadGerber",
+        payload="", timestamp="1700000000", nonce="nonce123",
+    )
+    expected_sig = _expected(
+        "SK", "POST", "/overseas/openapi/pcb/uploadGerber", "1700000000", "nonce123", "",
+    )
+    assert f'signature="{expected_sig}"' in hdr
