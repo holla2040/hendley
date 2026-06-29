@@ -54,6 +54,26 @@ Hendley, "the Scrounger", in *The Great Escape*.)
 All component routes are `POST` with a JSON body, even getter-shaped names.
 Null body fields are omitted to match the Java SDK's `toJSON()`.
 
+## Fusion access from WSL (read side)
+
+Henley reads a live Fusion Electronics design over plain HTTP (JSON-RPC) at
+`http://127.0.0.1:27182/mcp` — no MCP client needed; just `POST` `initialize`
+then `tools/call` with `fusion_mcp_electronics_read`. The JLC `Cxxxx` code is the
+part's **`LCSC`** attribute (read `electronics.Attribute` filtered by
+`part_object_id`); MPN is `MPN`. Requires Fusion running with **Preferences >
+General > API > Fusion MCP Server** enabled and an Electronics doc open.
+
+⚠️ **WSL port-forward gotcha (cost us a debugging session):** to reach Fusion's
+Windows-loopback port from WSL2, forward it on Windows with
+`listenaddress=<WSL gateway IP>` (e.g. `172.17.64.1`, from `ip route | grep
+default`) — **never `listenaddress=0.0.0.0`**. A `0.0.0.0:27182` listener hijacks
+the loopback that Fusion's server and the Claude Desktop connector use, so they
+"connect then close unexpectedly" and Desktop stops connecting. Symptom check:
+Windows `curl http://127.0.0.1:27182/mcp` returns `{"error":"Not Found"}` when
+healthy; if it closes unexpectedly, delete any `0.0.0.0` portproxy rule
+(`netsh interface portproxy delete v4tov4 listenaddress=0.0.0.0 listenport=27182`).
+See README "Reading from Fusion Electronics".
+
 ## Verified endpoint facts
 
 - API host: **`https://open.jlcpcb.com`** (the default in `config.py`).

@@ -232,26 +232,53 @@ with its built-in server enabled — **Preferences > General > API > Fusion MCP
 Server** — and an Electronics document open. That is what publishes the HTTP
 endpoint; nothing else needs to be installed.
 
-### Reaching it from WSL2 (optional networking note)
+### Reaching it from WSL2 (networking note)
 
 If you run Henley on the same Windows machine as Fusion, `http://127.0.0.1:27182`
 just works. If you run it under **WSL2**, Windows loopback isn't reachable across
-the NAT boundary, so forward the port once on the **Windows** side (elevated
-PowerShell):
+the NAT boundary, so forward the port on the **Windows** side (elevated
+PowerShell).
 
-```powershell
-# Windows, Run as Administrator — expose Fusion's loopback port to WSL
-netsh interface portproxy add v4tov4 listenaddress=0.0.0.0 listenport=27182 connectaddress=127.0.0.1 connectport=27182
-netsh advfirewall firewall add rule name="Fusion API WSL" dir=in action=allow protocol=TCP localport=27182
+> ⚠️ **Use the WSL gateway IP as `listenaddress`, NOT `0.0.0.0`.** A `0.0.0.0`
+> listener on `27182` sits in front of the *same* loopback port Fusion's server
+> and the Claude Desktop "Autodesk Fusion" connector use, and hijacks their
+> `127.0.0.1:27182` traffic — Fusion appears to "connect then close
+> unexpectedly" and **Claude Desktop stops connecting**. Bind the WSL-facing
+> gateway address specifically so loopback is never intercepted.
+
+First get the WSL→Windows gateway IP **from inside WSL** (it is also the address
+WSL uses to reach Windows):
+
+```bash
+ip route | grep default | awk '{print $3}'   # e.g. 172.17.64.1
 ```
 
-Then from WSL, reach Fusion at the WSL→Windows gateway IP
-(`ip route | grep default`, e.g. `http://172.17.64.1:27182/mcp`). That gateway IP
-can change across WSL restarts — re-check it if Fusion becomes unreachable.
-Remove the forward later with:
+Then, on Windows (elevated), forward that address only — substitute your gateway
+IP for `172.17.64.1`:
 
 ```powershell
+netsh interface portproxy add v4tov4 listenaddress=172.17.64.1 listenport=27182 connectaddress=127.0.0.1 connectport=27182
+```
+
+From WSL, reach Fusion at `http://172.17.64.1:27182/mcp`. The gateway IP can
+change across WSL restarts — re-check it with the `ip route` line above and
+re-add the rule if Fusion becomes unreachable.
+
+**Health check / troubleshooting.** On Windows, `curl http://127.0.0.1:27182/mcp`
+should return `{"error": "Not Found"}` instantly when Fusion's server is healthy.
+If it (or Claude Desktop) "closes the connection unexpectedly," a bad `0.0.0.0`
+forward is almost certainly hijacking loopback — delete it and the symptom
+clears:
+
+```powershell
+netsh interface portproxy show all     # look for a 0.0.0.0 ... 27182 entry
 netsh interface portproxy delete v4tov4 listenaddress=0.0.0.0 listenport=27182
+```
+
+Remove the (correct) gateway forward when you're done with:
+
+```powershell
+netsh interface portproxy delete v4tov4 listenaddress=172.17.64.1 listenport=27182
 ```
 
 ## Security
