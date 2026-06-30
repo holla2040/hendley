@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from henley.scr import PartSwap, load_swaps_json, render_script
+from hendley.scr import PartSwap, load_swaps_json, render_script
 
 
 def test_from_dict_aliases_and_order():
@@ -81,7 +81,7 @@ def test_render_script_header_and_blocks():
         PartSwap.from_dict({"designator": "R2", "package": "-0402", "lcsc": "C25768"}),
     ]
     out = render_script(swaps, design="comet")
-    assert out.startswith("# Henley-generated")
+    assert out.startswith("# Hendley-generated")
     assert "# Design: comet" in out
     assert "# Parts: 2" in out
     assert "CHANGE PACKAGE '-0402' R1;" in out

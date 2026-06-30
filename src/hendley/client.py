@@ -43,7 +43,7 @@ import requests
 from . import auth
 from .config import Settings, load_settings
 
-_USER_AGENT = f"henley/0.1.0 (python {platform.python_version()})"
+_USER_AGENT = f"hendley/0.1.0 (python {platform.python_version()})"
 
 
 class JLCError(RuntimeError):

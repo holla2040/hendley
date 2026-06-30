@@ -1,10 +1,10 @@
 """Fusion Electronics integration (read-only) — design-direct part extraction.
 
-Henley pulls part information **directly from Autodesk Fusion** via the Fusion
+Hendley pulls part information **directly from Autodesk Fusion** via the Fusion
 API rather than from an exported BOM. The Fusion Electronics API is currently
 read-only, which is sufficient for our purpose: enumerate the components placed
 in an electronics design, read their part attributes (manufacturer part number
-and/or LCSC/JLC code), and hand those identifiers to Henley's JLC query layer
+and/or LCSC/JLC code), and hand those identifiers to Hendley's JLC query layer
 to report availability, stock, price tiers, and assembly (basic/extended)
 status before a PCBA order is submitted.
 
@@ -21,7 +21,7 @@ Planned flow
 1. (Inside Fusion) ``extract_components()`` walks the active electronics design
    and yields :class:`DesignPart` records (designator, MPN, LCSC code, qty).
 2. (Anywhere) ``enrich_with_jlc()`` batches the LCSC/JLC codes through
-   :meth:`henley.client.JLCClient.get_component_detail_by_code` and merges the
+   :meth:`hendley.client.JLCClient.get_component_detail_by_code` and merges the
    stock/price/availability back onto each part.
 """
 
@@ -35,7 +35,7 @@ from typing import Iterable
 from .client import JLCClient
 
 # ---------------------------------------------------------------------------
-# Data contract — the JSON the Fusion side (hendrix) produces and Henley reads.
+# Data contract — the JSON the Fusion side (hendrix) produces and Hendley reads.
 #
 #   {
 #     "source": "fusion-electronics",

@@ -1,6 +1,6 @@
 """Generate Fusion Electronics command-line scripts (``.scr``) for part swaps.
 
-The Fusion Electronics API is read-only (see :mod:`henley.fusion`), so Henley
+The Fusion Electronics API is read-only (see :mod:`hendley.fusion`), so Hendley
 cannot mutate a design directly. The one channel that *can* edit the schematic
 is the EAGLE-heritage command line, driven by a ``.scr`` script the user runs
 in Fusion (``File > Execute Script``, or paste into the command line). This
@@ -125,7 +125,7 @@ def render_script(swaps: Iterable[PartSwap], design: str | None = None) -> str:
     """Render swaps into one ``.scr`` script ready to run in Fusion's command line."""
     swaps = list(swaps)
     header = [
-        "# Henley-generated Fusion Electronics migration script (.scr)",
+        "# Hendley-generated Fusion Electronics migration script (.scr)",
         "# Run in the schematic: File > Execute Script  (or paste into the command line).",
         "# CHANGE PACKAGE precedes ATTRIBUTE per part: switching the variant can reset",
         "# variant-default attributes, so attribute values are written afterward.",

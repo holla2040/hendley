@@ -1,6 +1,6 @@
-# Henley
+# Hendley
 
-<img src="image/henley.png" alt="Henley — James Garner as Hendley, 'the Scrounger', in The Great Escape" width="160" align="right">
+<img src="image/hendley.png" alt="Hendley — James Garner as Hendley, 'the Scrounger', in The Great Escape" width="160" align="right">
 
 A small Python tool for querying the **JLCPCB** parts inventory (LCSC / JLC
 components) and — going forward — for consolidating part information pulled
@@ -10,20 +10,20 @@ availability and speed up JLCPCB **PCB Assembly (PCBA)** order submissions.
 > Named after James Garner's character Hendley, "the Scrounger", in the film
 > *The Great Escape*.
 
-Henley is a Python reimplementation of JLCPCB's official Java OpenAPI SDK. The
+Hendley is a Python reimplementation of JLCPCB's official Java OpenAPI SDK. The
 reverse-engineered API contract is documented in
 [`docs/api-reference.md`](docs/api-reference.md).
 
 > **Note:** the reference JLCPCB Java SDK jars are **not** distributed with this
-> repo. You don't need them to run Henley — they were only used to reverse-
+> repo. You don't need them to run Hendley — they were only used to reverse-
 > engineer the contract. If you want to cross-check against them, download the
 > Core + Business SDK jars from JLCPCB yourself and drop them in a local `sdk/`
 > directory (git-ignored).
 
-## Why Henley
+## Why Hendley
 
 In *The Great Escape*, Hendley is **"the Scrounger"** — the guy who quietly goes
-out and comes back with whatever the team needs. That's the job here: Henley
+out and comes back with whatever the team needs. That's the job here: Hendley
 scrounges JLCPCB so you don't have to sit on the JLC parts site hand-searching
 for components, stock, and equivalents.
 
@@ -36,19 +36,19 @@ equivalent **0402** part that:
 - is actually **in stock** at JLCPCB, and
 - ideally is a Basic/preferred assembly part to keep PCBA cost down.
 
-Doing that by hand — one web search per part — is exactly the tedium Henley is
-meant to remove. That is what `henley alternates` does **today**: give it a part
+Doing that by hand — one web search per part — is exactly the tedium Hendley is
+meant to remove. That is what `hendley alternates` does **today**: give it a part
 and a constraint ("same package", "at least 40 A") and it discovers candidate
 replacements, verifies each one's **live** JLC stock / price / specs, and lays
 out the trade-off so you can pick. See
 [Finding a replacement part](#finding-a-replacement-part).
 
-**Where this is heading.** Henley reads the design and looks up each part, you
+**Where this is heading.** Hendley reads the design and looks up each part, you
 pick the replacements, and it generates a Fusion `.scr` script that applies the
 package + part-number changes ([The `.scr` file format](#the-scr-file-format)).
 The Fusion Electronics *object* API is read-only — **but the EAGLE command line
 is reachable from Python/MCP** via
-`executeTextCommand('Electron.run "script C:\\path\\changes.scr"')`, so Henley can
+`executeTextCommand('Electron.run "script C:\\path\\changes.scr"')`, so Hendley can
 fire the `.scr` straight into the running schematic over the bridge (no manual
 *Execute Script* step). That closes the loop: writing the new JLC part number
 back into the schematic at the new package size, turning a whole-board package
@@ -60,13 +60,13 @@ out faster and with fewer surprises.
 ## What it does today
 
 Read-only component (parts inventory) endpoints, signed with JLCPCB's `JOP`
-authentication scheme, exposed through a `henley` CLI and a small Python API:
+authentication scheme, exposed through a `hendley` CLI and a small Python API:
 
-- **Find an alternate part** (`henley alternates`) — discover candidate
+- **Find an alternate part** (`hendley alternates`) — discover candidate
   replacements from a parametric index and verify each one **live** against JLC
   for stock, price, and specs, then weigh the trade-off and choose. See
   [Finding a replacement part](#finding-a-replacement-part).
-- **Inventory check** a BOM (`henley stock`) — flag out-of-stock / problem parts
+- **Inventory check** a BOM (`hendley stock`) — flag out-of-stock / problem parts
   before a board submission.
 - Generate Fusion Electronics migration scripts (`.scr`) to batch part package
   and attribute changes — see
@@ -81,8 +81,8 @@ authentication scheme, exposed through a `henley` CLI and a small Python API:
 Requires **Python >= 3.10**. The core install depends only on `requests`.
 
 ```bash
-git clone git@github.com:holla2040/henley.git
-cd henley
+git clone git@github.com:holla2040/hendley.git
+cd hendley
 python -m venv .venv
 source .venv/bin/activate
 pip install -e .
@@ -94,20 +94,20 @@ Optional extras:
 pip install -e ".[dev]"       # pytest, ruff
 ```
 
-> **If `henley` isn't found after install** — usually the virtualenv isn't
+> **If `hendley` isn't found after install** — usually the virtualenv isn't
 > activated, or `pip install -e .` put the script somewhere off your `PATH`. You
 > don't need the installed command: run it as a module from the repo root, which
 > only needs `requests`:
 >
 > ```bash
-> PYTHONPATH=src python -m henley.cli ping     # or: python -m henley ping
+> PYTHONPATH=src python -m hendley.cli ping     # or: python -m hendley ping
 > ```
 >
-> Every `henley <cmd>` example in this README works the same way via that form.
+> Every `hendley <cmd>` example in this README works the same way via that form.
 
 ### Set your JLC API keys (required)
 
-Henley authenticates every request with JLCPCB OpenAPI credentials. Without them
+Hendley authenticates every request with JLCPCB OpenAPI credentials. Without them
 the CLI cannot reach the API. The credentials are **not** committed — they are
 read at runtime from a **`.keys` file you create at the project root** (the
 repo's `.gitignore` already excludes `.keys`, `*.pem`, and `*.key` so they can
@@ -125,11 +125,11 @@ never be committed).
        SecretKey: <your-secret-key>
    ```
 
-   These three fields are all Henley uses. The JLCPCB `.keys` file may also
-   contain an RSA "Tokenization Key" block — Henley **ignores it** (it would
+   These three fields are all Hendley uses. The JLCPCB `.keys` file may also
+   contain an RSA "Tokenization Key" block — Hendley **ignores it** (it would
    only matter for order placement, which is not implemented), so you can leave
    it in or strip it out.
-3. Alternatively, point `HENLEY_KEYS` at a `.keys` file elsewhere
+3. Alternatively, point `HENDLEY_KEYS` at a `.keys` file elsewhere
    (see [Environment variables](#environment-variables)).
 
 See [Configuration](#configuration) for full details on the file format and
@@ -141,7 +141,7 @@ discovery order.
 2. Verify credentials and signing:
 
 ```bash
-henley ping
+hendley ping
 ```
 
 `ping` distinguishes the two states you might hit:
@@ -153,15 +153,15 @@ henley ping
   `.keys`.
 
 3. **Find an alternate for a part.** Pick the category (`--list-categories`) and
-   the constraint, then let Henley discover + verify candidates:
+   the constraint, then let Hendley discover + verify candidates:
 
 ```bash
-henley alternates --list-categories                  # the category slugs (offline)
-henley detail C315567                                 # get the part's exact package string
-henley alternates C315567 --category mosfets --package "DFN-8(3x3)" --top 10
+hendley alternates --list-categories                  # the category slugs (offline)
+hendley detail C315567                                 # get the part's exact package string
+hendley alternates C315567 --category mosfets --package "DFN-8(3x3)" --top 10
 ```
 
-   Henley prints the target, then candidates with their **live** stock, price,
+   Hendley prints the target, then candidates with their **live** stock, price,
    and specs — it does not pick for you. Pass `--json` to get the full data (e.g.
    to hand to Claude for the trade-off). Full details, including the fuzzy
    `search` path, are in [Finding a replacement part](#finding-a-replacement-part).
@@ -169,19 +169,19 @@ henley alternates C315567 --category mosfets --package "DFN-8(3x3)" --top 10
 ## CLI command reference
 
 ```
-henley [--keys PATH] <command> [options]
+hendley [--keys PATH] <command> [options]
 ```
 
 | Command | Description |
 |---------|-------------|
-| `henley ping` | Verify credentials + signing; reports whether signing works and whether the component API permission is enabled. |
-| `henley detail C2040 [C... ...]` | Full component detail for one or more JLC component codes (price tiers, stock, parameters, datasheet). |
-| `henley private [--page N] [--limit N]` | Your private / consigned JLC inventory. |
-| `henley library [--limit N]` | Browse the assembly component library. |
-| `henley fusion PARTS.json [--no-enrich]` | Ingest a Fusion parts-export JSON and enrich each part against JLC (stock, price tiers, basic/extended). `--no-enrich` validates the file offline without calling the API. |
-| `henley stock PARTS.json [--min-stock N] [--json]` | **Inventory check** — look up live stock for every part in a BOM and flag any that are out of stock, not found, or below `--min-stock`. Exits nonzero if any part is out-of-stock or not found, so it can gate a submission (`henley stock bom.json && submit`). |
-| `henley scr SWAPS.json [SWAPS2.json ...] [-o FILE.scr] [--design NAME]` | Generate a Fusion `.scr` migration script from one or more swap files (merged into one combo script). Emits the `CHANGE PACKAGE` + `ATTRIBUTE` commands you run in Fusion. Runs offline — no credentials needed. See [The `.scr` file format](#the-scr-file-format). |
-| `henley alternates CODE --category SLUG [--package PKG] [-p KEY=VALUE ...] [--top N] [--json]` | **Find an alternate** for a part: DISCOVER candidates from the third-party parametric index `jlcsearch.tscircuit.com`, then VERIFY *every* hit against the live JLC API (stock, price, parameters) and print a trade-off table. It does **not** rank or pick — you (or Claude) weigh stock / price / spec margin / package. `--list-categories` lists the slugs (offline). See [Finding a replacement part](#finding-a-replacement-part). |
+| `hendley ping` | Verify credentials + signing; reports whether signing works and whether the component API permission is enabled. |
+| `hendley detail C2040 [C... ...]` | Full component detail for one or more JLC component codes (price tiers, stock, parameters, datasheet). |
+| `hendley private [--page N] [--limit N]` | Your private / consigned JLC inventory. |
+| `hendley library [--limit N]` | Browse the assembly component library. |
+| `hendley fusion PARTS.json [--no-enrich]` | Ingest a Fusion parts-export JSON and enrich each part against JLC (stock, price tiers, basic/extended). `--no-enrich` validates the file offline without calling the API. |
+| `hendley stock PARTS.json [--min-stock N] [--json]` | **Inventory check** — look up live stock for every part in a BOM and flag any that are out of stock, not found, or below `--min-stock`. Exits nonzero if any part is out-of-stock or not found, so it can gate a submission (`hendley stock bom.json && submit`). |
+| `hendley scr SWAPS.json [SWAPS2.json ...] [-o FILE.scr] [--design NAME]` | Generate a Fusion `.scr` migration script from one or more swap files (merged into one combo script). Emits the `CHANGE PACKAGE` + `ATTRIBUTE` commands you run in Fusion. Runs offline — no credentials needed. See [The `.scr` file format](#the-scr-file-format). |
+| `hendley alternates CODE --category SLUG [--package PKG] [-p KEY=VALUE ...] [--top N] [--json]` | **Find an alternate** for a part: DISCOVER candidates from the third-party parametric index `jlcsearch.tscircuit.com`, then VERIFY *every* hit against the live JLC API (stock, price, parameters) and print a trade-off table. It does **not** rank or pick — you (or Claude) weigh stock / price / spec margin / package. `--list-categories` lists the slugs (offline). See [Finding a replacement part](#finding-a-replacement-part). |
 
 `--keys PATH` overrides credential discovery for any command.
 
@@ -190,13 +190,13 @@ stdout by default — they have **no `--json` flag** (passing one is an error); 
 them to `jq`/`python3` to parse. Only **`stock`** and **`alternates`** accept
 `--json`; without it they print a human-readable report. `ping` prints a status
 line; `scr` prints (or writes with `-o`) the `.scr` script. A command's flags are
-exactly what `henley <cmd> --help` lists — don't assume a flag exists because
+exactly what `hendley <cmd> --help` lists — don't assume a flag exists because
 another command has it.
 
 ## Python usage
 
 ```python
-from henley import JLCClient
+from hendley import JLCClient
 
 client = JLCClient()
 
@@ -219,7 +219,7 @@ private = client.get_private_component_library(current_page=1, page_size=30)
 ### `.keys` file
 
 Credentials are loaded at runtime from a **git-ignored** `.keys` file at the
-project root (it is parsed by `src/henley/config.py`). They are never hardcoded
+project root (it is parsed by `src/hendley/config.py`). They are never hardcoded
 and never committed. The file is the one issued by JLCPCB and uses this format
 (placeholders shown — substitute your own values):
 
@@ -230,9 +230,9 @@ JLCAPI:
     SecretKey: <your-secret-key>
 ```
 
-Henley reads only the `AppID`, `Accesskey`, and `SecretKey` fields. The JLCPCB
+Hendley reads only the `AppID`, `Accesskey`, and `SecretKey` fields. The JLCPCB
 `.keys` file as issued also includes an RSA "Tokenization Key" block (for
-encrypting order-placement fields such as shipping addresses); Henley does not
+encrypting order-placement fields such as shipping addresses); Hendley does not
 implement order placement and **ignores that block entirely**, so it is optional
 and may be omitted.
 
@@ -240,11 +240,11 @@ and may be omitted.
 
 | Variable | Effect |
 |----------|--------|
-| `HENLEY_KEYS` | Path to the `.keys` file (overrides discovery). |
-| `HENLEY_ENDPOINT` | Override the API host. |
+| `HENDLEY_KEYS` | Path to the `.keys` file (overrides discovery). |
+| `HENDLEY_ENDPOINT` | Override the API host. |
 
 Path resolution order for credentials: the `--keys` / explicit argument, then
-`HENLEY_KEYS`, then a `.keys` file discovered by walking up from the current
+`HENDLEY_KEYS`, then a `.keys` file discovered by walking up from the current
 working directory.
 
 ## Endpoint and permissions
@@ -269,12 +269,12 @@ permission enabled in the JLC console.
 
 ## Reading from Fusion Electronics (no MCP client required)
 
-Henley reads a live Autodesk Fusion design over **plain HTTP** — it issues
+Hendley reads a live Autodesk Fusion design over **plain HTTP** — it issues
 JSON-RPC `POST`s directly to the local endpoint Fusion exposes at
 `http://127.0.0.1:27182/mcp`. **You do not need any MCP client or middleware**
 to use it: no Claude Desktop "Autodesk Fusion" extension, no MCP connector, and
 no `claude mcp add` registration. The endpoint speaks the MCP wire protocol, but
-from Henley's side it is just an HTTP API you `POST` to with `curl` / `requests`
+from Hendley's side it is just an HTTP API you `POST` to with `curl` / `requests`
 (`initialize` → `tools/call` with `fusion_mcp_electronics_read`). See
 [`docs/fusion-notes.md`](docs/fusion-notes.md) for the request shapes and where
 each part's JLC `Cxxxx` code lives (the part's `LCSC` attribute).
@@ -286,7 +286,7 @@ endpoint; nothing else needs to be installed.
 
 ### Reaching it from WSL2 (networking note)
 
-If you run Henley on the same Windows machine as Fusion, `http://127.0.0.1:27182`
+If you run Hendley on the same Windows machine as Fusion, `http://127.0.0.1:27182`
 just works. If you run it under **WSL2**, Windows loopback isn't reachable across
 the NAT boundary, so forward the port on the **Windows** side (elevated
 PowerShell).
@@ -361,13 +361,13 @@ with `Electron.run` — see step 5). `comet` below is just an example design.
    designators, values, and the **exact package variant names** on each deviceset
    (literal library names, often with a leading hyphen — `-0402`, not `0402`).
 2. **Find a replacement** for the part that needs changing — Claude discovers
-   candidates and verifies them live (`henley alternates`, with `henley detail` to
+   candidates and verifies them live (`hendley alternates`, with `hendley detail` to
    anchor on the original). See [Finding a replacement part](#finding-a-replacement-part).
 3. **Decide the swap** with Claude — weigh inventory / price / spec margin /
    package; Claude surfaces electrical caveats (e.g. a 0603→0402 shrink lowers the
    power rating). The decision is yours.
 4. **Generate the `.scr`.** Claude writes a `swaps.json` and runs
-   `henley scr swaps.json -o changes.scr`. The script carries the **package
+   `hendley scr swaps.json -o changes.scr`. The script carries the **package
    variant and the attributes** (`LCSC`/`MPN`/`MANUFACTURER`/…). See
    [The `.scr` file format](#the-scr-file-format).
 5. **Apply it in Fusion.** Two ways:
@@ -386,7 +386,7 @@ with `Electron.run` — see step 5). `comet` below is just an example design.
 6. **Verify** — ask Claude to re-read the design and confirm each part landed on
    the new package, attributes, and value.
 7. **Reconcile** — update your BOM record (the parts JSON) so it points at the new
-   code; a later `henley stock` then reflects reality. Save in Fusion.
+   code; a later `hendley stock` then reflects reality. Save in Fusion.
 
 **Gotchas**
 
@@ -405,7 +405,7 @@ resistors moved 0603 → 0402) — a useful template for the decision worksheet.
 ### Finding a replacement part
 
 The official JLCPCB API **cannot search** — it only verifies codes you already
-hold (`getComponentDetailByCode`). So `henley alternates` finds replacements in
+hold (`getComponentDetailByCode`). So `hendley alternates` finds replacements in
 two steps:
 
 1. **Discover** candidate codes from `jlcsearch.tscircuit.com`, a third-party
@@ -419,10 +419,10 @@ It deliberately **does not rank or pick** — it gathers and verifies; you (or
 Claude) weigh inventory vs. price vs. spec margin vs. package.
 
 ```bash
-henley alternates --list-categories                 # the jlcsearch category slugs
+hendley alternates --list-categories                 # the jlcsearch category slugs
 # same-package alternates for a 30 A DFN-8 MOSFET:
-henley alternates C315567 --category mosfets --package "DFN-8(3x3)" --top 10
-henley alternates C315567 --category mosfets --package "DFN-8(3x3)" --json   # full data
+hendley alternates C315567 --category mosfets --package "DFN-8(3x3)" --top 10
+hendley alternates C315567 --category mosfets --package "DFN-8(3x3)" --json   # full data
 ```
 
 **The spoken filter becomes flags.** "Same package, at least 40 A" → Claude picks
@@ -436,19 +436,19 @@ the matching notes below.
 - `package` (and the other per-category string filters) match by **exact,
   case-sensitive equality — no wildcards**. `DFN-8` ≠ `DFN-8(3x3)`; `%`, `*`, and
   substrings all return nothing. Use the target's exact `componentSpecification`
-  (from `henley detail`) as `--package`.
+  (from `hendley detail`) as `--package`.
 - Numeric `_min` / `_max` params (e.g. `continuous_drain_current_min`) are
   **unreliable** — jlcsearch's structured numeric columns are sparsely populated
   (a `_min` filter silently drops every row whose value is null). Passive value
   fields (`resistance`, `capacitance`) are dense and safe.
 - The **fuzzy / cross-package escape hatch** is the generic `components` category
-  with a full-text `search`: `henley alternates C315567 --category components -p
+  with a full-text `search`: `hendley alternates C315567 --category components -p
   search="AON75"` (token + prefix matching; surfaces the same MPN across package
   spellings; in-stock parts only).
 
 ### The `.scr` file format
 
-`henley scr` turns a table of swaps into the `.scr` you run in Fusion (loop step
+`hendley scr` turns a table of swaps into the `.scr` you run in Fusion (loop step
 5) — the write channel for package and attribute changes, ideal for batch edits
 (migrating dozens of resistors to a new package, repointing parts to new JLC
 codes) without clicking each part by hand.
@@ -483,8 +483,8 @@ Generate the script (offline — no credentials needed). Multiple swap files mer
 into one combo script you execute once:
 
 ```bash
-henley scr swaps.json -o changes.scr
-henley scr 22k.json 10k.json 220r.json -o changes.scr   # combo
+hendley scr swaps.json -o changes.scr
+hendley scr 22k.json 10k.json 220r.json -o changes.scr   # combo
 ```
 
 Each swap renders as `CHANGE PACKAGE` **before** the `ATTRIBUTE` lines (switching
@@ -513,7 +513,7 @@ loop.
 
 ## Project history — how this was built
 
-Henley exists because JLCPCB ships an official **Java** OpenAPI SDK but no Python
+Hendley exists because JLCPCB ships an official **Java** OpenAPI SDK but no Python
 one. Rather than wrap the Java SDK, the contract was **reverse-engineered from
 the JLCPCB Java SDK jars** (the Core SDK + Business SDK) and reimplemented as a
 small, dependency-light Python package.
@@ -532,7 +532,7 @@ small, dependency-light Python package.
    it can't drift.
 3. **Reimplement in pure Python.** `auth.py` (signing), `client.py` (signed
    `POST` plumbing + the read-only component endpoints + envelope unwrap),
-   `config.py` (runtime `.keys` loading), and a `henley` CLI — core install
+   `config.py` (runtime `.keys` loading), and a `hendley` CLI — core install
    depends only on `requests`.
 4. **Verify against the live API.** Signing was confirmed empirically: a *valid*
    signature returns `HTTP 403` (insufficient permissions) while a *wrong*
@@ -546,25 +546,25 @@ on **horton** (the Linux dev box), session
 `fd5ea0ac-6e74-4f38-8b3e-8435fc6f1512`.
 
 5. **Add the Fusion Electronics bridge.** On **hendrix** (the Windows box
-   running Autodesk Fusion), Henley was extended to read a live electronics
+   running Autodesk Fusion), Hendley was extended to read a live electronics
    design over plain HTTP (see
    [Reading from Fusion Electronics](#reading-from-fusion-electronics-no-mcp-client-required)).
    Introspecting a real design answered the key open question — the JLCPCB
    `Cxxxx` code is stored as each part's **`LCSC`** attribute — which lets the
-   extractor produce `henley_parts.json` and feed those codes straight into the
+   extractor produce `hendley_parts.json` and feed those codes straight into the
    JLC query layer for stock/price enrichment. Details in
    [`docs/fusion-notes.md`](docs/fusion-notes.md).
 
 ## Roadmap
 
-1. **Fusion Electronics integration.** Henley will read designs **directly**
+1. **Fusion Electronics integration.** Hendley will read designs **directly**
    via the Autodesk Fusion API (currently read-only for electronics) — *not* by
    exporting a BOM. A Fusion add-in / script will enumerate the electronic
    design's components and their MPN / LCSC part attributes, then feed those
-   part numbers into Henley's JLC query layer to report availability, stock,
+   part numbers into Hendley's JLC query layer to report availability, stock,
    price tiers, and basic/extended (assembly) status — so you know what is
    available before submitting a PCBA order. A stub module is planned at
-   `src/henley/fusion.py`.
+   `src/hendley/fusion.py`.
 
 2. **PCBA order automation.** The JLC SDK also exposes PCB order endpoints
    (`uploadGerber`, calculate price, create order), where address and other
@@ -598,12 +598,12 @@ eats a lot of time and is the main bottleneck in getting an order placed.
 **What to investigate.** Whether the JLCPCB **API** (the order/PCBA endpoints
 already documented in [`docs/api-reference.md`](docs/api-reference.md) but not yet
 wrapped — gerber/BOM/CPL upload, price calculation, order creation) lets us move
-this validation *off* the website and *into* Henley, so problems are caught and
+this validation *off* the website and *into* Hendley, so problems are caught and
 fixed **before** the tedious manual round-trips. The two highest-value targets
 are exactly the two error classes above:
 
 - **Inventory / BOM pre-validation** — check every part's stock and
-  Basic/Extended status against the JLC API up front (building on Henley's
+  Basic/Extended status against the JLC API up front (building on Hendley's
   existing component lookups and the part-substitution work) so out-of-stock or
   problem parts are resolved *before* submission, not discovered mid-upload.
 - **Placement / CPL pre-validation** — sanity-check the CPL against the design

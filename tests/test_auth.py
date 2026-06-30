@@ -9,7 +9,7 @@ import base64
 import hashlib
 import hmac
 
-from henley import auth
+from hendley import auth
 
 
 def _expected(secret, method, uri, ts, nonce, payload):

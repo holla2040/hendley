@@ -2,7 +2,7 @@
 
 ## Purpose
 
-**Henley** is a Python tool to query the JLCPCB parts inventory (LCSC / JLC
+**Hendley** is a Python tool to query the JLCPCB parts inventory (LCSC / JLC
 components) and, going forward, to consolidate part info pulled directly from
 Autodesk Fusion Electronics — so the user can validate part availability and
 speed up JLCPCB **PCBA** order submissions. It is a Python reimplementation of
@@ -11,19 +11,19 @@ Hendley, "the Scrounger", in *The Great Escape*.)
 
 ## Architecture / file map
 
-- `src/henley/config.py` — loads credentials from the git-ignored `.keys` file;
+- `src/hendley/config.py` — loads credentials from the git-ignored `.keys` file;
   resolves endpoint. `Credentials`, `Settings`, `load_credentials`,
-  `load_settings`. Path order: explicit arg → `HENLEY_KEYS` → `.keys` found by
-  walking up from cwd. Endpoint order: `HENLEY_ENDPOINT` → default host.
-- `src/henley/auth.py` — `JOP` request signing (HMAC-SHA256). Builds the
+  `load_settings`. Path order: explicit arg → `HENDLEY_KEYS` → `.keys` found by
+  walking up from cwd. Endpoint order: `HENDLEY_ENDPOINT` → default host.
+- `src/hendley/auth.py` — `JOP` request signing (HMAC-SHA256). Builds the
   `Authorization` header and the string-to-sign.
-- `src/henley/client.py` — `JLCClient`: signed `_post` plumbing plus the
+- `src/hendley/client.py` — `JLCClient`: signed `_post` plumbing plus the
   read-only component endpoints; `JLCError` and the `{code, success, message,
   data}` envelope unwrap.
-- `src/henley/cli.py` — argparse CLI; entry point `henley = henley.cli:main`.
+- `src/hendley/cli.py` — argparse CLI; entry point `hendley = hendley.cli:main`.
   Commands: `ping`, `detail`, `private`, `library`, `fusion`, `stock`, `scr`,
   `alternates`.
-- `src/henley/alternates.py` — alternate-part discovery: `fetch_candidates()`
+- `src/hendley/alternates.py` — alternate-part discovery: `fetch_candidates()`
   (DISCOVER candidate codes from the third-party parametric index
   `jlcsearch.tscircuit.com` — the official API can't search), `discover_and_verify()`
   (VERIFY *every* hit in one batched `getComponentDetailByCode` call — jlcsearch
@@ -33,18 +33,18 @@ Hendley, "the Scrounger", in *The Great Escape*.)
   `package` (and other string filters) by **exact equality, no wildcards**; the
   fuzzy escape hatch is `--category components -p search=…` (FTS). `CATEGORIES`
   holds the 44 jlcsearch category slugs.
-- `src/henley/scr.py` — Fusion `.scr` migration-script generator: `PartSwap`,
+- `src/hendley/scr.py` — Fusion `.scr` migration-script generator: `PartSwap`,
   `load_swaps_json()`, `render_script()`. Turns a list of part swaps (designator
   + package variant + attributes) into the EAGLE command-line script the user
   runs in Fusion (`File > Execute Script`, or `neu_dev.run_text_command("SCRIPT
   …")` in the text-command Py mode). The write side: the Electronics **object**
   API is read-only, but the EAGLE command line **is** reachable from Python/MCP
   via `executeTextCommand('Electron.run "script C:\\path\\changes.scr"')` — so
-  Henley can either hand the user the `.scr` *or* fire it into Fusion over the
+  Hendley can either hand the user the `.scr` *or* fire it into Fusion over the
   bridge (see "Fusion access from WSL → write side" below). `CHANGE PACKAGE`
   precedes `ATTRIBUTE` per part
   (variant switch can reset variant-default attrs); injection chars are rejected.
-- `src/henley/fusion.py` — Fusion Electronics bridge: the `DesignPart` model,
+- `src/hendley/fusion.py` — Fusion Electronics bridge: the `DesignPart` model,
   `load_parts_json()` (ingest the parts-export contract), `enrich_with_jlc()`
   (look up stock/price by JLC code), and the inventory check —
   `check_stock()`/`format_stock_report()` (classify each part out/low/not_found/
@@ -53,13 +53,13 @@ Hendley, "the Scrounger", in *The Great Escape*.)
   **stub** — the live read is currently done interactively over the HTTP bridge
   (see "Fusion access from WSL"); wrapping it into a committed extractor is the one
   open Fusion-side task.
-- `src/henley/__init__.py` — public API exports (`JLCClient`, `JLCError`,
+- `src/hendley/__init__.py` — public API exports (`JLCClient`, `JLCError`,
   config helpers).
 - `docs/api-reference.md` — **the API contract** (reverse-engineered from the
   Java SDK). Source of truth for endpoints, request/response shapes, and the
   not-yet-wrapped PCB/TDP order routes.
 - `sdk/` — reference JLCPCB Java SDK jars (Core + Business).
-- `image/` — project avatar (`henley.png`, `henley_80x80.png`).
+- `image/` — project avatar (`hendley.png`, `hendley_80x80.png`).
 - `.keys` — credentials (git-ignored; never commit). `notes` — holds the
   developer-portal URL (not the API host).
 
@@ -68,7 +68,7 @@ Hendley, "the Scrounger", in *The Great Escape*.)
 
 ## The workflow — having a conversation about JLC parts
 
-The point of Henley: the user runs Claude in this repo, says something in plain
+The point of Hendley: the user runs Claude in this repo, says something in plain
 words about a JLC part, and you have the conversation — **you are the interpreter
 of their words into the existing tooling.** Three standing rules for that role:
 
@@ -76,32 +76,32 @@ of their words into the existing tooling.** Three standing rules for that role:
   `README`, and the module docstrings named below. **Do not read the source to
   figure out how to use a tool.** If something genuinely isn't documented, say so;
   don't reverse-engineer it from the code.
-- **Never modify Henley's source to satisfy a request.** You translate the user's
+- **Never modify Hendley's source to satisfy a request.** You translate the user's
   intent into calls to the tools *as they are*. If a request needs a capability a
   tool doesn't have, tell the user — don't add it.
-- **Running the CLI:** prefer `henley` if it's on PATH. On a fresh checkout where
+- **Running the CLI:** prefer `hendley` if it's on PATH. On a fresh checkout where
   `pip install -e .` didn't land it on PATH (or the venv isn't active), run it as
-  a module from the repo root — `PYTHONPATH=src python -m henley.cli <cmd>` (or
-  `python -m henley <cmd>`), which needs only `requests`. Every `henley <cmd>`
+  a module from the repo root — `PYTHONPATH=src python -m hendley.cli <cmd>` (or
+  `python -m hendley <cmd>`), which needs only `requests`. Every `hendley <cmd>`
   below works identically that way.
 
-Many conversations are a one-shot lookup — *"is C25768 in stock?"* → `henley
-detail`; *"check this BOM before I order"* → `henley stock`. The main multi-step
+Many conversations are a one-shot lookup — *"is C25768 in stock?"* → `hendley
+detail`; *"check this BOM before I order"* → `hendley stock`. The main multi-step
 job is **changing a part**, and there is **one** workflow for it; the only thing
 that varies is *why* the part changes — it's **out of stock**, or you want a
 **different package**, or a **different value**. (If the part lives in a Fusion
 design, first read the live design over the bridge — see "Fusion access from WSL"
 below — to get its designator and the exact package variant names.) Drive it as:
 
-1. **Anchor on the target.** `henley detail <code>` → read its category, exact
+1. **Anchor on the target.** `hendley detail <code>` → read its category, exact
    `componentSpecification` (the package string), and key specs. The exact
    package string is what you pass as `--package` (see matching rules below).
    `detail` **already prints JSON** — there is **no `--json` flag**; don't pass one
    (it errors). Only `stock` and `alternates` take `--json` (see "CLI output" below).
 2. **Translate the spoken constraint into flags** — *you* own the hard filter; it
    is NOT hardcoded. "same package" → `--package "<exact spec>"`; a category →
-   `--category <slug>` (`henley alternates --list-categories`); other constraints
-   → `-p key=value`. Then run `henley alternates <code> --category … [--package …]
+   `--category <slug>` (`hendley alternates --list-categories`); other constraints
+   → `-p key=value`. Then run `hendley alternates <code> --category … [--package …]
    [-p …] --json`. The tool discovers candidates from jlcsearch and **verifies
    every one live** (stock/price/parameters) — it does the gather, not the pick.
 3. **Apply any value/numeric hard filter yourself, over the verified `--json`.**
@@ -112,7 +112,7 @@ below — to get its designator and the exact package variant names.) Drive it a
    specs). The recipe (here, keep only 330 Ω parts) — use it, don't re-invent it:
 
    ```bash
-   henley alternates C29719 --category resistor_arrays --package "0603x4" --json \
+   hendley alternates C29719 --category resistor_arrays --package "0603x4" --json \
    | python3 -c 'import json,sys
    d=json.load(sys.stdin)
    def spec(c,name):
@@ -132,10 +132,10 @@ below — to get its designator and the exact package variant names.) Drive it a
    one with reasoning the user can override.
 5. **Build the swap and generate the `.scr`.** Do NOT read `scr.py` source for the
    input format — the swap-JSON contract is documented in **README → "The
-   workflow" (the `.scr` file format)** and the `henley.scr` module docstring.
+   workflow" (the `.scr` file format)** and the `hendley.scr` module docstring.
    Fields (only `designator` required), filled from data you already have:
    - `designator` — the schematic ref (e.g. `R6`). Find it in the BOM
-     (`henley fusion PARTS.json --no-enrich`, or grep the parts JSON) by matching
+     (`hendley fusion PARTS.json --no-enrich`, or grep the parts JSON) by matching
      the **old** JLC code; the parts-JSON contract is in `fusion.py`.
    - `package` — the library **variant name**: the *exact* library name read off
      the device, which carries a **leading hyphen** (e.g. `-0402`, not `0402` —
@@ -152,14 +152,14 @@ below — to get its designator and the exact package variant names.) Drive it a
      existing `MANUFACTURER` already holds it — set this only when it changes.
    - `attributes` — any extra attrs (e.g. `DESC`).
 
-   Then `henley scr swap.json -o changes.scr` (offline). The script carries the
+   Then `hendley scr swap.json -o changes.scr` (offline). The script carries the
    **package variant and the attributes** — `CHANGE PACKAGE` (when `package` is
    set), then the `ATTRIBUTE` lines.
 
-   **Write artifacts to `~/tmp/henley_output/`, never the repo root.** The swap
+   **Write artifacts to `~/tmp/hendley_output/`, never the repo root.** The swap
    JSON, the generated `.scr`, and any scratch output go there
-   (`mkdir -p ~/tmp/henley_output` first) — e.g.
-   `henley scr ~/tmp/henley_output/swap.json -o ~/tmp/henley_output/changes.scr`.
+   (`mkdir -p ~/tmp/hendley_output` first) — e.g.
+   `hendley scr ~/tmp/hendley_output/swap.json -o ~/tmp/hendley_output/changes.scr`.
    Keep the working tree clean.
 6. **Apply in Fusion, then reconcile.** Fusion is the write side (the Electronics
    *object* API is read-only). Two ways to apply the `.scr`:
@@ -177,7 +177,7 @@ below — to get its designator and the exact package variant names.) Drive it a
    `electronics.Attribute` read (live `part_object_id`) afterward, and remember
    bridge changes are **unsaved** until the user saves in Fusion. Then update the
    BOM record (the parts JSON) so the designator points to the new code and a
-   later `henley stock` reflects reality.
+   later `hendley stock` reflects reality.
 
 **jlcsearch matching rules (so your flags actually match):**
 - `package` and other per-category **string** filters are **exact, case-
@@ -209,7 +209,7 @@ part" — jlcsearch is the discovery surface.
 - `stock`, `alternates` — print a **human report by default**; add **`--json`**
   for structured output. These are the *only* two commands that accept `--json`.
 - `ping` — prints a status line. `scr` — prints the `.scr` (or `-o FILE` to write).
-- Each command's flags are exactly those in `henley <cmd> --help`; don't assume a
+- Each command's flags are exactly those in `hendley <cmd> --help`; don't assume a
   flag exists because another command has it.
 
 ## Auth scheme (`JOP`)
@@ -226,7 +226,7 @@ Null body fields are omitted to match the Java SDK's `toJSON()`.
 
 ## Fusion access from WSL (read side)
 
-Henley reads a live Fusion Electronics design over plain HTTP (JSON-RPC) at
+Hendley reads a live Fusion Electronics design over plain HTTP (JSON-RPC) at
 `http://127.0.0.1:27182/mcp` — no MCP client needed; just `POST` `initialize`
 then `tools/call` with `fusion_mcp_electronics_read`. The JLC `Cxxxx` code is the
 part's **`LCSC`** attribute (read `electronics.Attribute` filtered by
@@ -256,7 +256,7 @@ app.executeTextCommand('Electron.run "script C:\\tmp\\changes.scr"')
 Run that string through `fusion_mcp_execute` (`featureType:"script"`). A **bare**
 `executeTextCommand("script …")` fails (`There is no command script`) because it
 hits Fusion's *core* channel; wrapping in **`Electron.run "<eagle cmd>"`** routes
-into the electronics interpreter. So Henley can apply a `.scr` (or any `CHANGE` /
+into the electronics interpreter. So Hendley can apply a `.scr` (or any `CHANGE` /
 `ATTRIBUTE` / `VALUE` / `EXPORT` command) headlessly over the bridge. Rules:
 - **No return value** — `Electron.run` yields `''` on success; verify out-of-band
   (scoped `electronics.Attribute` read, or an `EXPORT PARTLIST <file>` you read).
@@ -299,15 +299,15 @@ See README "Reading from Fusion Electronics".
 python -m venv .venv && source .venv/bin/activate
 pip install -e .            # core (requests only)
 pip install -e ".[dev]"     # pytest, ruff
-henley ping                 # verify credentials + signing
+hendley ping                 # verify credentials + signing
 pytest                      # tests live in tests/ (run once present)
 ruff check .                # line-length 100, target py310
 ```
 
-**If the `henley` command isn't found** (venv not activated, or `pip install -e .`
+**If the `hendley` command isn't found** (venv not activated, or `pip install -e .`
 didn't land the script on PATH — happens on fresh boxes / old pip-setuptools),
 run it without installing, from the repo root:
-`PYTHONPATH=src python -m henley.cli <cmd>` (or `python -m henley <cmd>`). Tests
+`PYTHONPATH=src python -m hendley.cli <cmd>` (or `python -m hendley <cmd>`). Tests
 likewise: `PYTHONPATH=src python -m pytest -q`.
 
 The `.keys` RSA "Tokenization Key" block (for order-placement field encryption)

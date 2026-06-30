@@ -22,7 +22,7 @@ venv/
 sdk/
 
 # Generated Fusion parts export (design-specific output)
-henley_parts.json
+hendley_parts.json
 
 # Decompiled SDK / scratch artifacts
 scratch-*/

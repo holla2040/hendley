@@ -1,4 +1,4 @@
-"""Henley — JLCPCB parts inventory client and Fusion Electronics BOM helper.
+"""Hendley — JLCPCB parts inventory client and Fusion Electronics BOM helper.
 
 Named for James Garner's character in *The Dirty Dozen*.
 """

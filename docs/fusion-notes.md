@@ -58,14 +58,14 @@ The manufacturer part number is the **`MPN`** attribute. Observed on `comet`:
 | U2 | `C84817` | `MT3608` | XI'AN Aerosemi Tech |
 | R1 | `C2907015` | `FRC0603F2202TS` | FOJAN |
 
-So **parts carry the real `Cxxxx` LCSC code directly** — Henley's
+So **parts carry the real `Cxxxx` LCSC code directly** — Hendley's
 code-based enrichment (`getComponentDetailByCode`) works with no MPN→code
 mapping step. (If a part ever lacks `LCSC` but has `MPN`, that part would need
 an MPN search path, which is not yet wrapped — see `docs/api-reference.md`.)
 
-### Attribute-name mapping to the Henley contract
+### Attribute-name mapping to the Hendley contract
 
-| Fusion attribute | Henley `DesignPart` field |
+| Fusion attribute | Hendley `DesignPart` field |
 |------------------|---------------------------|
 | `LCSC`           | `jlc_code` (`jlcCode`)    |
 | `MPN` (or `MP`)  | `manufacturer_part` (`manufacturerPart`) |
@@ -119,7 +119,7 @@ app.executeTextCommand('Electron.run "script C:\\tmp\\changes.scr"')
 
 Run it via the MCP `fusion_mcp_execute` tool (`featureType:"script"`, a
 `def run(_context):` that calls `executeTextCommand`). This makes the **entire
-write path scriptable from Python/MCP over the WSL bridge** — Henley can generate
+write path scriptable from Python/MCP over the WSL bridge** — Hendley can generate
 a `.scr` and fire it into Fusion with no manual step.
 
 **What we verified (live, on `comet sch`):**
@@ -154,5 +154,5 @@ a `.scr` and fire it into Fusion with no manual step.
   doc automatically — reopening the design reverts them (this is how the `TEST`
   write self-cleaned). Save in Fusion to persist.
 - The **schematic `value`** (e.g. 220 Ω → 330 Ω) is also settable this way —
-  `Electron.run "VALUE R6 330"` — so even the value change Henley used to defer
+  `Electron.run "VALUE R6 330"` — so even the value change Hendley used to defer
   to a manual step can now go in the `.scr`/command stream.

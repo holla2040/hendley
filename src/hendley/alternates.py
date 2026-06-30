@@ -41,7 +41,7 @@ from typing import Any, Callable, Iterable
 from .client import JLCClient
 
 # The jlcsearch index host. Override for testing / mirrors via env.
-JLCSEARCH_BASE = os.environ.get("HENLEY_JLCSEARCH", "https://jlcsearch.tscircuit.com")
+JLCSEARCH_BASE = os.environ.get("HENDLEY_JLCSEARCH", "https://jlcsearch.tscircuit.com")
 
 # Known jlcsearch category slugs (the path segment before ``/list.json``).
 # Used for ``--list-categories`` and a helpful error; validation is *soft* — an
@@ -107,7 +107,7 @@ def _default_fetch(url: str, params: dict[str, Any]) -> Any:
         url,
         params=params,
         timeout=20.0,
-        headers={"Accept": "application/json", "User-Agent": "henley/0.1.0"},
+        headers={"Accept": "application/json", "User-Agent": "hendley/0.1.0"},
     )
     resp.raise_for_status()
     return resp.json()

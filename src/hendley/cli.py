@@ -1,11 +1,11 @@
-"""Command-line interface for Henley.
+"""Command-line interface for Hendley.
 
 Examples::
 
-    henley detail C2040            # full detail for one or more component codes
-    henley private                 # your private/consigned JLC inventory
-    henley library --limit 50      # browse the assembly component library
-    henley ping                    # verify credentials + signing against the API
+    hendley detail C2040            # full detail for one or more component codes
+    hendley private                 # your private/consigned JLC inventory
+    hendley library --limit 50      # browse the assembly component library
+    hendley ping                    # verify credentials + signing against the API
 """
 
 from __future__ import annotations
@@ -99,7 +99,7 @@ def _cmd_stock(client: JLCClient, args) -> int:
     else:
         print(format_stock_report(rows, min_stock=args.min_stock))
     # Nonzero exit when any part is out of stock or missing from the catalog, so
-    # this can gate a submission step (e.g. `henley stock bom.json && submit`).
+    # this can gate a submission step (e.g. `hendley stock bom.json && submit`).
     return 1 if any(r["status"] in STOCK_BLOCKERS for r in rows) else 0
 
 
@@ -163,7 +163,7 @@ def _cmd_scr(client, args) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(prog="henley", description="JLCPCB parts inventory client.")
+    p = argparse.ArgumentParser(prog="hendley", description="JLCPCB parts inventory client.")
     p.add_argument("--keys", help="Path to the .keys credentials file (overrides discovery).")
     sub = p.add_subparsers(dest="command", required=True)
 

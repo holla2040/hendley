@@ -1,4 +1,4 @@
-"""Configuration and credential loading for Henley.
+"""Configuration and credential loading for Hendley.
 
 Credentials live in a ``.keys`` file (git-ignored) at the project root. The
 file is the one issued by JLCPCB and looks like::
@@ -10,7 +10,7 @@ file is the one issued by JLCPCB and looks like::
 
 Only these three fields are used. (The JLCPCB ``.keys`` file also contains an
 RSA "Tokenization Key" block intended for encrypting sensitive order-placement
-fields, but Henley does not implement order placement and ignores it entirely.)
+fields, but Hendley does not implement order placement and ignores it entirely.)
 """
 
 from __future__ import annotations
@@ -83,26 +83,26 @@ def _parse_keys(text: str) -> Credentials:
 def load_credentials(path: str | os.PathLike | None = None) -> Credentials:
     """Load credentials from a ``.keys`` file.
 
-    Path resolution order: explicit ``path`` arg, then ``HENLEY_KEYS`` env var,
+    Path resolution order: explicit ``path`` arg, then ``HENDLEY_KEYS`` env var,
     then a ``.keys`` file discovered by walking up from the cwd.
     """
     if path is None:
-        path = os.environ.get("HENLEY_KEYS")
+        path = os.environ.get("HENDLEY_KEYS")
     keys_path = Path(path) if path else _project_root() / ".keys"
     if not keys_path.exists():
         raise FileNotFoundError(
-            f"No .keys file found at {keys_path}. Set HENLEY_KEYS or run from the project root."
+            f"No .keys file found at {keys_path}. Set HENDLEY_KEYS or run from the project root."
         )
     return _parse_keys(keys_path.read_text())
 
 
 def _read_endpoint() -> str:
-    """Endpoint override order: HENLEY_ENDPOINT env, else the default API host.
+    """Endpoint override order: HENDLEY_ENDPOINT env, else the default API host.
 
     The project ``notes`` file holds the developer-portal URL, not the API host,
     so it is intentionally not used as the endpoint source.
     """
-    env = os.environ.get("HENLEY_ENDPOINT")
+    env = os.environ.get("HENDLEY_ENDPOINT")
     if env:
         return env.rstrip("/")
     return DEFAULT_ENDPOINT

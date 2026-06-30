@@ -5,7 +5,7 @@ sources: the console **"View Docs" PDFs** (the primary, authoritative source for
 request/response shapes — transcribed in full below), the official **Java SDK
 jars** (`sdk/`, authoritative for serialized field names), and — for the
 component routes and the PCB uploads — the **live API**. It is the source of
-truth for the Python reimplementation in `src/henley/` (`client.py` wraps every
+truth for the Python reimplementation in `src/hendley/` (`client.py` wraps every
 endpoint here).
 
 - **Endpoint (overseas/global):** `https://open.jlcpcb.com` (the default in
@@ -133,12 +133,12 @@ numeric business-code table (1000–5006, reproduced under `calculate`).
 Each PDF-backed section gives the request parameter table, nested-object tables,
 full response schema, error codes, and the PDF's example (`getSteelPriceConfig`
 is the exception — it has no PDF and is jar-only). The matching `client.py`
-method is named in a **Henley** line under each heading.
+method is named in a **Hendley** line under each heading.
 
 ## Component (parts inventory) endpoints
 ### `POST /overseas/openapi/component/getComponentLibraryList` — Get Component list
 
-**Henley:** `JLCClient.get_component_library_list() / iter_component_library()`
+**Hendley:** `JLCClient.get_component_library_list() / iter_component_library()`
 
 Paginated query for the listed component data, supporting large-volume data pagination.
 
@@ -214,7 +214,7 @@ Response:
 
 ### `POST /overseas/openapi/component/getComponentDetailByCode` — Query Component Detail Data Interface
 
-**Henley:** `JLCClient.get_component_detail_by_code(codes)`
+**Hendley:** `JLCClient.get_component_detail_by_code(codes)`
 
 Query Component Details by C Code.
 
@@ -329,7 +329,7 @@ Response:
 
 ### `POST /overseas/openapi/component/getComponentInfos` — Component information interface
 
-**Henley:** `JLCClient.get_component_infos() / iter_component_infos()`
+**Hendley:** `JLCClient.get_component_infos() / iter_component_infos()`
 
 Component information interface — paginated list of component information (LCSC parts catalog).
 
@@ -416,7 +416,7 @@ Response:
 
 ### `POST /overseas/openapi/component/getPrivateComponentLibrary` — Query Private Component Library Interface
 
-**Henley:** `JLCClient.get_private_component_library() / iter_private_component_library()`
+**Hendley:** `JLCClient.get_private_component_library() / iter_private_component_library()`
 
 Query the private component library of authenticated customers.
 
@@ -531,7 +531,7 @@ application/json`, and `Accept: application/json`.
 
 ### `POST /overseas/openapi/pcb/uploadGerber` — Upload PCB Gerber Files
 
-**Henley:** `JLCClient.upload_gerber(file)`
+**Hendley:** `JLCClient.upload_gerber(file)`
 
 Upload a Gerber archive and receive a Gerber file identifier for use as `fileKey`.
 
@@ -580,7 +580,7 @@ Response:
 
 ### `POST /overseas/openapi/pcb/uploadBlindViaHoleImg` — Upload Blind Slot Image
 
-**Henley:** `JLCClient.upload_blind_via_hole_img(file)`
+**Hendley:** `JLCClient.upload_blind_via_hole_img(file)`
 
 Upload a blind-via/blind-slot image (PNG/JPG) and receive a file identifier.
 
@@ -633,7 +633,7 @@ Response:
 
 ### `POST /overseas/openapi/pcb/getImpedanceTemplateSettingList` — PCB Stack-up Configuration Information
 
-**Henley:** `JLCClient.get_impedance_template_setting_list(...)`
+**Hendley:** `JLCClient.get_impedance_template_setting_list(...)`
 
 Return the matching impedance (stack-up) template list for a given board spec;
 the returned `impedanceTemplateCode` feeds `calculate`/`create`.
@@ -725,7 +725,7 @@ Response:
 
 ### `POST /overseas/openapi/pcb/calculate` — Online Quotation
 
-**Henley:** `JLCClient.calculate_pcb_price(...)`
+**Hendley:** `JLCClient.calculate_pcb_price(...)`
 
 Calculate the price (PCB and/or stencil) for an uploaded Gerber and selected craft parameters.
 
@@ -1271,7 +1271,7 @@ Response:
 
 ### `POST /overseas/openapi/pcb/audit/get` — PCB Pre-review Information
 
-**Henley:** `JLCClient.get_pcb_audit_info(key)`
+**Hendley:** `JLCClient.get_pcb_audit_info(key)`
 
 Retrieve the pre-production (DFM/review) result for an uploaded Gerber file.
 
@@ -1363,7 +1363,7 @@ Response:
 
 ### `POST /overseas/openapi/pcb/order/detail` — Order Information Query API
 
-**Henley:** `JLCClient.get_order_detail_by_batch_num(batch_num)`
+**Hendley:** `JLCClient.get_order_detail_by_batch_num(batch_num)`
 
 Query full order detail (address, costs, PCB/stencil items) by batch number.
 
@@ -1535,7 +1535,7 @@ Response:
 
 ### `POST /overseas/openapi/pcb/wip/get` — PCB Production Progress Query
 
-**Henley:** `JLCClient.get_pcb_wip_process(order_uuid)`
+**Hendley:** `JLCClient.get_pcb_wip_process(order_uuid)`
 
 Query production (work-in-process) progress steps for an order.
 
@@ -1582,7 +1582,7 @@ Response:
 
 ### `POST /overseas/openapi/pcb/create` — Create an order
 
-**Henley:** `JLCClient.create_pcb_order(...)`
+**Hendley:** `JLCClient.create_pcb_order(...)`
 
 Place a PCB and/or stencil order from an uploaded Gerber and craft parameters.
 
@@ -1839,7 +1839,7 @@ Response:
 
 ### `POST /overseas/openapi/pcb/getSteelPriceConfig` — Steel/Stencil Price Config
 
-**Henley:** `JLCClient.get_steel_price_config(body=None)`
+**Hendley:** `JLCClient.get_steel_price_config(body=None)`
 
 > Note: **No official "View Docs" PDF exists for this route** — it is present
 > only in the SDK jar (`GetSteelPriceConfigRequest`). The request-body shape is
@@ -1880,7 +1880,7 @@ Reverse-/forward-transcribed from the seven official JLCPCB "JLC3DP" OpenAPI PDF
 
 ### `POST /overseas/openapi/tdp/api/upload` — JLC3DP File Upload Interface
 
-**Henley:** `JLCClient.upload_tdp_file(file)`
+**Hendley:** `JLCClient.upload_tdp_file(file)`
 
 Upload a 3D model file; after parsing the system returns model data, attributes (length, width, height), a list of selectable materials and manufacturing processes, and explanations for unavailable options.
 
@@ -1932,7 +1932,7 @@ Response:
 
 ### `POST /overseas/openapi/tdp/api/file/result` — JLC3DP File Parsing Result (Polling Interface)
 
-**Henley:** `JLCClient.get_tdp_file_result(file_access_id)`
+**Hendley:** `JLCClient.get_tdp_file_result(file_access_id)`
 
 Get file parsing results by polling. After parsing the file, returns model data including dimensions (length, width, height), selectable materials and processes, and reasons for any unselectable options.
 
@@ -2249,7 +2249,7 @@ Response:
 
 ### `POST /overseas/openapi/tdp/api/calculate` — JLC3DP Calculate Product Price Interface
 
-**Henley:** `JLCClient.calculate_tdp_price(...)`
+**Hendley:** `JLCClient.calculate_tdp_price(...)`
 
 Calculate price based on a single item's process: upload file, surface finish, lead time and other parameters to get the calculated price; enter the shipping address to get available shipping methods and their costs.
 
@@ -2454,7 +2454,7 @@ Response:
 
 ### `POST /overseas/openapi/tdp/api/order/create` — JLC3DP Create Order Interface
 
-**Henley:** `JLCClient.create_tdp_order(...)`
+**Hendley:** `JLCClient.create_tdp_order(...)`
 
 Create an order by uploading product model ID, material ID and other related product attributes.
 
@@ -2581,7 +2581,7 @@ Response:
 
 ### `POST /overseas/openapi/tdp/api/order/list` — JLC3DP Order List Interface
 
-**Henley:** `JLCClient.list_tdp_orders(...)`
+**Hendley:** `JLCClient.list_tdp_orders(...)`
 
 Order list — view successfully created batch orders.
 
@@ -2838,7 +2838,7 @@ Response:
 
 ### `POST /overseas/openapi/tdp/api/order/detail` — JLC3DP Order Details Interface
 
-**Henley:** `JLCClient.get_tdp_order_detail(batch_num)`
+**Hendley:** `JLCClient.get_tdp_order_detail(batch_num)`
 
 Query batch order details based on a batch number obtained from the order list.
 
@@ -3071,7 +3071,7 @@ Response:
 
 ### `POST /overseas/openapi/tdp/api/order/process` — JLC3DP Order Progress Interface
 
-**Henley:** `JLCClient.get_tdp_order_process(order_no)`
+**Hendley:** `JLCClient.get_tdp_order_process(order_no)`
 
 Order Manufacturing Progress — query the manufacturing progress of an order based on the order number returned from the order list.
 

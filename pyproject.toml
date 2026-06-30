@@ -3,7 +3,7 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "henley"
+name = "hendley"
 version = "0.1.0"
 description = "Query the JLCPCB parts inventory and cross-check Fusion Electronics BOMs to speed up PCBA submissions."
 readme = "README.md"
@@ -18,7 +18,7 @@ dependencies = [
 dev = ["pytest>=8", "ruff>=0.4"]
 
 [project.scripts]
-henley = "henley.cli:main"
+hendley = "hendley.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
