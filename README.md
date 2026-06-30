@@ -274,10 +274,12 @@ JSON-RPC `POST`s directly to the local endpoint Fusion exposes at
 `http://127.0.0.1:27182/mcp`. **You do not need any MCP client or middleware**
 to use it: no Claude Desktop "Autodesk Fusion" extension, no MCP connector, and
 no `claude mcp add` registration. The endpoint speaks the MCP wire protocol, but
-from Hendley's side it is just an HTTP API you `POST` to with `curl` / `requests`
-(`initialize` → `tools/call` with `fusion_mcp_electronics_read`). See
-[`docs/fusion-notes.md`](docs/fusion-notes.md) for the request shapes and where
-each part's JLC `Cxxxx` code lives (the part's `LCSC` attribute).
+from Hendley's side it is just an HTTP API you `POST` to with `curl` / `requests`.
+The handshake has a few non-obvious steps (Windows-host IP not `127.0.0.1` from
+WSL, capture the `MCP-Session-Id` header, send `notifications/initialized` before
+any `tools/call`) — copy the complete, verified recipe and a worked example from
+[`docs/fusion-notes.md`](docs/fusion-notes.md) → "Connecting from WSL — the full
+handshake"; each part's JLC `Cxxxx` code is its `LCSC` attribute.
 
 The only requirement on the **Windows / Fusion side** is that Fusion is running
 with its built-in server enabled — **Preferences > General > API > Fusion MCP

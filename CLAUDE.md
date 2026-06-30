@@ -226,12 +226,21 @@ Null body fields are omitted to match the Java SDK's `toJSON()`.
 
 ## Fusion access from WSL (read side)
 
-Hendley reads a live Fusion Electronics design over plain HTTP (JSON-RPC) at
-`http://127.0.0.1:27182/mcp` — no MCP client needed; just `POST` `initialize`
-then `tools/call` with `fusion_mcp_electronics_read`. The JLC `Cxxxx` code is the
-part's **`LCSC`** attribute (read `electronics.Attribute` filtered by
-`part_object_id`); MPN is `MPN`. Requires Fusion running with **Preferences >
-General > API > Fusion MCP Server** enabled and an Electronics doc open.
+Hendley reads a live Fusion Electronics design over plain HTTP (an MCP
+Streamable-HTTP / JSON-RPC server) — no MCP client needed, plain `curl` works.
+But the handshake is **not** "just POST initialize then tools/call": you must hit
+the **Windows host IP, not `127.0.0.1`** (loopback isn't reachable from WSL),
+capture the **`MCP-Session-Id` response header** and resend it on every call, and
+send a **`notifications/initialized`** message before any `tools/call` — skip any
+of these and you get the confusing `Missing MCP-Session-Id header` /
+`Session not initialized` errors that have made past agents hand-write their own
+client. **Do not re-derive it or read source — copy the complete, verified
+recipe (handshake + a Part→Attribute→`LCSC` worked example) from
+`docs/fusion-notes.md` → "Connecting from WSL — the full handshake".** The JLC
+`Cxxxx` code is the part's **`LCSC`** attribute (read `electronics.Attribute`
+filtered by `part_object_id`); MPN is `MPN`. Requires Fusion running with
+**Preferences > General > API > Fusion MCP Server** enabled and an Electronics
+doc open.
 
 ⚠️ **Attribute reads are part-scoped, and `object_id`s aren't stable.** Filtering
 `electronics.Attribute` by `name` alone (or unfiltered) returns **empty** — you

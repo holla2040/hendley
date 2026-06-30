@@ -5,6 +5,74 @@ reached from WSL2 Claude Code over a Windows port-forward (see the README
 "Fusion MCP from WSL" section). Active design at capture: **`comet`**
 (schematic-only — no board yet).
 
+## Connecting from WSL — the full handshake (copy-paste, verified)
+
+The bridge is an MCP **Streamable HTTP** server. You do **not** need an MCP
+client — plain `curl` works — but the handshake has steps that, if skipped, fail
+with confusing errors. **This is the layer that isn't written down anywhere else,
+so every agent re-derives it (or hand-writes a `bridge.py`).** Here it is, end to
+end, exactly as verified live. Don't read source or invent your own client — run
+this.
+
+**The rules that bite (each one cost a debugging session to rediscover):**
+- **Never `127.0.0.1` from WSL.** Fusion listens on the *Windows* loopback; from
+  WSL2 you must hit the **Windows host IP = the default gateway**
+  (`ip route | grep default | awk '{print $3}'`, e.g. `172.17.64.1`). Needs the
+  Windows port-forward in place — see README "Reading from Fusion Electronics"
+  and the `listenaddress=0.0.0.0` gotcha in CLAUDE.md.
+- **Capture `MCP-Session-Id` from the `initialize` *response header*** and resend
+  it on **every** later request. Omit it → `{"error":"Missing MCP-Session-Id
+  header"}`.
+- **Send the `notifications/initialized` message before any `tools/call`.** A
+  `tools/list`/`tools/call` first → `Session not initialized. Call 'initialize'
+  first.`
+- **Initialize exactly once, then reuse that SID.** Re-initializing churns the
+  server's session and invalidates the id you captured.
+- Send `Accept: application/json, text/event-stream` on every request.
+- Every read returns its rows as a **JSON string** in `result.content[0].text`
+  → parse that → `{ "items": [...], "pagination": {...} }`.
+
+```bash
+GW=$(ip route | grep default | awk '{print $3}')   # Windows host IP, NOT localhost
+B="http://$GW:27182/mcp"
+CT='-H Content-Type:application/json'
+ACC='-H Accept:application/json,text/event-stream'
+
+# 1) initialize ONCE — capture the session id from the RESPONSE HEADER
+SID=$(curl -s -D - -o /dev/null $CT $ACC -X POST "$B" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"hendley","version":"1.0"}}}' \
+  | tr -d '\r' | awk -F': ' 'tolower($1)=="mcp-session-id"{print $2}')
+
+# 2) say "initialized" (REQUIRED before any tools/call)
+curl -s $CT $ACC -H "MCP-Session-Id: $SID" -X POST "$B" \
+  -d '{"jsonrpc":"2.0","method":"notifications/initialized"}' >/dev/null
+
+# 3) call the read tool — reuse $SID on every call. Arg = the tool's `arguments`.
+read_elec(){ curl -s $CT $ACC -H "MCP-Session-Id: $SID" -X POST "$B" \
+  -d "{\"jsonrpc\":\"2.0\",\"id\":9,\"method\":\"tools/call\",\"params\":{\"name\":\"fusion_mcp_electronics_read\",\"arguments\":$1}}"; }
+```
+
+### Worked example — a part's JLC code (Part → Attribute → `LCSC`)
+
+The workflow that matters: designator → live `object_id` → `LCSC`/`MPN`. Look the
+oid up **live** every time (they change on every reload — never paste one from a
+transcript).
+
+```bash
+# find R6's current object_id
+OID=$(read_elec '{"entity_type":"electronics.Part","object":{"fields":["name","object_id"]}}' \
+  | python3 -c 'import json,sys; d=json.loads(json.loads(sys.stdin.read())["result"]["content"][0]["text"]); print(next(i["object_id"] for i in d["items"] if i["name"]=="R6"))')
+
+# read its attributes — MUST filter by part_object_id (unfiltered ⇒ empty, not an error)
+read_elec "{\"entity_type\":\"electronics.Attribute\",\"object\":{\"filters\":[{\"property\":\"part_object_id\",\"op\":\"eq\",\"value\":$OID}]}}" \
+  | python3 -c 'import json,sys; d=json.loads(json.loads(sys.stdin.read())["result"]["content"][0]["text"]); [print(i["name"],"=",i["value"]) for i in d["items"]]'
+# → LCSC = C29719 ; MPN = 4D03WGJ0221T5E ; MANUFACTURER = UNI-ROYAL   (verified live)
+```
+
+To enumerate the whole BOM, drop the `name==R6` filter: read all `electronics.Part`
+rows, then one `electronics.Attribute` read per `object_id`. Feed the `LCSC`
+codes to `hendley detail`/`hendley stock` for live JLC stock/price.
+
 ## How the design is read
 
 The Fusion MCP exposes one read tool for Electronics:
