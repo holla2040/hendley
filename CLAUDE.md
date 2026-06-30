@@ -273,7 +273,10 @@ app.executeTextCommand('Electron.run "script C:\\tmp\\changes.scr"')
 ```
 
 Run that string through the `fusion_mcp_execute` tool (called over HTTP, same as
-the read tool — `featureType:"script"`). A **bare**
+the read tool — args `featureType:"script"`, `object.script`=a Python source
+string that defines `def run(_context):`; its `print()` output comes back in the
+`{"message",...}` envelope — exact arg shape + copy-paste recipe in
+`docs/fusion-notes.md`). A **bare**
 `executeTextCommand("script …")` fails (`There is no command script`) because it
 hits Fusion's *core* channel; wrapping in **`Electron.run "<eagle cmd>"`** routes
 into the electronics interpreter. So Hendley can apply a `.scr` (or any `CHANGE` /

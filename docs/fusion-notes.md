@@ -194,10 +194,64 @@ app = adsk.core.Application.get()
 app.executeTextCommand('Electron.run "script C:\\tmp\\changes.scr"')
 ```
 
-Run it via the `fusion_mcp_execute` tool (called over HTTP, `featureType:"script"`,
-a `def run(_context):` that calls `executeTextCommand`). This makes the **entire
-write path scriptable from Python over HTTP** — Hendley can generate
-a `.scr` and fire it into Fusion with no manual step.
+Run it via the `fusion_mcp_execute` tool (called over HTTP, same handshake as the
+read recipe above). This makes the **entire write path scriptable from Python
+over HTTP** — Hendley can generate a `.scr` and fire it into Fusion with no
+manual step.
+
+### `fusion_mcp_execute` — exact arguments (from the tool's live schema)
+
+`tools/call` `name: "fusion_mcp_execute"`, `arguments`:
+
+```jsonc
+{
+  "featureType": "script",          // required; enum: "script" | "document"
+  "object": {                        // required
+    "script": "<python source>"      // required for featureType=script
+  }
+}
+```
+
+- The `script` string **must define `def run(_context):`** — that function is the
+  entry point Fusion calls. Anything it `print()`s becomes the tool's output;
+  any exception it raises becomes the tool's error (so **don't** catch
+  exceptions — you'd hide the failure).
+- **Response envelope differs from the read tool.** `result.content[0].text` is a
+  JSON string `{"message": "<script stdout>", "success": <bool>}` (the read tool
+  returns `{"items":[...]}`). Verified live: a `print(app.version)` script
+  returned `{"message":"2704.0.74\n","success":true}`.
+- To fire an EAGLE command / `.scr`, the `run` body calls `executeTextCommand`
+  with the `Electron.run "…"` wrapper (see above). `Electron.run` itself prints
+  nothing, so `message` is empty on success — verify out-of-band (below).
+
+**Copy-paste — fire a `.scr` over HTTP** (reuses `$B`/`$SID` from the read recipe;
+builds the request in Python to avoid nested-quote escaping):
+
+```bash
+python3 - "$B" "$SID" <<'PY'
+import json, sys, urllib.request
+B, SID = sys.argv[1], sys.argv[2]
+# the Electron.run wrapper is what routes into the electronics command interpreter
+run = ('import adsk.core\n'
+       'def run(_context):\n'
+       '    app = adsk.core.Application.get()\n'
+       '    app.executeTextCommand(\'Electron.run "script C:\\\\tmp\\\\changes.scr"\')\n')
+payload = {"jsonrpc":"2.0","id":9,"method":"tools/call",
+           "params":{"name":"fusion_mcp_execute",
+                     "arguments":{"featureType":"script","object":{"script":run}}}}
+req = urllib.request.Request(B, data=json.dumps(payload).encode(),
+        headers={"Content-Type":"application/json",
+                 "Accept":"application/json, text/event-stream",
+                 "MCP-Session-Id":SID}, method="POST")
+print(urllib.request.urlopen(req, timeout=30).read().decode())
+PY
+```
+
+`featureType:"document"` also exists (`object.operation` enum
+`open`/`close`/`save`, plus `fileId`, `userConfirmedSaveAndClose`,
+`userConfirmedCloseWithoutSave`). `operation:"save"` would persist the doc over
+HTTP — **not verified here, and it writes to the user's live design, so confirm
+before using** (this is the "unsaved by default" caveat below).
 
 **What we verified (live, on `comet sch`):**
 
