@@ -145,11 +145,17 @@ below — to get its designator and the exact package variant names.) Drive it a
      the chosen alternate's `code`; `mpn` = its `componentModel` from `detail`
      (note: jlcsearch's row field literally named `mfr` is the **MPN**, e.g.
      `0603WAF2202T5E`, NOT the maker name).
-   - `manufacturer` → the `MANUFACTURER` attribute. **The maker name is NOT
-     returned by `getComponentDetailByCode` or jlcsearch** — the API gives only the
-     MPN. Do NOT fabricate it. Get it from the part's LCSC/JLC page (or the MPN's
-     known series), or ask the user. If the swap keeps the same maker, the design's
-     existing `MANUFACTURER` already holds it — set this only when it changes.
+   - `manufacturer` → the `MANUFACTURER` attribute. There is **no dedicated maker
+     field** in `getComponentDetailByCode` or jlcsearch — but you can still get it
+     from the API without scraping: **`getComponentDetailByCode`'s `dataManualUrl`
+     filename embeds the LCSC brand slug**, shaped `<date>_<brand>-<MPN>_<Ccode>.pdf`
+     (e.g. `2402281642_hongjiacheng-1SMA4744A_C19077482.pdf` → brand `hongjiacheng`,
+     matching JLC's part page). Prefer that over a WebFetch of the LCSC product page,
+     which can report a different brand (saw "R+O" for that same code). The slug
+     gives the brand but not its casing/full legal name, so confirm the exact
+     display string with the user if it matters. Do NOT fabricate it. If the swap
+     keeps the same maker, the design's existing `MANUFACTURER` already holds it —
+     set this only when it changes.
    - `attributes` — any extra attrs (e.g. `DESC`).
 
    Then `hendley scr swap.json -o changes.scr` (offline). The script carries the
@@ -236,10 +242,13 @@ HTTP.** You call the **`fusion_mcp_electronics_read`** tool by `POST`ing a
 via HTTP, not through any MCP client).
 
 The handshake is **not** "just POST initialize then tools/call": you must hit
-the **Windows host IP, not `127.0.0.1`** (loopback isn't reachable from WSL),
-capture the **`MCP-Session-Id` HTTP response header** and resend it on every
-request, and `POST` a **`notifications/initialized`** message before any
-`tools/call` — skip any of these and you get the confusing `Missing
+the **Windows host IP, not `127.0.0.1`** (loopback isn't reachable from WSL) yet
+still **send a `Host: 127.0.0.1:27182` header** (the server now validates `Host`
+and 403s "Invalid Host header" on the gateway IP — connect to the gateway,
+spoof the header to loopback), capture the **`MCP-Session-Id` HTTP response
+header** and resend it on every request, and `POST` a
+**`notifications/initialized`** message before any `tools/call` — skip any of
+these and you get the confusing `Invalid Host header` / `Missing
 MCP-Session-Id header` / `Session not initialized` errors that have made past
 agents hand-write their own client. **Do not re-derive it or read source — copy
 the complete, verified HTTP recipe (handshake + a Part→Attribute→`LCSC` worked

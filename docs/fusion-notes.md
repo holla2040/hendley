@@ -28,6 +28,14 @@ source or invent your own client — run this.
   (`ip route | grep default | awk '{print $3}'`, e.g. `172.17.64.1`). Needs the
   Windows port-forward in place — see README "Reading from Fusion Electronics"
   and the `listenaddress=0.0.0.0` gotcha in CLAUDE.md.
+- **…but spoof the `Host` header to loopback.** The server now **validates the
+  `Host` header**: hitting the gateway IP makes `Host` read `172.17.64.1:27182`,
+  which it rejects with **`HTTP 403 {"error":"Invalid Host header"}`** *before*
+  the handshake even starts. Send **`-H 'Host: 127.0.0.1:27182'`** on every
+  request — you still *connect* to the gateway IP (that's the URL), but the
+  `Host` header must read as loopback. (Observed 2026-07-04; older sessions
+  didn't need it, so this is a newer server build — if you get a 403 "Invalid
+  Host header", this is why.)
 - **Capture `MCP-Session-Id` from the `initialize` *response header*** and resend
   it on **every** later request. Omit it → `{"error":"Missing MCP-Session-Id
   header"}`.
@@ -45,18 +53,19 @@ GW=$(ip route | grep default | awk '{print $3}')   # Windows host IP, NOT localh
 B="http://$GW:27182/mcp"
 CT='-H Content-Type:application/json'
 ACC='-H Accept:application/json,text/event-stream'
+HOST='-H Host:127.0.0.1:27182'                     # server validates Host — must read as loopback
 
 # 1) initialize ONCE — capture the session id from the RESPONSE HEADER
-SID=$(curl -s -D - -o /dev/null $CT $ACC -X POST "$B" \
+SID=$(curl -s -D - -o /dev/null $CT $ACC $HOST -X POST "$B" \
   -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"hendley","version":"1.0"}}}' \
   | tr -d '\r' | awk -F': ' 'tolower($1)=="mcp-session-id"{print $2}')
 
 # 2) say "initialized" (REQUIRED before any tools/call)
-curl -s $CT $ACC -H "MCP-Session-Id: $SID" -X POST "$B" \
+curl -s $CT $ACC $HOST -H "MCP-Session-Id: $SID" -X POST "$B" \
   -d '{"jsonrpc":"2.0","method":"notifications/initialized"}' >/dev/null
 
 # 3) call the read tool — reuse $SID on every call. Arg = the tool's `arguments`.
-read_elec(){ curl -s $CT $ACC -H "MCP-Session-Id: $SID" -X POST "$B" \
+read_elec(){ curl -s $CT $ACC $HOST -H "MCP-Session-Id: $SID" -X POST "$B" \
   -d "{\"jsonrpc\":\"2.0\",\"id\":9,\"method\":\"tools/call\",\"params\":{\"name\":\"fusion_mcp_electronics_read\",\"arguments\":$1}}"; }
 ```
 
@@ -242,6 +251,7 @@ payload = {"jsonrpc":"2.0","id":9,"method":"tools/call",
 req = urllib.request.Request(B, data=json.dumps(payload).encode(),
         headers={"Content-Type":"application/json",
                  "Accept":"application/json, text/event-stream",
+                 "Host":"127.0.0.1:27182",   # server validates Host — must read as loopback
                  "MCP-Session-Id":SID}, method="POST")
 print(urllib.request.urlopen(req, timeout=30).read().decode())
 PY
