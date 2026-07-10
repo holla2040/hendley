@@ -1,293 +1,205 @@
-# Vision Document
+# Hendley Vision
 
-**Project:** AI-Assisted Manufacturing BOM Resolver
-**Version:** 0.1 (Draft)
-**Status:** Vision
+**Project:** Hendley — AI-Assisted BOM Resolver  
+**Version:** 1.0  
+**Status:** Vision baseline
 
----
+## 1. Vision
 
-# 1. Vision
+Hendley will separate **electronic design intent** from **manufacturing component selection**.
 
-The purpose of this project is to fundamentally separate **electronic design** from **manufacturing component selection**.
+Current ECAD workflows commonly require engineers to attach manufacturer, distributor, or assembly-provider part numbers to schematic components. That approach makes procurement information part of the design record even when the circuit only requires a generic electrical component.
 
-Current ECAD workflows tightly couple schematic design with procurement decisions, requiring engineers to select manufacturer or assembly-specific part numbers during the design process. This forces engineers to spend significant time performing repetitive supply-chain work rather than engineering design.
+For many components, the engineer's intent is straightforward:
 
-This project introduces an AI-assisted Manufacturing BOM Resolver that allows engineers to design using engineering intent while automatically resolving those requirements into manufacturing-ready BOMs through a transparent, reviewable workflow.
+- 22 kΩ
+- ±1%
+- 0603
+- minimum power rating
+- compatible footprint
+
+The exact purchasable part depends on inventory, lifecycle, price, manufacturing provider, and build quantity. Those conditions change far more frequently than the design.
+
+Hendley introduces a dedicated, AI-assisted resolution layer between ECAD and manufacturing. It interprets engineering requirements, evaluates purchasable candidates, applies provider-specific sourcing policy, presents ranked and explainable recommendations, records the engineer's decisions, and produces a manufacturing-ready BOM.
 
 The objective is simple:
 
 > **Free engineers to do design.**
 
-The resolver never replaces engineering judgment.
+AI assists with repetitive analysis. Engineers retain final authority.
 
-Instead, it automates repetitive procurement work while keeping engineers responsible for all final decisions.
+## 2. The Problem
 
----
+The conventional workflow mixes two different activities:
 
-# 2. The Problem
+1. **Engineering definition** — determining what the circuit requires.
+2. **Manufacturing resolution** — determining which specific part should be purchased and assembled now.
 
-Most ECAD systems require designers to assign specific manufacturer part numbers while creating schematics.
+This coupling creates recurring problems:
 
-Although this simplifies downstream manufacturing, it introduces several problems:
+- Supply-chain changes require maintenance of otherwise-correct design data.
+- Engineers repeatedly search catalogs, compare inventory, and locate alternates.
+- Board-house identifiers become embedded in schematic attributes.
+- Proven component choices are difficult to reuse consistently.
+- A design becomes unnecessarily coupled to one sourcing or manufacturing workflow.
+- Preparing a manufacturing BOM can consume hours after the design is complete.
 
-* Procurement decisions become mixed with engineering decisions.
-* Supply-chain changes require schematic maintenance.
-* Engineers spend hours searching distributor inventories.
-* Existing component knowledge is difficult to reuse.
-* Manufacturing workflows become tightly coupled to a specific supplier strategy.
+Existing supply-chain features are useful, but they usually begin after a specific manufacturer part or managed component has already been selected. Hendley addresses the earlier decision: whether a specific purchasable part needs to be fixed in the design at all.
 
-For many PCB designs, especially those using passive components, the engineering intent is considerably simpler than the manufacturing implementation.
+## 3. Why Now
 
-For example, an engineer usually intends:
+Modern AI, structured component data, and programmable provider interfaces make a different workflow practical.
 
-* 22 kΩ
-* ±1%
-* 0603
-* 100 mW
+The system can now:
 
-—not a specific manufacturer's resistor.
+- interpret engineering attributes
+- normalize inconsistent component descriptions
+- search provider and distributor data
+- apply deterministic engineering constraints
+- compare valid alternatives
+- explain tradeoffs
+- preserve approval history
+- reuse proven parts across projects
 
-Current tools force these concepts to become inseparable.
+AI is an enabling technology, not the authority. Hard requirements remain deterministic, supplier facts remain sourced, and the engineer approves every released selection.
 
----
+## 4. Separation of Concerns
 
-# 3. Why Now?
+Hendley intentionally separates the following responsibilities.
 
-Modern AI systems fundamentally change what is practical.
+### Engineering Design
 
-Large language models, retrieval systems, and structured component databases can now:
+Owned by the ECAD system and the engineer:
 
-* interpret engineering intent,
-* search supplier inventories,
-* evaluate alternates,
-* explain trade-offs,
-* rank component choices,
-* preserve engineering preferences.
+- schematic capture
+- PCB layout
+- electrical intent
+- mechanical intent
+- design verification
+- explicit exact-part requirements
 
-These capabilities make it practical to automate the repetitive portion of manufacturing BOM creation while keeping engineers in complete control.
+### Requirements Capture
 
----
+Owned by an ECAD importer or live-design integration:
 
-# 4. Architectural Principle
+- read component attributes
+- preserve reference designators and quantities
+- distinguish mandatory constraints from preferences
+- normalize the design into a provider-independent Requirements BOM
 
-The central architectural principle is **Separation of Concerns**.
+### Component Resolution
 
-The project intentionally separates four independent responsibilities.
+Owned by the resolver core:
 
-## Engineering Design
+- discover candidates
+- reject incompatible parts
+- rank valid candidates
+- identify exceptions
+- explain recommendations
+- prepare decisions for review
 
-Responsible for:
+### Procurement Policy
 
-* schematic capture
-* PCB layout
-* electrical intent
-* mechanical intent
+Owned by a Provider Strategy:
 
-Engineering tools remain the single source of truth for design intent.
+- choose eligible data sources
+- define stock and sourcing rules
+- contribute provider-specific eligibility and ranking policy
+- express manufacturing-provider preferences
 
----
+### Provider Output
 
-## Component Resolution
+Owned by a Provider Adapter:
 
-Responsible for:
+- validate provider-required fields
+- map approved results into the provider's format
+- emit manufacturing-ready BOMs and supporting reports
 
-* interpreting engineering requirements
-* identifying valid components
-* finding alternates
-* evaluating lifecycle
-* evaluating availability
-* evaluating supply risk
+### Engineering Knowledge
 
-This responsibility belongs to the Manufacturing BOM Resolver.
+Owned by the Knowledge Base:
 
----
+- record approvals and rejections
+- preserve rationale
+- identify prior use
+- favor proven components when they remain valid
+- never override mandatory engineering constraints
 
-## Manufacturing Optimization
+## 5. Initial Manufacturing Target
 
-Responsible for:
+The first complete target is the JLCPCB/LCSC workflow.
 
-* selecting preferred components
-* optimizing inventory usage
-* minimizing sourcing effort
-* maintaining manufacturing compatibility
+JLCPCB is a useful first implementation because its assembly process depends heavily on LCSC/JLC component identifiers and provider-specific inventory. Hendley should remove the need to place those identifiers in Fusion Electronics merely so they appear in an exported BOM.
 
-Optimization policies may differ between manufacturing providers.
+JLCPCB is the first provider, not an architectural limitation. PCBWay is the second target because it exercises a different sourcing model and helps prove that the resolver core is provider-independent.
 
----
+## 6. Human and AI Roles
 
-## Provider Integration
+The division of responsibility is explicit:
 
-Responsible for converting resolved components into manufacturing-specific formats.
-
-Examples include:
-
-* JLCPCB / LCSC
-* PCBWay
-* future assembly providers
-* internal corporate AVL systems
-
-Each provider is implemented as an independent strategy/adapter.
-
-The resolver core remains provider-independent.
-
----
-
-# 5. Design Intent
-
-Engineering intent represents long-lived knowledge.
-
-Manufacturing information represents short-lived knowledge.
-
-Engineering intent should remain stable even when:
-
-* inventories change,
-* prices change,
-* suppliers disappear,
-* new alternates become available.
-
-This separation dramatically reduces unnecessary maintenance.
-
----
-
-# 6. AI Philosophy
-
-AI is an enabling technology—not the product.
-
-The AI system exists to:
-
-* remove repetitive work,
-* explain recommendations,
-* rank alternatives,
-* accelerate decision making.
-
-The AI never silently selects components.
-
-The engineer always approves the final manufacturing BOM.
+- deterministic code validates hard constraints
+- provider data supplies inventory, pricing, lifecycle, and identifiers
+- ranking policy orders valid candidates
+- AI interprets ambiguity and explains tradeoffs
+- the engineer approves or rejects the result
 
 Guiding principle:
 
 > **AI advises. Engineers decide.**
 
----
+## 7. Reusable Engineering Knowledge
 
-# 7. Reusable Engineering Knowledge
+Every approval is potentially useful beyond the current project.
 
-Every approved component represents valuable engineering knowledge.
+If a 22 kΩ, 0603, 1% resistor has been approved and successfully manufactured on several boards, Hendley should prefer it again when:
 
-The resolver should preserve this knowledge and reuse it intelligently.
+- the engineering requirements still match
+- the selected provider can source it
+- sufficient inventory exists
+- lifecycle status remains acceptable
+- no project-specific rule excludes it
 
-Examples include:
+Historical use informs the recommendation. It does not prove eligibility and does not replace current validation.
 
-* previously approved passive components,
-* preferred resistor families,
-* preferred capacitor families,
-* frequently used footprints,
-* manufacturing success history.
+## 8. Current Hendley and the Target Product
 
-Future recommendations should prefer proven components whenever engineering requirements remain satisfied.
+The repository already contains practical building blocks:
 
-Historical usage should influence ranking without overriding engineering constraints.
+- JLCPCB API access
+- live component detail, stock, price, and parameter retrieval
+- BOM stock checking
+- alternate discovery with live JLC verification
+- Fusion Electronics design reading over its local HTTP interface
+- generation of explicit, engineer-reviewed Fusion migration scripts
 
----
+These capabilities are the starting point. The target product adds the provider-independent Requirements BOM, deterministic resolver, ranking, knowledge reuse, review workflow, and provider adapters described in the PRD.
 
-# 8. Initial Manufacturing Target
+Existing migration utilities may remain as explicit engineering tools, but they are not part of the automatic BOM-resolution path and must not blur the boundary between design intent and procurement resolution.
 
-The initial implementation targets the JLCPCB manufacturing workflow.
+## 9. Success
 
-This is intentionally a first implementation—not a limitation of the architecture.
+The intended workflow is:
 
-The JLC strategy should leverage the close integration between:
+1. The engineer completes and verifies the design.
+2. Hendley reads the live design or imports its component data.
+3. Hendley constructs and validates a Requirements BOM.
+4. The engineer selects a Provider Strategy.
+5. Hendley finds, filters, and ranks candidates.
+6. The engineer reviews recommendations and exceptions.
+7. Hendley records approvals.
+8. A Provider Adapter generates the manufacturing-ready BOM.
+9. The engineer submits the result to the assembly provider.
 
-* JLCPCB
-* LCSC
+Routine post-design BOM work should be reduced from hours of catalog searching to minutes of focused review.
 
-allowing the resolver to produce JLC-compatible manufacturing BOMs with minimal manual effort.
+## 10. Long-Term Direction
 
-Future providers should require only new provider strategies rather than changes to the resolver core.
+Hendley should become an open, provider-independent platform for moving from completed electronic design to manufacturing without repetitive procurement work.
 
----
+The long-term goal is not merely to automate BOM formatting. It is to redefine the interface between electronic design and electronic manufacturing so that:
 
-# 9. Provider Strategy Architecture
-
-Different manufacturers optimize differently.
-
-For example:
-
-JLCPCB primarily operates within the LCSC ecosystem.
-
-Another assembly provider may optimize using:
-
-* DigiKey
-* Mouser
-* Arrow
-* internal inventory
-* approved vendor lists (AVLs)
-
-Therefore the provider strategy determines:
-
-* searchable inventory sources,
-* optimization priorities,
-* preferred identifiers,
-* output formats,
-* manufacturing constraints.
-
-The resolver core remains independent of these decisions.
-
----
-
-# 10. Success Criteria
-
-A successful workflow should resemble the following:
-
-1. Engineer completes schematic and PCB design.
-2. Design Rule Check passes.
-3. Engineer exports a requirements-based BOM.
-4. Manufacturing BOM Resolver analyzes requirements.
-5. AI generates ranked component recommendations.
-6. Engineer reviews recommendations.
-7. Resolver generates a manufacturing-ready BOM.
-8. BOM is submitted directly to the selected assembly provider.
-
-The manual component-resolution process should be reduced from hours to minutes.
-
----
-
-# 11. Guiding Principles
-
-* Engineering intent is the source of truth.
-* Manufacturing data is transient.
-* Separate design from procurement.
-* Separate procurement from provider implementation.
-* Preserve reusable engineering knowledge.
-* Keep humans responsible for final approval.
-* AI accelerates engineering workflows through transparent recommendations.
-* Provider-specific behavior belongs in provider strategies, not in the resolver core.
-* Build an open architecture that encourages community-contributed provider integrations.
-
----
-
-# 12. Scope
-
-This project focuses on manufacturing BOM generation after engineering design is complete.
-
-The project is **not** intended to replace:
-
-* ECAD tools,
-* schematic capture,
-* PCB layout,
-* simulation,
-* electrical verification.
-
-It complements existing ECAD workflows by automating the repetitive transition from completed design to manufacturing-ready procurement.
-
----
-
-# 13. Long-Term Vision
-
-The Manufacturing BOM Resolver should become a provider-independent, open-source platform that enables engineers to move seamlessly from completed design to manufacturing without performing repetitive procurement work.
-
-By separating engineering intent from manufacturing implementation, the platform creates a reusable knowledge system that improves over time while remaining transparent, reviewable, and under engineer control.
-
-The long-term goal is not simply to automate BOM creation.
-
-The goal is to redefine the interface between electronic design and electronic manufacturing.
+- engineering intent remains stable
+- procurement policy remains replaceable
+- provider integrations remain modular
+- engineering knowledge accumulates over time
+- engineers remain in control
