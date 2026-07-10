@@ -134,6 +134,94 @@ def _cmd_alternates(client: JLCClient, args) -> int:
     return 0
 
 
+def _cmd_db_lookup(client, args) -> int:
+    """Look up the current house part (and history) for one spec key."""
+    from .partsdb import history, lookup, open_db
+
+    conn = open_db(args.db)
+    _print({
+        "current": lookup(conn, args.kind, args.value, args.package, args.qualifier),
+        "history": history(conn, args.kind, args.value, args.package, args.qualifier),
+    })
+    return 0
+
+
+def _cmd_db_record(client, args) -> int:
+    """Record a pick as the current house part for a spec (promotes; keeps history)."""
+    from .partsdb import open_db, record
+
+    conn = open_db(args.db)
+    row = record(
+        conn, args.kind, args.value, args.package, args.lcsc,
+        qualifier=args.qualifier, mpn=args.mpn, manufacturer=args.manufacturer,
+        description=args.description, design=args.design, note=args.note,
+    )
+    _print(row)
+    return 0
+
+
+def _cmd_db_list(client, args) -> int:
+    from .partsdb import list_parts, open_db
+
+    _print(list_parts(open_db(args.db), kind=args.kind))
+    return 0
+
+
+def _cmd_db_refresh(client, args) -> int:
+    """Batch live-verify every current house part; update the advisory cache."""
+    from .alternates import _unit_price_at_qty1
+    from .partsdb import list_parts, open_db, update_verified
+
+    conn = open_db(args.db)
+    codes = sorted({p["lcscCode"] for p in list_parts(conn)})
+    if not codes:
+        print("house-parts DB has no current parts — nothing to refresh.")
+        return 0
+    details = {d.get("componentCode"): d
+               for d in (client.get_component_detail_by_code(codes) or [])}
+    for code in codes:
+        d = details.get(code)
+        if d is not None:
+            update_verified(conn, code, d.get("stockCount"), _unit_price_at_qty1(d))
+    missing = [c for c in codes if c not in details]
+    out = [c for c in codes if c in details and (details[c].get("stockCount") or 0) <= 0]
+    print(f"Refreshed {len(codes) - len(missing)}/{len(codes)} house part(s).")
+    if out:
+        print(f"OUT OF STOCK: {', '.join(out)}")
+    if missing:
+        print(f"NOT FOUND in JLC catalog: {', '.join(missing)}")
+    return 0
+
+
+def _cmd_bom(client, args) -> int:
+    """Render an agent-composed resolution JSON into the JLCPCB upload BOM CSV."""
+    from pathlib import Path
+
+    from .bom import (
+        format_resolution_report,
+        load_resolution_json,
+        render_bom_csv,
+        unresolved_lines,
+    )
+
+    design, lines = load_resolution_json(args.resolution_json)
+    csv_text = render_bom_csv(lines)
+    if args.output:
+        Path(args.output).write_text(csv_text)
+        print(f"wrote {len(lines)} BOM line(s) to {args.output}", file=sys.stderr)
+    else:
+        print(csv_text, end="")
+    if args.report:
+        print(format_resolution_report(design, lines), file=sys.stderr)
+    unresolved = unresolved_lines(lines)
+    if unresolved:
+        refs = ", ".join(",".join(x.designators) for x in unresolved)
+        print(f"error: {len(unresolved)} unresolved line(s) (no LCSC code): {refs} — "
+              "do not upload this BOM.", file=sys.stderr)
+        return 1
+    return 0
+
+
 def _cmd_scr(client, args) -> int:
     """Generate a Fusion ``.scr`` migration script from one or more swap files."""
     from pathlib import Path
@@ -216,6 +304,53 @@ def build_parser() -> argparse.ArgumentParser:
                     help="List jlcsearch category slugs and exit.")
     sp.set_defaults(func=_cmd_alternates)
 
+    sp = sub.add_parser("db", help="House-parts database: Hendley's spec → chosen-part memory.")
+    dbsub = sp.add_subparsers(dest="db_action", required=True)
+
+    def _spec_args(parser) -> None:
+        parser.add_argument("--db", help="Path to the house-parts DB "
+                            "(default: $HENDLEY_DB or ~/.hendley/parts.db).")
+        parser.add_argument("--kind", required=True,
+                            help="Canonical part kind, e.g. resistor, capacitor.")
+        parser.add_argument("--value", required=True,
+                            help="Canonical value string, e.g. 22k, 100n.")
+        parser.add_argument("--package", required=True, help="Package, e.g. 0603.")
+        parser.add_argument("--qualifier", default="",
+                            help="Beyond-house-default spec, e.g. '100V', '1%%' "
+                                 "(default: none = the house default).")
+
+    d = dbsub.add_parser("lookup", help="Current house part (and history) for one spec.")
+    _spec_args(d)
+    d.set_defaults(func=_cmd_db_lookup)
+
+    d = dbsub.add_parser("record", help="Record a pick as the house part for a spec "
+                                        "(promotes; old pick kept as history).")
+    _spec_args(d)
+    d.add_argument("--lcsc", required=True, help="Chosen part's LCSC code, e.g. C31850.")
+    d.add_argument("--mpn", help="Manufacturer part number.")
+    d.add_argument("--manufacturer", help="Manufacturer display name.")
+    d.add_argument("--description", help="Part description.")
+    d.add_argument("--design", help="Design that triggered this pick.")
+    d.add_argument("--note", help="Why this pick, e.g. 'C31850 out of stock 2026-07-09'.")
+    d.set_defaults(func=_cmd_db_record)
+
+    d = dbsub.add_parser("list", help="All current house parts.")
+    d.add_argument("--db", help="Path to the house-parts DB.")
+    d.add_argument("--kind", help="Filter by kind, e.g. resistor.")
+    d.set_defaults(func=_cmd_db_list)
+
+    d = dbsub.add_parser("refresh", help="Batch live-verify all current house parts "
+                                         "(the only db action that hits the API).")
+    d.add_argument("--db", help="Path to the house-parts DB.")
+    d.set_defaults(func=_cmd_db_refresh)
+
+    sp = sub.add_parser("bom", help="Render a resolution JSON into the JLCPCB upload BOM CSV.")
+    sp.add_argument("resolution_json", help="Path to the agent-composed resolution JSON.")
+    sp.add_argument("-o", "--output", help="Write the CSV here (default: stdout).")
+    sp.add_argument("--report", action="store_true",
+                    help="Also print the human-readable resolution report (to stderr).")
+    sp.set_defaults(func=_cmd_bom)
+
     sp = sub.add_parser("scr", help="Generate a Fusion .scr migration script from swap files.")
     sp.add_argument("swaps_json", nargs="+",
                     help="One or more swap JSON files; merged into one combo script.")
@@ -230,10 +365,12 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     from .config import load_settings
 
-    # Offline modes need no credentials: `scr` is pure generation; `fusion --no-enrich`
-    # only parses.
+    # Offline modes need no credentials: `scr`/`bom` are pure generation; `fusion
+    # --no-enrich` only parses; `db` is local SQLite except `db refresh` (live verify).
     offline = (
         args.command == "scr"
+        or args.command == "bom"
+        or (args.command == "db" and getattr(args, "db_action", None) != "refresh")
         or (args.command == "fusion" and getattr(args, "no_enrich", False))
         or (args.command == "alternates" and getattr(args, "list_categories", False))
     )

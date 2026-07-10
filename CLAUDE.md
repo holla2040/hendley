@@ -3,11 +3,18 @@
 ## Purpose
 
 **Hendley** is a Python tool to query the JLCPCB parts inventory (LCSC / JLC
-components) and, going forward, to consolidate part info pulled directly from
-Autodesk Fusion Electronics — so the user can validate part availability and
-speed up JLCPCB **PCBA** order submissions. It is a Python reimplementation of
-JLCPCB's official Java OpenAPI SDK. (Named after James Garner's character
-Hendley, "the Scrounger", in *The Great Escape*.)
+components) and to turn Autodesk Fusion Electronics designs into validated
+JLCPCB **PCBA** order BOMs. It is a Python reimplementation of JLCPCB's
+official Java OpenAPI SDK. (Named after James Garner's character Hendley,
+"the Scrounger", in *The Great Escape*.)
+
+**The model: design in specs, source at BOM time.** The user designs in
+specifications ("22k, 0603") — most parts carry no part number in the design.
+The spec → concrete-part mapping lives in the **house-parts database**
+(`~/.hendley/parts.db`, override `$HENDLEY_DB`/`--db`), and sourcing is
+resolved when the submission BOM is generated — never by editing the design.
+Inventory problems are BOM-time substitutions; only genuine design changes
+(package, value) touch the schematic via the `.scr` path.
 
 ## Architecture / file map
 
@@ -22,7 +29,7 @@ Hendley, "the Scrounger", in *The Great Escape*.)
   data}` envelope unwrap.
 - `src/hendley/cli.py` — argparse CLI; entry point `hendley = hendley.cli:main`.
   Commands: `ping`, `detail`, `private`, `library`, `fusion`, `stock`, `scr`,
-  `alternates`.
+  `alternates`, `db` (`lookup`/`record`/`list`/`refresh`), `bom`.
 - `src/hendley/alternates.py` — alternate-part discovery: `fetch_candidates()`
   (DISCOVER candidate codes from the third-party parametric index
   `jlcsearch.tscircuit.com` — the official API can't search), `discover_and_verify()`
@@ -53,6 +60,22 @@ Hendley, "the Scrounger", in *The Great Escape*.)
   **stub** — the live read is currently done interactively over the HTTP bridge
   (see "Fusion access from WSL"); wrapping it into a committed extractor is the one
   open Fusion-side task.
+- `src/hendley/partsdb.py` — the **house-parts database** (stdlib `sqlite3`):
+  spec key `(kind, value, package, qualifier)` → chosen part, with promotion +
+  history (`record()` demotes the old current row, never deletes). Exact-key
+  storage on purpose: **the agent supplies canonical keys** — no value
+  normalization or spec parsing in Python. `open_db()`, `lookup()`,
+  `history()`, `record()`, `list_parts()`, `update_verified()` (advisory
+  stock/price cache — NEVER order against it), `resolve_db_path()`.
+- `src/hendley/bom.py` — the JLC submission-BOM emitter: `BomLine`,
+  `load_resolution_json()` (the agent-composed resolution contract — see the
+  module docstring / README), `render_bom_csv()` (JLC PCBA upload columns
+  `Comment, Designator, Footprint, LCSC Part #`), `unresolved_lines()`,
+  `format_resolution_report()`. Dumb renderer: all judgment happens before it.
+- `.claude/skills/order-bom/SKILL.md` — **the order workflow** (the project's
+  primary job). The agent-side intelligence: interpret specs/qualifiers, drive
+  `db lookup` → live verify → `alternates` → user pick → `db record`, emit via
+  `hendley bom`. Invoke it for "prepare/resolve/submit a BOM" requests.
 - `src/hendley/__init__.py` — public API exports (`JLCClient`, `JLCError`,
   config helpers).
 - `docs/api-reference.md` — **the API contract** (reverse-engineered from the
@@ -63,8 +86,9 @@ Hendley, "the Scrounger", in *The Great Escape*.)
 - `.keys` — credentials (git-ignored; never commit). `notes` — holds the
   developer-portal URL (not the API host).
 
-- `tests/` — `test_auth.py` (signing, pinned to the Java SDK algorithm) and
-  `test_fusion.py` (parts-export ingest contract).
+- `tests/` — `test_auth.py` (signing, pinned to the Java SDK algorithm),
+  `test_fusion.py` (parts-export ingest contract), `test_partsdb.py`
+  (house-parts DB semantics), `test_bom.py` (resolution → CSV/report).
 
 ## The workflow — having a conversation about JLC parts
 
@@ -86,12 +110,24 @@ of their words into the existing tooling.** Three standing rules for that role:
   below works identically that way.
 
 Many conversations are a one-shot lookup — *"is C25768 in stock?"* → `hendley
-detail`; *"check this BOM before I order"* → `hendley stock`. The main multi-step
-job is **changing a part**, and there is **one** workflow for it; the only thing
-that varies is *why* the part changes — it's **out of stock**, or you want a
-**different package**, or a **different value**. (If the part lives in a Fusion
-design, first read the live design over the bridge — see "Fusion access from WSL"
-below — to get its designator and the exact package variant names.) Drive it as:
+detail`; *"check this BOM before I order"* → `hendley stock`. Beyond those there
+are **two** multi-step jobs, and the trigger tells them apart:
+
+**Job 1 — preparing an order BOM (the primary job).** *"Get this design ready
+to order"*, *"resolve the BOM"*, *"a part in my BOM is out of stock"* — all
+sourcing problems. Use the **`order-bom` skill**
+(`.claude/skills/order-bom/SKILL.md`), which is the authoritative recipe: you
+interpret each part's spec into the canonical key, resolve it via `hendley db
+lookup` → one batched live verify → `hendley alternates` for gaps → the user
+picks → `hendley db record` (the pick is promoted to house part), and emit the
+upload CSV with `hendley bom`. **Out-of-stock is a BOM-time substitution now —
+it does NOT touch the design.**
+
+**Job 2 — changing a part in the design.** Only for **engineering** changes —
+a **different package** or a **different value** — where the schematic itself
+must change. (If the part lives in a Fusion design, first read the live design
+over the bridge — see "Fusion access from WSL" below — to get its designator
+and the exact package variant names.) Drive it as:
 
 1. **Anchor on the target.** `hendley detail <code>` → read its category, exact
    `componentSpecification` (the package string), and key specs. The exact
@@ -132,7 +168,8 @@ below — to get its designator and the exact package variant names.) Drive it a
    one with reasoning the user can override.
 5. **Build the swap and generate the `.scr`.** Do NOT read `scr.py` source for the
    input format — the swap-JSON contract is documented in **README → "The
-   workflow" (the `.scr` file format)** and the `hendley.scr` module docstring.
+   design-change workflow" (the `.scr` file format)** and the `hendley.scr`
+   module docstring.
    Fields (only `designator` required), filled from data you already have:
    - `designator` — the schematic ref (e.g. `R6`). Find it in the BOM
      (`hendley fusion PARTS.json --no-enrich`, or grep the parts JSON) by matching
@@ -210,11 +247,16 @@ changes; verify if it matters.) **Do NOT** download the whole catalog "for one
 part" — jlcsearch is the discovery surface.
 
 **CLI output (so you don't guess a flag that doesn't exist):**
-- `detail`, `private`, `library`, `fusion` — **print JSON by default; no `--json`
-  flag** (passing `--json` errors). Pipe their stdout to `python3`/`jq` to parse.
+- `detail`, `private`, `library`, `fusion`, and the `db` subcommands
+  (`lookup`/`record`/`list`) — **print JSON by default; no `--json` flag**
+  (passing `--json` errors). Pipe their stdout to `python3`/`jq` to parse.
 - `stock`, `alternates` — print a **human report by default**; add **`--json`**
   for structured output. These are the *only* two commands that accept `--json`.
-- `ping` — prints a status line. `scr` — prints the `.scr` (or `-o FILE` to write).
+- `ping`, `db refresh` — print status lines. `scr` — prints the `.scr` (or `-o
+  FILE` to write). `bom` — prints CSV (or `-o FILE`), report to stderr with
+  `--report`, **exit 1 if any line is unresolved**.
+- `db`/`bom` are offline except `db refresh` (the one `db` action that calls the
+  API). DB path resolution: `--db` → `$HENDLEY_DB` → `~/.hendley/parts.db`.
 - Each command's flags are exactly those in `hendley <cmd> --help`; don't assume a
   flag exists because another command has it.
 

@@ -43,19 +43,22 @@ replacements, verifies each one's **live** JLC stock / price / specs, and lays
 out the trade-off so you can pick. See
 [Finding a replacement part](#finding-a-replacement-part).
 
-**Where this is heading.** Hendley reads the design and looks up each part, you
-pick the replacements, and it generates a Fusion `.scr` script that applies the
-package + part-number changes ([The `.scr` file format](#the-scr-file-format)).
-The Fusion Electronics *object* API is read-only — **but the EAGLE command line
-is reachable from Python over HTTP** via
-`executeTextCommand('Electron.run "script C:\\path\\changes.scr"')`, so Hendley can
-fire the `.scr` straight into the running schematic over the HTTP bridge (no manual
-*Execute Script* step). That closes the loop: writing the new JLC part number
-back into the schematic at the new package size, turning a whole-board package
-migration from a day of manual searching into a single query. The point of all
-this: validate
-availability and source equivalents automatically, so JLCPCB **PCBA** orders go
-out faster and with fewer surprises.
+**The model: design in specs, source at order time.** You design in
+**specifications**, not part numbers: place a resistor, say "22k", pick a
+package, move on. Most parts carry no part number in the design at all. The
+mapping from spec to concrete orderable part lives outside Fusion, in Hendley's
+**house-parts database** — a SQLite memory of which part (LCSC code / MPN /
+manufacturer) you chose the last time a design said "22k, 0603" (the industry
+"house parts list" idea). Sourcing is resolved when the **submission BOM** is
+generated: known specs resolve from the database and get one batched **live**
+stock verification (cached stock is never trusted); unknown or out-of-stock
+specs go through alternates discovery, you pick, and the pick is recorded so it
+never has to be made twice. The output is a JLCPCB-upload-ready BOM CSV plus a
+resolution report. Inventory problems never touch the design — see
+[The order workflow](#the-order-workflow--from-specs-to-a-jlcpcb-bom). The
+`.scr` write path (over the same HTTP bridge, via
+`executeTextCommand('Electron.run "script …"')`) remains for **genuine design
+changes** — a package migration or a changed value — not for sourcing.
 
 ## What it does today
 
@@ -68,6 +71,13 @@ authentication scheme, exposed through a `hendley` CLI and a small Python API:
   [Finding a replacement part](#finding-a-replacement-part).
 - **Inventory check** a BOM (`hendley stock`) — flag out-of-stock / problem parts
   before a board submission.
+- **Remember spec → part decisions** (`hendley db`) — the house-parts database:
+  look up / record which concrete part a spec like "resistor 22k 0603" maps to,
+  across designs, with promotion + history semantics. See
+  [The order workflow](#the-order-workflow--from-specs-to-a-jlcpcb-bom).
+- **Emit the submission BOM** (`hendley bom`) — render a resolution into the
+  JLCPCB PCBA upload CSV (`Comment, Designator, Footprint, LCSC Part #`) plus a
+  traceability report; exits nonzero while any line is unresolved.
 - Generate Fusion Electronics migration scripts (`.scr`) to batch part package
   and attribute changes — see
   [The `.scr` file format](#the-scr-file-format).
@@ -182,16 +192,19 @@ hendley [--keys PATH] <command> [options]
 | `hendley stock PARTS.json [--min-stock N] [--json]` | **Inventory check** — look up live stock for every part in a BOM and flag any that are out of stock, not found, or below `--min-stock`. Exits nonzero if any part is out-of-stock or not found, so it can gate a submission (`hendley stock bom.json && submit`). |
 | `hendley scr SWAPS.json [SWAPS2.json ...] [-o FILE.scr] [--design NAME]` | Generate a Fusion `.scr` migration script from one or more swap files (merged into one combo script). Emits the `CHANGE PACKAGE` + `ATTRIBUTE` commands you run in Fusion. Runs offline — no credentials needed. See [The `.scr` file format](#the-scr-file-format). |
 | `hendley alternates CODE --category SLUG [--package PKG] [-p KEY=VALUE ...] [--top N] [--json]` | **Find an alternate** for a part: DISCOVER candidates from the third-party parametric index `jlcsearch.tscircuit.com`, then VERIFY *every* hit against the live JLC API (stock, price, parameters) and print a trade-off table. It does **not** rank or pick — you (or Claude) weigh stock / price / spec margin / package. `--list-categories` lists the slugs (offline). See [Finding a replacement part](#finding-a-replacement-part). |
+| `hendley db lookup\|record\|list\|refresh [--db PATH]` | **House-parts database** — the spec → chosen-part memory. `lookup`/`record` take the spec key (`--kind --value --package [--qualifier]`); `record` also takes `--lcsc` (plus optional `--mpn --manufacturer --description --design --note`) and *promotes*: the new pick becomes the house part, the old one is kept as history. `refresh` batch live-verifies every current part (the only `db` action that touches the API). DB path: `--db` → `$HENDLEY_DB` → `~/.hendley/parts.db`. |
+| `hendley bom RESOLUTION.json [-o FILE.csv] [--report]` | Render an agent-composed resolution JSON into the **JLCPCB PCBA upload BOM CSV** (`Comment, Designator, Footprint, LCSC Part #`), with `--report` adding a human-readable resolution trace (stderr). Offline. **Exits nonzero if any line has no LCSC code** — an unresolved BOM must not be uploaded. See [The resolution JSON](#the-resolution-json). |
 
 `--keys PATH` overrides credential discovery for any command.
 
-**Output format.** `detail`, `private`, `library`, and `fusion` print **JSON** to
-stdout by default — they have **no `--json` flag** (passing one is an error); pipe
-them to `jq`/`python3` to parse. Only **`stock`** and **`alternates`** accept
-`--json`; without it they print a human-readable report. `ping` prints a status
-line; `scr` prints (or writes with `-o`) the `.scr` script. A command's flags are
-exactly what `hendley <cmd> --help` lists — don't assume a flag exists because
-another command has it.
+**Output format.** `detail`, `private`, `library`, `fusion`, and the `db`
+subcommands print **JSON** to stdout by default — they have **no `--json` flag**
+(passing one is an error); pipe them to `jq`/`python3` to parse. Only **`stock`**
+and **`alternates`** accept `--json`; without it they print a human-readable
+report. `ping` and `db refresh` print status lines; `scr` prints (or writes with
+`-o`) the `.scr` script; `bom` prints (or writes with `-o`) CSV. A command's
+flags are exactly what `hendley <cmd> --help` lists — don't assume a flag exists
+because another command has it.
 
 ## Python usage
 
@@ -339,16 +352,55 @@ Remove the (correct) gateway forward when you're done with:
 netsh interface portproxy delete v4tov4 listenaddress=172.17.64.1 listenport=27182
 ```
 
-## The workflow
+## The order workflow — from specs to a JLCPCB BOM
 
-There is **one** workflow. A part needs to change — it's **out of stock**, you
-want a **different package**, or a **different value** — and the path is the same
-each time; only the trigger differs. It runs as an interactive
-[Claude Code](https://claude.com/claude-code) session in this repo: Claude reads
-the live design and does the JLC lookups, **you** make the design decision, and
-**Fusion** is where the change is written (the Electronics *object* API is
-read-only, but the `.scr` can be applied either manually or fired over the bridge
-with `Electron.run` — see step 5). `comet` below is just an example design.
+This is the primary workflow: turning a design full of bare specs ("22k, 0603")
+into a JLCPCB-upload-ready BOM, resolving every sourcing question at **BOM
+time** — never by editing the design. It runs as an interactive
+[Claude Code](https://claude.com/claude-code) session in this repo, driven by
+the **`order-bom` skill** (`.claude/skills/order-bom/SKILL.md`): the tools do
+the deterministic work (database, live verification, CSV), Claude does the
+interpretation (reading spec strings and qualifiers, weighing alternates), and
+**you** approve every pick.
+
+1. **Read the BOM** — from a parts JSON, or live over the HTTP bridge. Generic
+   parts need only the `electronics.Part` rows (designator / value / package
+   come natively); attributes are read only for parts that may carry an explicit
+   `LCSC`/`MPN` (your deliberately-chosen ICs and connectors).
+2. **Interpret each part into a spec key** `(kind, value, package, qualifier)` —
+   Claude's job, not a parser's: kind from the designator prefix, the value
+   string canonicalized (`22K` ≡ `22kΩ` → `22k`), and a qualifier only when the
+   part itself demands more than the house standard (`100n/100V` → value
+   `100n`, qualifier `100V`). Parts with explicit part numbers short-circuit.
+3. **Resolve** — `hendley db lookup` per spec; every candidate code gets **one
+   batched live stock verification** (cached stock in the DB is advisory only —
+   it is never ordered against, whatever its age). Specs the DB has never seen,
+   or whose house part is out of stock, go through `hendley alternates`; you
+   pick from the verified trade-off; `hendley db record` saves the pick — the
+   new choice **becomes the house part** (the old one stays as queryable
+   history), so next order it resolves automatically.
+4. **Emit** — `hendley bom resolution.json -o bom.csv --report` renders the
+   JLCPCB upload CSV plus the traceability report of what was mounted and why
+   (`db` / `pick` / `explicit` per line). It exits nonzero while any line is
+   unresolved, so a half-resolved BOM can't slip into an upload.
+
+The house-parts database (`~/.hendley/parts.db`, override with `$HENDLEY_DB` or
+`--db`) spans designs: the first time you ever use a 22k 0603 you pick it once;
+every later design that says "22k, 0603" resolves in milliseconds plus one live
+stock check. `hendley db refresh` batch-verifies the whole house list whenever
+you want an inventory health check.
+
+## The design-change workflow (`.scr`)
+
+The `.scr` path is for **genuine design changes** — a part moving to a
+**different package**, or a **different value** — where the schematic itself
+must change. (It is *no longer* the answer to "my part is out of stock": that's
+a sourcing problem, handled at BOM time by the order workflow above.) It runs
+the same way: Claude reads the live design and does the JLC lookups, **you**
+make the design decision, and **Fusion** is where the change is written (the
+Electronics *object* API is read-only, but the `.scr` can be applied either
+manually or fired over the bridge with `Electron.run` — see step 5). `comet`
+below is just an example design.
 
 **Before you start**
 
@@ -510,6 +562,41 @@ The script covers **package and attributes**. A changed **schematic value** (e.g
 change (loop step 5). You run the generated script in Fusion as described in the
 loop.
 
+### The resolution JSON
+
+`hendley bom` renders the artifact the order workflow ends with: a **resolution
+JSON** describing every BOM line's resolved part and where it came from. By this
+point all judgment is done — the file is the record of it. Object with a
+`lines` list (or a bare list); `designators` is the only required field per
+line:
+
+```json
+{
+  "design": "comet",
+  "lines": [
+    { "designators": ["R1", "R4"], "comment": "22k", "footprint": "0603",
+      "lcsc": "C31850", "source": "db", "note": "house part since 2026-05" },
+    { "designators": ["U1"], "comment": "MT3608", "footprint": "SOT-23-6",
+      "lcsc": "C82942", "source": "explicit" }
+  ]
+}
+```
+
+- One line per **unique part**; `designators` groups every reference that mounts
+  it.
+- `source` is the provenance tag: `db` (resolved from the house-parts database),
+  `pick` (chosen this order via alternates), or `explicit` (the design carried
+  the part number). `note` is free-form context for the report.
+- A line with no `lcsc` still renders (blank cell, visible gap) but the command
+  **exits 1** and the report shouts `UNRESOLVED — do not upload until fixed`.
+
+```bash
+hendley bom resolution.json -o comet_bom.csv --report   # CSV + report (stderr)
+```
+
+The CSV columns are exactly JLCPCB's PCBA BOM upload set:
+`Comment, Designator, Footprint, LCSC Part #`.
+
 ## Security
 
 - `.keys` holds your AppID, access key, and secret key. It is listed in
@@ -572,12 +659,69 @@ on **horton** (the Linux dev box), session
    available before submitting a PCBA order. A stub module is planned at
    `src/hendley/fusion.py`.
 
-2. **PCBA order automation.** The JLC SDK also exposes PCB order endpoints
+2. **PCBA order automation.** The BOM side of this has landed: the order
+   workflow + house-parts database + `hendley bom` produce a pre-validated,
+   upload-ready BOM CSV. Still open: the JLC SDK's PCB order endpoints
    (`uploadGerber`, calculate price, create order), where address and other
    sensitive fields must be RSA-tokenized with the `.keys` RSA key. These
    endpoints are mapped in [`docs/api-reference.md`](docs/api-reference.md) but
    not yet wrapped — when they are, this is where the RSA tokenization key (and
    a `cryptography` dependency) would come back in.
+
+## Future direction — Hendley as the Sidecar
+
+[`docs/Hendley Sidecar - Functional Spec.md`](docs/Hendley%20Sidecar%20-%20Functional%20Spec.md)
+is the mission this project is growing toward: a **Sidecar** companion to
+Fusion that owns the entire procurement layer — voice-driven constraint
+capture, sourcing intelligence, and purchasable-BOM generation — while the
+schematic stays generic. The Sidecar is an **evolution of Hendley, not a
+separate application**: everything in the spec's "Sidecar owns" list is already
+Hendley's role, and building a second system would duplicate the database, the
+JLC client, and the Fusion bridge.
+
+**Already implemented (the spec's core architecture is this repo):**
+
+- Design-intent / procurement separation — the schematic describes what the
+  circuit needs; sourcing is resolved at BOM time and never edits the design
+  ([the order workflow](#the-order-workflow--from-specs-to-a-jlcpcb-bom)).
+- A cross-project sourcing database keyed on **requirements, not designators**
+  (the house-parts database), with approval history and timestamps
+  (promotion + history semantics, `pickedAt` / `lastVerifiedAt`).
+- Generic BOM in → purchasable BOM out (`hendley bom` → the JLC upload CSV +
+  resolution report).
+- The platform path the spec calls for — a read API plus a script-execution
+  channel — is the verified HTTP bridge (`electronics.Part` reads,
+  `Electron.run` writes).
+- Natural-language constraint interpretation — today via the `order-bom` skill
+  in a typed Claude Code session, at BOM time.
+
+**Not yet implemented (the deltas the spec adds), roughly in build order:**
+
+1. **Structured constraint identity.** Today extra requirements are packed
+   into the single `qualifier` string of the spec key; the spec calls for
+   separate structured attributes (`TOLERANCE`, `DIELECTRIC`,
+   `VOLTAGE_RATING`, …) as the matching identity. This is a house-parts schema
+   evolution and should happen **before the database accumulates real
+   history** — it is cheap while the DB is young and expensive after.
+2. **Constraint write-back into Fusion.** Persist normalized constraints as
+   structured attributes *in the design*. The machinery already exists
+   (`.scr` `ATTRIBUTE` lines over the write bridge); only the workflow is
+   unbuilt. Doctrine note: constraints are **design intent**, so writing them
+   back is consistent with "sourcing never touches the design" — MPNs, LCSC
+   codes, and stock state stay external.
+3. **Candidate-set persistence.** The database stores approved picks only; the
+   spec wants candidate / approved / rejected states, preferred and disallowed
+   vendors, and periodic background refresh of candidates (`hendley db
+   refresh` is the manual seed of that loop).
+4. **Voice-driven capture.** Speak per-designator constraints ("C14 should be
+   X7R, 50V") while designing, with confirm-before-persist on anything
+   ambiguous. A new input channel in front of the same interpretation logic
+   the skill already performs — not a new brain.
+5. **Multi-supplier sourcing.** The spec envisions parallel supplier search
+   and supplier SKUs in the output; the current, deliberate decision is
+   JLC/LCSC-only. Whatever happens here, the JLC constraint stands: the
+   *submitted* BOM must carry LCSC codes, because JLCPCB's PCBA upload matches
+   on them.
 
 ## Future enhancement: streamlining JLCPCB board submission
 
@@ -608,10 +752,11 @@ this validation *off* the website and *into* Hendley, so problems are caught and
 fixed **before** the tedious manual round-trips. The two highest-value targets
 are exactly the two error classes above:
 
-- **Inventory / BOM pre-validation** — check every part's stock and
-  Basic/Extended status against the JLC API up front (building on Hendley's
-  existing component lookups and the part-substitution work) so out-of-stock or
-  problem parts are resolved *before* submission, not discovered mid-upload.
+- **Inventory / BOM pre-validation** — largely addressed by the
+  [order workflow](#the-order-workflow--from-specs-to-a-jlcpcb-bom): every part
+  is live-verified and resolved *before* submission, and `hendley bom` refuses
+  (exit 1) to bless an unresolved BOM. The remaining gap is submitting through
+  the API instead of the website upload form.
 - **Placement / CPL pre-validation** — sanity-check the CPL against the design
   (designators, rotations, coordinates) before it ever reaches the website.
 
