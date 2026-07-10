@@ -1,5 +1,44 @@
 # Handoff — `house-parts-bom` branch (written 2026-07-10)
 
+> ## ⚠️ PLAN CHANGE (updated 2026-07-10, later the same day)
+>
+> **This branch is now the SUBJECT OF AN AUDIT, not a baton to pick up and
+> run with.** Craig's current plan:
+>
+> 1. A vision document exists: **`docs/vision.md` on the
+>    `feature/bom-resolver` branch** (commit `91bf74a`) — provider-independent
+>    "AI-assisted Manufacturing BOM Resolver."
+> 2. Craig + another agent are writing a **PRD** conversationally from that
+>    vision (location TBD; likely `feature/bom-resolver`).
+> 3. An auditing agent will then **check this branch against the PRD** to find
+>    what was built here that does not serve the vision.
+>
+> **If you are the auditing agent**, everything below is your map of what was
+> built and why. Known misalignment candidates to start from:
+>
+> - **Provider coupling in the core** — vision wants a provider-independent
+>   resolver with per-manufacturer strategies; this branch is JLC-native all
+>   the way down (`lcsc_code` is the identity of a Part Choice, the resolver
+>   calls `JLCClient` directly, `offerType: jlc-mounted` is baked in). The
+>   Solution layer was designed as the extension point (design doc Q4), but
+>   no adapter seam exists.
+> - **Ranking philosophy** — vision.md §3/§6/§7 has the AI ranking
+>   recommendations with history influencing rank; the AGREED design here
+>   forbids computed ranking (deliberate-only AVL rank, called the product's
+>   differentiator). The PRD must adjudicate; this branch enforces one side.
+> - **Lifecycle evaluation** — vision lists it as a resolver responsibility;
+>   this branch scoped it out (Q5, no data source).
+> - **The `.scr` design-change path** — vision §12 excludes editing designs
+>   (machinery predates this branch, but flag it for scope).
+>
+> **Audit discipline:** distinguish *"not applicable to the vision"* from
+> *"deliberately deferred v1 scope."* The design doc's §1 decisions and §4
+> boundaries record which is which — flagging signed-off deferrals as
+> misalignment is noise, not signal.
+>
+> Craig's per-commit review of this series (below) has NOT happened yet and
+> is now subordinate to the audit outcome.
+
 For the next agent picking this up. Current state: **the ranked-AVL sourcing
 design is fully implemented, self-reviewed, and green (86 tests). It awaits
 Craig's review — nothing here is merged to `main`.**
