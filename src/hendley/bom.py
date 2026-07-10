@@ -7,10 +7,12 @@ renderer of that JSON into (a) the CSV JLCPCB's PCBA BOM upload expects —
 columns ``Comment, Designator, Footprint, LCSC Part #`` — and (b) a
 human-readable resolution report for traceability of what was mounted and why.
 
-Input contract (JSON), object-with-``lines`` or a bare list::
+Input contract (JSON), object-with-``lines`` or a bare list — the output of
+``hendley resolve`` satisfies it directly::
 
     {
       "design": "comet",                    # optional, for the report header
+      "productionQuantity": 25,             # optional, boards built (report-only)
       "lines": [
         {
           "designators": ["R1", "R4"],      # required, non-empty
@@ -18,6 +20,7 @@ Input contract (JSON), object-with-``lines`` or a bare list::
           "footprint": "0603",              # footprint column
           "lcsc": "C31850",                 # LCSC code; null/missing = UNRESOLVED
           "source": "db",                   # db | pick | explicit (provenance)
+          "requiredQty": 50,                # optional: designators × qtyPer × N
           "note": "house part since 2026-05"  # optional, report-only
         }
       ]
@@ -53,6 +56,7 @@ class BomLine:
     footprint: str | None = None  # e.g. "0603"
     lcsc: str | None = None  # LCSC code; None = unresolved (blocker)
     source: str | None = None  # db | pick | explicit
+    required_qty: int | None = None  # designators × qtyPer × N (report-only)
     note: str | None = None  # report-only context (why / since when)
 
     @classmethod
@@ -65,24 +69,31 @@ class BomLine:
             raise ValueError(
                 f"line source {source!r} not one of {LINE_SOURCES}: {d!r}"
             )
+        required_qty = d.get("requiredQty")
         return cls(
             designators=[str(x) for x in designators],
             comment=d.get("comment"),
             footprint=d.get("footprint"),
             lcsc=d.get("lcsc"),
             source=source,
+            required_qty=int(required_qty) if required_qty is not None else None,
             note=d.get("note"),
         )
 
 
-def load_resolution_json(path: str | Path) -> tuple[str | None, list[BomLine]]:
-    """Load a resolution JSON file → (design name, BOM lines)."""
+def load_resolution_json(
+    path: str | Path,
+) -> tuple[str | None, int | None, list[BomLine]]:
+    """Load a resolution JSON file → (design name, production quantity, BOM lines)."""
     doc = json.loads(Path(path).read_text())
     lines = doc.get("lines") if isinstance(doc, dict) else doc
     design = doc.get("design") if isinstance(doc, dict) else None
+    n = doc.get("productionQuantity") if isinstance(doc, dict) else None
     if not isinstance(lines, list):
         raise ValueError("resolution JSON must be a list, or an object with a 'lines' list")
-    return (str(design) if design else None), [BomLine.from_dict(x) for x in lines]
+    if n is not None and (not isinstance(n, int) or n < 1):
+        raise ValueError(f"'productionQuantity' must be a positive integer, got {n!r}")
+    return (str(design) if design else None), n, [BomLine.from_dict(x) for x in lines]
 
 
 def render_bom_csv(lines: Iterable[BomLine]) -> str:
@@ -103,13 +114,18 @@ def unresolved_lines(lines: Iterable[BomLine]) -> list[BomLine]:
     return [x for x in lines if not x.lcsc]
 
 
-def format_resolution_report(design: str | None, lines: list[BomLine]) -> str:
+def format_resolution_report(
+    design: str | None, lines: list[BomLine], production_quantity: int | None = None
+) -> str:
     """Human-readable trace of where every BOM line's part came from."""
     unresolved = unresolved_lines(lines)
     parts = sum(len(x.designators) for x in lines)
-    headline = f"BOM resolution — {len(lines)} line(s), {parts} part(s)"
+    what = f"{len(lines)} line(s), {parts} part(s)/board"
+    if production_quantity:
+        what += f" × {production_quantity} board(s)"
+    headline = f"BOM resolution — {what}"
     if design:
-        headline = f"BOM resolution for {design} — {len(lines)} line(s), {parts} part(s)"
+        headline = f"BOM resolution for {design} — {what}"
     headline += "  →  ALL RESOLVED" if not unresolved else f"  →  {len(unresolved)} UNRESOLVED"
     out = [headline]
 
@@ -125,6 +141,8 @@ def format_resolution_report(design: str | None, lines: list[BomLine]) -> str:
         if line.footprint:
             bits.append(line.footprint)
         bits.append(line.lcsc or "— NO PART —")
+        if line.required_qty is not None:
+            bits.append(f"need {line.required_qty}")
         tail = []
         if line.source:
             tail.append(line.source)

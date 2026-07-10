@@ -244,7 +244,7 @@ def _cmd_bom(client, args) -> int:
         unresolved_lines,
     )
 
-    design, lines = load_resolution_json(args.resolution_json)
+    design, production_quantity, lines = load_resolution_json(args.resolution_json)
     csv_text = render_bom_csv(lines)
     if args.output:
         Path(args.output).write_text(csv_text)
@@ -252,7 +252,8 @@ def _cmd_bom(client, args) -> int:
     else:
         print(csv_text, end="")
     if args.report:
-        print(format_resolution_report(design, lines), file=sys.stderr)
+        print(format_resolution_report(design, lines, production_quantity),
+              file=sys.stderr)
     unresolved = unresolved_lines(lines)
     if unresolved:
         refs = ", ".join(",".join(x.designators) for x in unresolved)

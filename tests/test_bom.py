@@ -29,16 +29,23 @@ def test_load_resolution_json_object_and_list_forms(tmp_path):
     f = tmp_path / "resolution.json"
     f.write_text(json.dumps({
         "design": "comet",
+        "productionQuantity": 25,
         "lines": [{"designators": ["R1", "R4"], "comment": "22k", "footprint": "0603",
-                   "lcsc": "C31850", "source": "db"}],
+                   "lcsc": "C31850", "source": "db", "requiredQty": 50}],
     }))
-    design, lines = load_resolution_json(f)
-    assert design == "comet"
+    design, n, lines = load_resolution_json(f)
+    assert design == "comet" and n == 25
     assert lines[0].designators == ["R1", "R4"] and lines[0].lcsc == "C31850"
+    assert lines[0].required_qty == 50
 
     f.write_text(json.dumps([{"designators": ["U1"], "lcsc": "C82942"}]))  # bare-list form
-    design, lines = load_resolution_json(f)
-    assert design is None and lines[0].lcsc == "C82942"
+    design, n, lines = load_resolution_json(f)
+    assert design is None and n is None and lines[0].lcsc == "C82942"
+    assert lines[0].required_qty is None
+
+    f.write_text(json.dumps({"productionQuantity": 0, "lines": []}))
+    with pytest.raises(ValueError, match="productionQuantity"):
+        load_resolution_json(f)
 
 
 def test_render_bom_csv_columns_grouping_and_quoting():
@@ -80,3 +87,13 @@ def test_report_flags_unresolved_loudly():
     out = format_resolution_report(None, [BomLine(["J1"], comment="USB-C")])
     assert "1 UNRESOLVED" in out
     assert "do not upload" in out and "— NO PART —" in out
+
+
+def test_report_shows_board_count_and_required_qty():
+    lines = [BomLine(["R1", "R4"], comment="22k", lcsc="C31850", required_qty=50)]
+    out = format_resolution_report("comet", lines, production_quantity=25)
+    assert "2 part(s)/board × 25 board(s)" in out
+    assert "need 50" in out
+    # and quantity is genuinely optional — plain agent-composed JSON still renders
+    out = format_resolution_report(None, [BomLine(["U1"], lcsc="C1")])
+    assert "board(s)" not in out and "need" not in out
