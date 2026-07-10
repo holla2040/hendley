@@ -72,12 +72,17 @@ authentication scheme, exposed through a `hendley` CLI and a small Python API:
 - **Inventory check** a BOM (`hendley stock`) — flag out-of-stock / problem parts
   before a board submission.
 - **Remember spec → part decisions** (`hendley db`) — the house-parts database:
-  look up / record which concrete part a spec like "resistor 22k 0603" maps to,
-  across designs, with promotion + history semantics. See
+  each spec like "resistor 22k 0603" names a House Part carrying a **ranked
+  list of approved Part Choices** (the AVL), maintained deliberately
+  (record/rerank/remove, all audited), across designs. See
   [The order workflow](#the-order-workflow--from-specs-to-a-jlcpcb-bom).
+- **Resolve an order** (`hendley resolve`) — rank-walk every BOM line's
+  approved choices against live stock at the order's board count: silent
+  fallback down the rank, one batched approval queue for genuine gaps.
 - **Emit the submission BOM** (`hendley bom`) — render a resolution into the
   JLCPCB PCBA upload CSV (`Comment, Designator, Footprint, LCSC Part #`) plus a
-  traceability report; exits nonzero while any line is unresolved.
+  traceability report with named BOM checks; exits nonzero on any blocker; a
+  clean emit writes an immutable **release snapshot** of what was ordered.
 - Generate Fusion Electronics migration scripts (`.scr`) to batch part package
   and attribute changes — see
   [The `.scr` file format](#the-scr-file-format).
@@ -192,17 +197,19 @@ hendley [--keys PATH] <command> [options]
 | `hendley stock PARTS.json [--min-stock N] [--json]` | **Inventory check** — look up live stock for every part in a BOM and flag any that are out of stock, not found, or below `--min-stock`. Exits nonzero if any part is out-of-stock or not found, so it can gate a submission (`hendley stock bom.json && submit`). |
 | `hendley scr SWAPS.json [SWAPS2.json ...] [-o FILE.scr] [--design NAME]` | Generate a Fusion `.scr` migration script from one or more swap files (merged into one combo script). Emits the `CHANGE PACKAGE` + `ATTRIBUTE` commands you run in Fusion. Runs offline — no credentials needed. See [The `.scr` file format](#the-scr-file-format). |
 | `hendley alternates CODE --category SLUG [--package PKG] [-p KEY=VALUE ...] [--top N] [--json]` | **Find an alternate** for a part: DISCOVER candidates from the third-party parametric index `jlcsearch.tscircuit.com`, then VERIFY *every* hit against the live JLC API (stock, price, parameters) and print a trade-off table. It does **not** rank or pick — you (or Claude) weigh stock / price / spec margin / package. `--list-categories` lists the slugs (offline). See [Finding a replacement part](#finding-a-replacement-part). |
-| `hendley db lookup\|record\|list\|refresh [--db PATH]` | **House-parts database** — the spec → chosen-part memory. `lookup`/`record` take the spec key (`--kind --value --package [--qualifier]`); `record` also takes `--lcsc` (plus optional `--mpn --manufacturer --description --design --note`) and *promotes*: the new pick becomes the house part, the old one is kept as history. `refresh` batch live-verifies every current part (the only `db` action that touches the API). DB path: `--db` → `$HENDLEY_DB` → `~/.hendley/parts.db`. |
-| `hendley bom RESOLUTION.json [-o FILE.csv] [--report]` | Render an agent-composed resolution JSON into the **JLCPCB PCBA upload BOM CSV** (`Comment, Designator, Footprint, LCSC Part #`), with `--report` adding a human-readable resolution trace (stderr). Offline. **Exits nonzero if any line has no LCSC code** — an unresolved BOM must not be uploaded. See [The resolution JSON](#the-resolution-json). |
+| `hendley db lookup\|record\|rerank\|remove\|list\|refresh [--db PATH]` | **House-parts database** — each spec key (`--kind --value --package [--qualifier]`) names a **House Part** carrying a *ranked list* of approved **Part Choices** (the AVL). `lookup` prints `{housePart, history}` (rank-ordered choices + audit trail). `record --lcsc C… [--rank N]` approves a part (default rank 1 = promotion; existing choices shift down, **staying approved**). `rerank`/`remove` maintain the list deliberately (audited; removal is a state change, never a delete). `refresh` batch live-verifies every active choice (the only `db` action that touches the API). DB path: `--db` → `$HENDLEY_DB` → `~/.hendley/parts.db`. v1 databases migrate automatically on first open (the old table is kept as `house_parts_v1`). |
+| `hendley resolve REQUEST.json [-o FILE.json] [--db PATH]` | **The resolver** — rank-walk each request line's approved choices against live stock at the request's `productionQuantity`. One batched live verify for every candidate code across all lines; first choice with stock ≥ required qty (designators × qtyPer × N) wins; rank > 1 = silent **substitution** (reported, not asked). Lines whose whole list fails **escalate** (report to stderr, **exit 1**) with per-choice live stock to seed the alternates search. Output is a resolution JSON `hendley bom` renders directly. Contract in `hendley.resolve`. |
+| `hendley bom RESOLUTION.json [-o FILE.csv] [--report] [--no-snapshot]` | Render a resolution JSON into the **JLCPCB PCBA upload BOM CSV** (`Comment, Designator, Footprint, LCSC Part #`), with `--report` adding the trace (stderr): sources, required quantities, and every **BOM check** (`ERROR` blocks, `warn` reports). Offline. **Exits nonzero on any unresolved line or error-severity check** — a blocked BOM must not be uploaded. A clean `-o` emit writes an immutable **release snapshot** (`FILE.<UTC>.snapshot.json`) beside the CSV recording exactly what was ordered. See [The resolution JSON](#the-resolution-json). |
 
 `--keys PATH` overrides credential discovery for any command.
 
-**Output format.** `detail`, `private`, `library`, `fusion`, and the `db`
-subcommands print **JSON** to stdout by default — they have **no `--json` flag**
-(passing one is an error); pipe them to `jq`/`python3` to parse. Only **`stock`**
-and **`alternates`** accept `--json`; without it they print a human-readable
-report. `ping` and `db refresh` print status lines; `scr` prints (or writes with
-`-o`) the `.scr` script; `bom` prints (or writes with `-o`) CSV. A command's
+**Output format.** `detail`, `private`, `library`, `fusion`, `resolve`, and the
+`db` subcommands print **JSON** to stdout by default — they have **no `--json`
+flag** (passing one is an error); pipe them to `jq`/`python3` to parse. Only
+**`stock`** and **`alternates`** accept `--json`; without it they print a
+human-readable report. `ping` and `db refresh` print status lines; `scr` prints
+(or writes with `-o`) the `.scr` script; `bom` prints (or writes with `-o`) CSV;
+`resolve` additionally prints its escalation report to stderr. A command's
 flags are exactly what `hendley <cmd> --help` lists — don't assume a flag exists
 because another command has it.
 
@@ -363,32 +370,48 @@ the deterministic work (database, live verification, CSV), Claude does the
 interpretation (reading spec strings and qualifiers, weighing alternates), and
 **you** approve every pick.
 
-1. **Read the BOM** — from a parts JSON, or live over the HTTP bridge. Generic
-   parts need only the `electronics.Part` rows (designator / value / package
-   come natively); attributes are read only for parts that may carry an explicit
-   `LCSC`/`MPN` (your deliberately-chosen ICs and connectors).
+1. **Read the BOM and set the board count** — the BOM from a parts JSON or live
+   over the HTTP bridge (generic parts need only the `electronics.Part` rows;
+   attributes are read only for parts that may carry an explicit `LCSC`/`MPN`).
+   The **Production Quantity** (boards to build, `N`) is asked once up front —
+   nothing resolves without it, because "in stock" is undefined until each
+   line's required quantity (designators × per-designator qty × N) is known.
 2. **Interpret each part into a spec key** `(kind, value, package, qualifier)` —
    Claude's job, not a parser's: kind from the designator prefix, the value
    string canonicalized (`22K` ≡ `22kΩ` → `22k`), and a qualifier only when the
    part itself demands more than the house standard (`100n/100V` → value
    `100n`, qualifier `100V`). Parts with explicit part numbers short-circuit.
-3. **Resolve** — `hendley db lookup` per spec; every candidate code gets **one
-   batched live stock verification** (cached stock in the DB is advisory only —
-   it is never ordered against, whatever its age). Specs the DB has never seen,
-   or whose house part is out of stock, go through `hendley alternates`; you
-   pick from the verified trade-off; `hendley db record` saves the pick — the
-   new choice **becomes the house part** (the old one stays as queryable
-   history), so next order it resolves automatically.
+3. **Resolve** — `hendley resolve request.json -o resolution.json`. Each spec
+   maps to a **House Part** carrying a ranked list of approved **Part Choices**
+   (the AVL). The resolver live-verifies *every* candidate code across all
+   lines in **one batched call** (cached stock in the DB is advisory only —
+   never ordered against, whatever its age), then walks each line's choices in
+   rank order and takes the first with stock ≥ the required quantity.
+   **A rank-1 part being out of stock is not your problem anymore**: the
+   resolver falls back down the rank silently and the substitution surfaces in
+   the report. Only a line whose *whole list* fails (or a spec with no
+   approvals yet) escalates — and every escalation lands in **one batched
+   approval queue**: alternates per gap, your pick, `hendley db record`
+   (promotion to rank 1; existing choices shift down, staying approved — the
+   AVL deepens), then one re-resolve.
 4. **Emit** — `hendley bom resolution.json -o bom.csv --report` renders the
-   JLCPCB upload CSV plus the traceability report of what was mounted and why
-   (`db` / `pick` / `explicit` per line). It exits nonzero while any line is
-   unresolved, so a half-resolved BOM can't slip into an upload.
+   JLCPCB upload CSV plus the traceability report (sources, required
+   quantities, every **BOM check** — substitutions included). It exits nonzero
+   on any unresolved line *or error-severity check*, so a blocked BOM can't
+   slip into an upload. A clean emit also writes a **release snapshot**
+   (`bom.<UTC>.snapshot.json`) beside the CSV — the immutable record of what
+   was actually ordered (rank used, live stock, prices, N). The DB holds
+   *policy*; the snapshot holds *fact* — keep it with the order records; it
+   answers "what exactly did we mount in rev C?" long after stock and ranks
+   have moved on.
 
 The house-parts database (`~/.hendley/parts.db`, override with `$HENDLEY_DB` or
 `--db`) spans designs: the first time you ever use a 22k 0603 you pick it once;
-every later design that says "22k, 0603" resolves in milliseconds plus one live
-stock check. `hendley db refresh` batch-verifies the whole house list whenever
-you want an inventory health check.
+every later design that says "22k, 0603" resolves automatically, and after a
+design's first order its whole BOM trends toward zero questions. `hendley db
+rerank` / `hendley db remove` maintain a spec's list deliberately (audited,
+never deleted); `hendley db refresh` batch-verifies the whole house list
+whenever you want an inventory health check.
 
 ## The design-change workflow (`.scr`)
 
@@ -566,16 +589,19 @@ loop.
 
 `hendley bom` renders the artifact the order workflow ends with: a **resolution
 JSON** describing every BOM line's resolved part and where it came from. By this
-point all judgment is done — the file is the record of it. Object with a
-`lines` list (or a bare list); `designators` is the only required field per
-line:
+point all judgment is done — the file is the record of it. **`hendley resolve`
+produces it** (its output is a superset of this contract), or it can be
+composed by hand. Object with a `lines` list (or a bare list); `designators` is
+the only required field per line:
 
 ```json
 {
   "design": "comet",
+  "productionQuantity": 25,
   "lines": [
     { "designators": ["R1", "R4"], "comment": "22k", "footprint": "0603",
-      "lcsc": "C31850", "source": "db", "note": "house part since 2026-05" },
+      "lcsc": "C31850", "source": "db", "requiredQty": 50,
+      "note": "house part since 2026-05" },
     { "designators": ["U1"], "comment": "MT3608", "footprint": "SOT-23-6",
       "lcsc": "C82942", "source": "explicit" }
   ]
@@ -587,15 +613,23 @@ line:
 - `source` is the provenance tag: `db` (resolved from the house-parts database),
   `pick` (chosen this order via alternates), or `explicit` (the design carried
   the part number). `note` is free-form context for the report.
+- `productionQuantity` / `requiredQty` are optional report context (the
+  resolver fills them); `checks` per line carries named BOM-check results —
+  `error` severity blocks the emit, `warning` (e.g. a rank fallback
+  substitution) is reported.
 - A line with no `lcsc` still renders (blank cell, visible gap) but the command
-  **exits 1** and the report shouts `UNRESOLVED — do not upload until fixed`.
+  **exits 1** and the report shouts `UNRESOLVED — do not upload until fixed`;
+  any `error`-severity check exits 1 the same way.
 
 ```bash
 hendley bom resolution.json -o comet_bom.csv --report   # CSV + report (stderr)
 ```
 
 The CSV columns are exactly JLCPCB's PCBA BOM upload set:
-`Comment, Designator, Footprint, LCSC Part #`.
+`Comment, Designator, Footprint, LCSC Part #`. A clean `-o` emit also writes
+`comet_bom.<UTC>.snapshot.json` beside the CSV — the immutable release record
+(chosen codes, rank used, live stock and prices, board count) that still
+answers "what did we mount?" after the house-parts DB has moved on.
 
 ## Security
 

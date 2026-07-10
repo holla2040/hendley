@@ -29,7 +29,8 @@ Inventory problems are BOM-time substitutions; only genuine design changes
   data}` envelope unwrap.
 - `src/hendley/cli.py` — argparse CLI; entry point `hendley = hendley.cli:main`.
   Commands: `ping`, `detail`, `private`, `library`, `fusion`, `stock`, `scr`,
-  `alternates`, `db` (`lookup`/`record`/`list`/`refresh`), `bom`.
+  `alternates`, `db` (`lookup`/`record`/`rerank`/`remove`/`list`/`refresh`),
+  `resolve`, `bom`.
 - `src/hendley/alternates.py` — alternate-part discovery: `fetch_candidates()`
   (DISCOVER candidate codes from the third-party parametric index
   `jlcsearch.tscircuit.com` — the official API can't search), `discover_and_verify()`
@@ -60,22 +61,43 @@ Inventory problems are BOM-time substitutions; only genuine design changes
   **stub** — the live read is currently done interactively over the HTTP bridge
   (see "Fusion access from WSL"); wrapping it into a committed extractor is the one
   open Fusion-side task.
-- `src/hendley/partsdb.py` — the **house-parts database** (stdlib `sqlite3`):
-  spec key `(kind, value, package, qualifier)` → chosen part, with promotion +
-  history (`record()` demotes the old current row, never deletes). Exact-key
-  storage on purpose: **the agent supplies canonical keys** — no value
-  normalization or spec parsing in Python. `open_db()`, `lookup()`,
-  `history()`, `record()`, `list_parts()`, `update_verified()` (advisory
-  stock/price cache — NEVER order against it), `resolve_db_path()`.
+- `src/hendley/partsdb.py` — the **house-parts database** (stdlib `sqlite3`,
+  schema v2 per `docs/hendley-sourcing-design.md`): a spec key `(kind, value,
+  package, qualifier)` looks up a **House Part** (opaque-id identity) carrying
+  a **ranked list of approved Part Choices** (the AVL) plus a full audit
+  trail. `record()` approves at a rank (default 1 = promotion; existing
+  choices shift down, *staying approved*); `rerank()`/`remove_choice()` are
+  deliberate, audited maintenance (removal = state change, never delete);
+  `history()` returns audit events. Exact-key storage on purpose: **the agent
+  supplies canonical keys** — no value normalization or spec parsing in
+  Python. `update_verified()` is the advisory stock/price cache — NEVER order
+  against it. v1 DBs migrate automatically on `open_db()` (old table kept as
+  `house_parts_v1`).
+- `src/hendley/resolve.py` — **the resolver** (the mechanical half of BOM
+  resolution): rank-walk each request line's Part Choices against live stock
+  at the order's **Production Quantity** (required = designators × qtyPer ×
+  N), all candidate codes verified in ONE batched call. Rank > 1 = silent
+  **substitution** (warning check, self-noted); exhausted AVL / unknown spec /
+  short explicit part = **escalation** (exit 1, per-choice stock included to
+  seed alternates). Defines the **BOM Checks** vocabulary (`CHECKS`: name →
+  error|warning). Request/output contracts in the module docstring; output is
+  a superset of the `bom.py` resolution contract.
 - `src/hendley/bom.py` — the JLC submission-BOM emitter: `BomLine`,
-  `load_resolution_json()` (the agent-composed resolution contract — see the
-  module docstring / README), `render_bom_csv()` (JLC PCBA upload columns
+  `load_resolution_json()` (the resolution contract — see the module
+  docstring / README), `render_bom_csv()` (JLC PCBA upload columns
   `Comment, Designator, Footprint, LCSC Part #`), `unresolved_lines()`,
+  `error_checks()`/`warning_checks()` (severity gate: errors block the emit),
   `format_resolution_report()`. Dumb renderer: all judgment happens before it.
+- `src/hendley/snapshot.py` — **Release Snapshots**: `write_release_snapshot()`
+  writes the immutable what-was-ordered record beside a clean CSV emit
+  (timestamped filename, refuses overwrite, embeds the resolution verbatim).
+  The DB holds *policy*; the snapshot holds *fact*.
 - `.claude/skills/order-bom/SKILL.md` — **the order workflow** (the project's
-  primary job). The agent-side intelligence: interpret specs/qualifiers, drive
-  `db lookup` → live verify → `alternates` → user pick → `db record`, emit via
-  `hendley bom`. Invoke it for "prepare/resolve/submit a BOM" requests.
+  primary job). The agent-side intelligence: get the board count, interpret
+  specs/qualifiers, compose the resolve request, run `hendley resolve` (silent
+  rank fallback), batch every escalation into ONE approval queue
+  (`alternates` → user pick → `db record`), emit via `hendley bom` (CSV +
+  snapshot). Invoke it for "prepare/resolve/submit a BOM" requests.
 - `src/hendley/__init__.py` — public API exports (`JLCClient`, `JLCError`,
   config helpers).
 - `docs/api-reference.md` — **the API contract** (reverse-engineered from the
@@ -88,7 +110,9 @@ Inventory problems are BOM-time substitutions; only genuine design changes
 
 - `tests/` — `test_auth.py` (signing, pinned to the Java SDK algorithm),
   `test_fusion.py` (parts-export ingest contract), `test_partsdb.py`
-  (house-parts DB semantics), `test_bom.py` (resolution → CSV/report).
+  (AVL semantics + v1→v2 migration), `test_resolve.py` (rank-walk,
+  substitution, escalation, quantity math), `test_bom.py` (resolution →
+  CSV/report + check gating), `test_snapshot.py` (release snapshots).
 
 ## The workflow — having a conversation about JLC parts
 
@@ -116,12 +140,16 @@ are **two** multi-step jobs, and the trigger tells them apart:
 **Job 1 — preparing an order BOM (the primary job).** *"Get this design ready
 to order"*, *"resolve the BOM"*, *"a part in my BOM is out of stock"* — all
 sourcing problems. Use the **`order-bom` skill**
-(`.claude/skills/order-bom/SKILL.md`), which is the authoritative recipe: you
-interpret each part's spec into the canonical key, resolve it via `hendley db
-lookup` → one batched live verify → `hendley alternates` for gaps → the user
-picks → `hendley db record` (the pick is promoted to house part), and emit the
-upload CSV with `hendley bom`. **Out-of-stock is a BOM-time substitution now —
-it does NOT touch the design.**
+(`.claude/skills/order-bom/SKILL.md`), which is the authoritative recipe: get
+the **board count (Production Quantity)** up front, interpret each part's spec
+into the canonical key, compose the resolve request, and run **`hendley
+resolve`** — it rank-walks each spec's approved Part Choices against live
+stock (one batched verify) and **falls back down the rank silently** (an
+out-of-stock rank-1 part is a reported substitution, not a question). Only
+escalations (spec never approved / whole AVL short) reach the user, batched
+into ONE approval queue: `hendley alternates` per gap → user picks → `hendley
+db record` (promotion deepens the AVL) → re-resolve. Emit with `hendley bom`
+(CSV + report + release snapshot). **Out-of-stock never touches the design.**
 
 **Job 2 — changing a part in the design.** Only for **engineering** changes —
 a **different package** or a **different value** — where the schematic itself
@@ -247,16 +275,20 @@ changes; verify if it matters.) **Do NOT** download the whole catalog "for one
 part" — jlcsearch is the discovery surface.
 
 **CLI output (so you don't guess a flag that doesn't exist):**
-- `detail`, `private`, `library`, `fusion`, and the `db` subcommands
-  (`lookup`/`record`/`list`) — **print JSON by default; no `--json` flag**
-  (passing `--json` errors). Pipe their stdout to `python3`/`jq` to parse.
+- `detail`, `private`, `library`, `fusion`, `resolve`, and the `db` subcommands
+  (`lookup`/`record`/`rerank`/`remove`/`list`) — **print JSON by default; no
+  `--json` flag** (passing `--json` errors). Pipe stdout to `python3`/`jq`.
+  `db lookup` prints `{housePart, history}` — ranked `choices` + audit trail.
 - `stock`, `alternates` — print a **human report by default**; add **`--json`**
   for structured output. These are the *only* two commands that accept `--json`.
 - `ping`, `db refresh` — print status lines. `scr` — prints the `.scr` (or `-o
-  FILE` to write). `bom` — prints CSV (or `-o FILE`), report to stderr with
-  `--report`, **exit 1 if any line is unresolved**.
-- `db`/`bom` are offline except `db refresh` (the one `db` action that calls the
-  API). DB path resolution: `--db` → `$HENDLEY_DB` → `~/.hendley/parts.db`.
+  FILE` to write). `resolve` — resolution JSON (or `-o FILE`), escalation
+  report to stderr, **exit 1 if any line escalates**. `bom` — prints CSV (or
+  `-o FILE`), report to stderr with `--report`, **exit 1 on any unresolved
+  line or error-severity check**; a clean `-o` emit writes a release snapshot
+  beside the CSV (`--no-snapshot` to skip).
+- `db`/`bom` are offline except `db refresh`; `resolve` is online (the batched
+  live verify). DB path resolution: `--db` → `$HENDLEY_DB` → `~/.hendley/parts.db`.
 - Each command's flags are exactly those in `hendley <cmd> --help`; don't assume a
   flag exists because another command has it.
 
