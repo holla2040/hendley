@@ -719,8 +719,8 @@ JLC client, and the Fusion bridge.
   circuit needs; sourcing is resolved at BOM time and never edits the design
   ([the order workflow](#the-order-workflow--from-specs-to-a-jlcpcb-bom)).
 - A cross-project sourcing database keyed on **requirements, not designators**
-  (the house-parts database), with approval history and timestamps
-  (promotion + history semantics, `pickedAt` / `lastVerifiedAt`).
+  (the house-parts database), with ranked approved choices per spec and a
+  full audit trail (rank/state semantics, `approvedAt` / `lastVerifiedAt`).
 - Generic BOM in → purchasable BOM out (`hendley bom` → the JLC upload CSV +
   resolution report).
 - The platform path the spec calls for — a read API plus a script-execution

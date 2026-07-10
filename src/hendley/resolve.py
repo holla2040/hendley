@@ -41,8 +41,9 @@ Input contract (JSON), agent-composed::
 
 The output dict is a superset of the ``hendley.bom`` resolution contract —
 ``hendley bom`` renders it directly — adding per line: ``spec``,
-``housePartId``, ``requiredQty``, ``rankUsed``, ``substitution``,
-``liveStock``, ``unitPrice``, ``offerType``, and ``checks``; plus a top-level
+``housePartId``, ``quantityPer``, ``requiredQty``, ``rankUsed``,
+``substitution``, ``liveStock``, ``unitPrice``, ``offerType``, and
+``checks``; plus a top-level
 ``escalations`` list of the lines needing the agent (each carrying the
 per-choice live stock so the alternates search can seed without re-querying).
 
@@ -54,15 +55,18 @@ reported. ``CHECKS`` below is the authoritative name → severity table.
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
-from .alternates import _unit_price_at_qty1
+from .alternates import unit_price_at_qty
 from .partsdb import lookup, update_verified
 
 # BOM Check name → severity. Errors block upload; warnings are reported.
+# "unresolved" (line has no LCSC code) is synthesized at the emit layer
+# (hendley.bom) rather than stamped here — the specific checks below already
+# say WHY a line failed, and bom.py derives no-code from the line itself.
 CHECKS = {
-    "unresolved": "error",           # line has no LCSC code after resolution
+    "unresolved": "error",           # no LCSC code (synthesized by hendley.bom)
     "no-part-choices": "error",      # spec has no House Part / no active choices
     "avl-exhausted": "error",        # choices exist; none satisfies required qty
     "not-in-catalog": "error",       # a code the catalog no longer returns
@@ -87,7 +91,6 @@ class ResolveLine:
     footprint: str | None = None
     quantity_per: int = 1  # per-designator quantity
     note: str | None = None
-    attributes: dict = field(default_factory=dict)
 
     @classmethod
     def from_dict(cls, d: dict) -> "ResolveLine":
@@ -99,13 +102,24 @@ class ResolveLine:
             missing = [k for k in ("kind", "value", "package") if not spec.get(k)]
             if missing:
                 raise ValueError(f"line spec is missing {missing}: {d!r}")
+        if spec is not None and d.get("lcsc"):
+            # The contract is spec OR lcsc; silently preferring one would
+            # discard the other without explanation (an explicit part
+            # short-circuits spec resolution — drop the spec, or vice versa).
+            raise ValueError(
+                f"line has both 'spec' and 'lcsc' — use exactly one: {d!r}")
+        qp_raw = d.get("quantityPer", 1)
+        quantity_per = int(qp_raw) if qp_raw is not None else 1
+        if quantity_per < 1:
+            raise ValueError(
+                f"'quantityPer' must be >= 1 (omit DNP lines from the request): {d!r}")
         return cls(
             designators=[str(x) for x in designators],
             spec=spec,
             lcsc=d.get("lcsc"),
             comment=d.get("comment"),
             footprint=d.get("footprint"),
-            quantity_per=int(d.get("quantityPer", 1) or 1),
+            quantity_per=quantity_per,
             note=d.get("note"),
         )
 
@@ -152,7 +166,7 @@ def resolve(
         house = None
         if line.spec is not None:
             house = lookup(conn, line.spec["kind"], line.spec["value"],
-                           line.spec["package"], line.spec.get("qualifier", ""))
+                           line.spec["package"], line.spec.get("qualifier") or "")
             if house:
                 codes.update(c["lcscCode"] for c in house["choices"])
         if line.lcsc:
@@ -166,7 +180,7 @@ def resolve(
         fetched = client.get_component_detail_by_code(sorted(codes)) or []
         details = {d.get("componentCode"): d for d in fetched}
         for code, d in details.items():
-            update_verified(conn, code, d.get("stockCount"), _unit_price_at_qty1(d))
+            update_verified(conn, code, d.get("stockCount"), unit_price_at_qty(d, 1))
 
     # Pass 2 — rank-walk each line.
     out_lines: list[dict] = []
@@ -182,6 +196,7 @@ def resolve(
             "note": line.note,
             "spec": line.spec,
             "housePartId": houses[i]["id"] if houses[i] else None,
+            "quantityPer": line.quantity_per,
             "requiredQty": required,
             "rankUsed": None,
             "substitution": False,
@@ -200,8 +215,6 @@ def resolve(
                 "no-code-uncheckable",
                 f"{','.join(line.designators)}: no spec and no LCSC code — "
                 "nothing to resolve or verify"))
-            row["checks"].append(_check(
-                "unresolved", f"{','.join(line.designators)}: no part"))
             escalations.append(_escalation(i, line, "no-code", []))
         out_lines.append(row)
 
@@ -222,19 +235,8 @@ def _fill_selected(row: dict, details: dict, code: str, required: int) -> None:
     d = details.get(code) or {}
     row["lcsc"] = code
     row["liveStock"] = d.get("stockCount")
-    row["unitPrice"] = _unit_price_at_required(d, required)
+    row["unitPrice"] = unit_price_at_qty(d, required)
     row["offerType"] = OFFER_TYPE_JLC_MOUNTED
-
-
-def _unit_price_at_required(detail: dict, required: int) -> float | None:
-    """Unit price at the break that applies to the required quantity."""
-    ranges = (detail or {}).get("priceRanges") or []
-    applicable = [p for p in ranges
-                  if int(p.get("startQuantity") or 0) <= required and p.get("unitPrice")]
-    if applicable:
-        best = max(applicable, key=lambda p: int(p.get("startQuantity") or 0))
-        return best.get("unitPrice")
-    return _unit_price_at_qty1(detail)
 
 
 def _resolve_spec_line(row, line, house, details, required, escalations, index) -> None:
@@ -244,8 +246,6 @@ def _resolve_spec_line(row, line, house, details, required, escalations, index) 
         row["checks"].append(_check(
             "no-part-choices",
             f"{','.join(line.designators)} ({_spec_str(line.spec)}): {where}"))
-        row["checks"].append(_check(
-            "unresolved", f"{','.join(line.designators)}: no part"))
         escalations.append(_escalation(index, line, "no-part-choices", []))
         return
 
@@ -271,8 +271,6 @@ def _resolve_spec_line(row, line, house, details, required, escalations, index) 
         "avl-exhausted",
         f"{','.join(line.designators)} ({_spec_str(line.spec)}): no approved choice "
         f"has stock >= {required}"))
-    row["checks"].append(_check(
-        "unresolved", f"{','.join(line.designators)}: no part"))
     escalations.append(_escalation(
         index, line, "avl-exhausted",
         [{"lcscCode": c["lcscCode"], "rank": c["rank"],
@@ -287,8 +285,6 @@ def _resolve_explicit_line(row, line, details, required, escalations, index) -> 
         row["checks"].append(_check(
             "not-in-catalog",
             f"{','.join(line.designators)}: {code} not returned by the JLC catalog"))
-        row["checks"].append(_check(
-            "unresolved", f"{','.join(line.designators)}: no part"))
         escalations.append(_escalation(index, line, "not-in-catalog", []))
         return
     _fill_selected(row, details, code, required)
@@ -347,6 +343,7 @@ def format_escalation_report(result: dict) -> str:
             what = _spec_str(e["spec"]) if e["spec"] else (e["lcsc"] or "no code")
             out.append(f"  {','.join(e['designators'])}  {what}  → {e['reason']}")
             for c in e["choices"]:
-                out.append(f"    rank-{c['rank']} {c['lcscCode']}: "
+                label = f"rank-{c['rank']} " if c["rank"] is not None else ""
+                out.append(f"    {label}{c['lcscCode']}: "
                            f"stock {c['liveStock']} < required {c['requiredQty']}")
     return "\n".join(out)

@@ -51,8 +51,8 @@ SCHEMA_VERSION = 2
 CHOICE_STATES = ("active", "removed")
 AUDIT_EVENTS = ("recorded", "promoted", "reranked", "removed", "superseded")
 
-_SCHEMA = """
-CREATE TABLE IF NOT EXISTS house_parts (
+_SCHEMA_STATEMENTS = (
+    """CREATE TABLE IF NOT EXISTS house_parts (
   id          INTEGER PRIMARY KEY,
   kind        TEXT NOT NULL,
   value       TEXT NOT NULL,
@@ -60,11 +60,10 @@ CREATE TABLE IF NOT EXISTS house_parts (
   qualifier   TEXT NOT NULL DEFAULT '',
   description TEXT,
   created_at  TEXT NOT NULL
-);
-CREATE UNIQUE INDEX IF NOT EXISTS ux_house_spec
-  ON house_parts(kind, value, package, qualifier);
-
-CREATE TABLE IF NOT EXISTS part_choices (
+)""",
+    """CREATE UNIQUE INDEX IF NOT EXISTS ux_house_spec
+  ON house_parts(kind, value, package, qualifier)""",
+    """CREATE TABLE IF NOT EXISTS part_choices (
   id            INTEGER PRIMARY KEY,
   house_part_id INTEGER NOT NULL REFERENCES house_parts(id),
   lcsc_code     TEXT NOT NULL,
@@ -79,13 +78,12 @@ CREATE TABLE IF NOT EXISTS part_choices (
   last_stock    INTEGER,
   last_price    REAL,
   last_verified_at TEXT
-);
-CREATE UNIQUE INDEX IF NOT EXISTS ux_choice_rank
-  ON part_choices(house_part_id, rank) WHERE state = 'active';
-CREATE UNIQUE INDEX IF NOT EXISTS ux_choice_code
-  ON part_choices(house_part_id, lcsc_code) WHERE state = 'active';
-
-CREATE TABLE IF NOT EXISTS part_audit (
+)""",
+    """CREATE UNIQUE INDEX IF NOT EXISTS ux_choice_rank
+  ON part_choices(house_part_id, rank) WHERE state = 'active'""",
+    """CREATE UNIQUE INDEX IF NOT EXISTS ux_choice_code
+  ON part_choices(house_part_id, lcsc_code) WHERE state = 'active'""",
+    """CREATE TABLE IF NOT EXISTS part_audit (
   id            INTEGER PRIMARY KEY,
   house_part_id INTEGER NOT NULL REFERENCES house_parts(id),
   event         TEXT NOT NULL,
@@ -94,11 +92,10 @@ CREATE TABLE IF NOT EXISTS part_audit (
   design        TEXT,
   note          TEXT,
   detail        TEXT
-);
-CREATE INDEX IF NOT EXISTS ix_audit_house ON part_audit(house_part_id, id);
-
-CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
-"""
+)""",
+    """CREATE INDEX IF NOT EXISTS ix_audit_house ON part_audit(house_part_id, id)""",
+    """CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)""",
+)
 
 DEFAULT_DB_PATH = Path.home() / ".hendley" / "parts.db"
 
@@ -123,7 +120,8 @@ def open_db(path: str | Path | None = None) -> sqlite3.Connection:
     if version == 1:
         _migrate_v1_to_v2(conn)
     else:
-        conn.executescript(_SCHEMA)
+        for stmt in _SCHEMA_STATEMENTS:
+            conn.execute(stmt)
         conn.execute(
             "INSERT OR IGNORE INTO meta (key, value) VALUES ('schema_version', ?)",
             (str(SCHEMA_VERSION),),
@@ -150,47 +148,68 @@ def _migrate_v1_to_v2(conn: sqlite3.Connection) -> None:
     ``current=1`` row → the rank-1 active Part Choice; ``current=0`` rows →
     ``superseded`` audit events only — demoted parts are NOT re-approved onto
     the AVL (re-approve deliberately via :func:`record` if wanted).
+
+    The whole migration — rename, DDL, data copy, version bump — runs in ONE
+    explicit transaction (SQLite DDL is transactional). ``executescript`` or
+    autocommitted DDL would commit the rename early, and a failure after that
+    would leave a half-migrated DB that re-fails on every later open. A
+    failed migration must roll back to a pristine v1 database.
     """
-    with conn:
-        conn.execute("ALTER TABLE house_parts RENAME TO house_parts_v1")
-        conn.executescript(_SCHEMA)
+    old_isolation = conn.isolation_level
+    conn.isolation_level = None  # manual transaction control: no implicit BEGIN/COMMIT
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            _migrate_v1_to_v2_body(conn)
+            conn.execute("COMMIT")
+        except BaseException:
+            conn.execute("ROLLBACK")
+            raise
+    finally:
+        conn.isolation_level = old_isolation
+
+
+def _migrate_v1_to_v2_body(conn: sqlite3.Connection) -> None:
+    conn.execute("ALTER TABLE house_parts RENAME TO house_parts_v1")
+    for stmt in _SCHEMA_STATEMENTS:
+        conn.execute(stmt)
+    conn.execute(
+        "INSERT INTO house_parts (kind, value, package, qualifier, created_at) "
+        "SELECT kind, value, package, qualifier, MIN(picked_at) FROM house_parts_v1 "
+        "GROUP BY kind, value, package, qualifier"
+    )
+    conn.execute(
+        "INSERT INTO part_choices (house_part_id, lcsc_code, mpn, manufacturer, "
+        "  description, rank, state, approved_at, design, note, "
+        "  last_stock, last_price, last_verified_at) "
+        "SELECT hp.id, v1.lcsc_code, v1.mpn, v1.manufacturer, v1.description, "
+        "  1, 'active', v1.picked_at, v1.design, v1.note, "
+        "  v1.last_stock, v1.last_price, v1.last_verified_at "
+        "FROM house_parts_v1 v1 JOIN house_parts hp "
+        "  ON hp.kind=v1.kind AND hp.value=v1.value AND hp.package=v1.package "
+        "  AND hp.qualifier=v1.qualifier "
+        "WHERE v1.current = 1"
+    )
+    rows = conn.execute(
+        "SELECT v1.*, hp.id AS house_part_id "
+        "FROM house_parts_v1 v1 JOIN house_parts hp "
+        "  ON hp.kind=v1.kind AND hp.value=v1.value AND hp.package=v1.package "
+        "  AND hp.qualifier=v1.qualifier "
+        "WHERE v1.current = 0 ORDER BY v1.id"
+    ).fetchall()
+    for r in rows:
+        detail = {k: r[c] for k, c in
+                  (("mpn", "mpn"), ("manufacturer", "manufacturer"),
+                   ("description", "description")) if r[c]}
         conn.execute(
-            "INSERT INTO house_parts (kind, value, package, qualifier, created_at) "
-            "SELECT kind, value, package, qualifier, MIN(picked_at) FROM house_parts_v1 "
-            "GROUP BY kind, value, package, qualifier"
+            "INSERT INTO part_audit (house_part_id, event, lcsc_code, at, design, "
+            "  note, detail) VALUES (?, 'superseded', ?, ?, ?, ?, ?)",
+            (r["house_part_id"], r["lcsc_code"], r["picked_at"], r["design"],
+             r["note"], json.dumps(detail) if detail else None),
         )
-        conn.execute(
-            "INSERT INTO part_choices (house_part_id, lcsc_code, mpn, manufacturer, "
-            "  description, rank, state, approved_at, design, note, "
-            "  last_stock, last_price, last_verified_at) "
-            "SELECT hp.id, v1.lcsc_code, v1.mpn, v1.manufacturer, v1.description, "
-            "  1, 'active', v1.picked_at, v1.design, v1.note, "
-            "  v1.last_stock, v1.last_price, v1.last_verified_at "
-            "FROM house_parts_v1 v1 JOIN house_parts hp "
-            "  ON hp.kind=v1.kind AND hp.value=v1.value AND hp.package=v1.package "
-            "  AND hp.qualifier=v1.qualifier "
-            "WHERE v1.current = 1"
-        )
-        rows = conn.execute(
-            "SELECT v1.*, hp.id AS house_part_id "
-            "FROM house_parts_v1 v1 JOIN house_parts hp "
-            "  ON hp.kind=v1.kind AND hp.value=v1.value AND hp.package=v1.package "
-            "  AND hp.qualifier=v1.qualifier "
-            "WHERE v1.current = 0 ORDER BY v1.id"
-        ).fetchall()
-        for r in rows:
-            detail = {k: r[c] for k, c in
-                      (("mpn", "mpn"), ("manufacturer", "manufacturer"),
-                       ("description", "description")) if r[c]}
-            conn.execute(
-                "INSERT INTO part_audit (house_part_id, event, lcsc_code, at, design, "
-                "  note, detail) VALUES (?, 'superseded', ?, ?, ?, ?, ?)",
-                (r["house_part_id"], r["lcsc_code"], r["picked_at"], r["design"],
-                 r["note"], json.dumps(detail) if detail else None),
-            )
-        conn.execute(
-            "UPDATE meta SET value=? WHERE key='schema_version'", (str(SCHEMA_VERSION),)
-        )
+    conn.execute(
+        "UPDATE meta SET value=? WHERE key='schema_version'", (str(SCHEMA_VERSION),)
+    )
 
 
 def _now() -> str:
@@ -285,16 +304,18 @@ def history(
     return [_audit_to_dict(r) for r in rows]
 
 
-def _shift_ranks_up(conn: sqlite3.Connection, house_part_id: int, from_rank: int) -> None:
-    """Open a gap at ``from_rank`` (ranks >= from_rank move down the list by 1).
+def _shift_ranks(conn: sqlite3.Connection, house_part_id: int, delta: int, rank: int) -> None:
+    """Shift active ranks by ``delta``: +1 opens a gap at ``rank`` (ranks >= rank
+    move down the list), -1 closes the gap left at ``rank`` (ranks > rank move up).
 
     Two-step through negative ranks so the unique (house_part_id, rank) index
     never sees a transient collision mid-UPDATE.
     """
+    op = ">=" if delta > 0 else ">"
     conn.execute(
-        "UPDATE part_choices SET rank = -(rank + 1) "
-        "WHERE house_part_id=? AND state='active' AND rank >= ?",
-        (house_part_id, from_rank),
+        f"UPDATE part_choices SET rank = -(rank + ?) "
+        f"WHERE house_part_id=? AND state='active' AND rank {op} ?",
+        (delta, house_part_id, rank),
     )
     conn.execute(
         "UPDATE part_choices SET rank = -rank WHERE house_part_id=? AND rank < 0",
@@ -302,17 +323,33 @@ def _shift_ranks_up(conn: sqlite3.Connection, house_part_id: int, from_rank: int
     )
 
 
-def _close_rank_gap(conn: sqlite3.Connection, house_part_id: int, above_rank: int) -> None:
-    """Close the gap left at ``above_rank`` (ranks > above_rank move up by 1)."""
-    conn.execute(
-        "UPDATE part_choices SET rank = -(rank - 1) "
-        "WHERE house_part_id=? AND state='active' AND rank > ?",
-        (house_part_id, above_rank),
-    )
-    conn.execute(
-        "UPDATE part_choices SET rank = -rank WHERE house_part_id=? AND rank < 0",
-        (house_part_id,),
-    )
+def _require_house(
+    conn: sqlite3.Connection, kind: str, value: str, package: str, qualifier: str
+) -> sqlite3.Row:
+    house = _find_house(conn, kind, value, package, qualifier)
+    if house is None:
+        raise ValueError(
+            f"no house part for spec ({kind}, {value}, {package}, {qualifier!r})")
+    return house
+
+
+def _find_active_choice(
+    conn: sqlite3.Connection, house_part_id: int, lcsc_code: str
+) -> sqlite3.Row | None:
+    return conn.execute(
+        "SELECT * FROM part_choices WHERE house_part_id=? AND state='active' "
+        "AND lcsc_code=?",
+        (house_part_id, lcsc_code),
+    ).fetchone()
+
+
+def _require_active_choice(
+    conn: sqlite3.Connection, house_part_id: int, lcsc_code: str
+) -> sqlite3.Row:
+    choice = _find_active_choice(conn, house_part_id, lcsc_code)
+    if choice is None:
+        raise ValueError(f"{lcsc_code} is not an active choice for this spec")
+    return choice
 
 
 def record(
@@ -358,11 +395,7 @@ def record(
         else:
             house_id = house["id"]
 
-        existing = conn.execute(
-            "SELECT * FROM part_choices WHERE house_part_id=? AND state='active' "
-            "AND lcsc_code=?",
-            (house_id, lcsc_code),
-        ).fetchone()
+        existing = _find_active_choice(conn, house_id, lcsc_code)
         n_active = len(_active_choices(conn, house_id))
 
         if existing:
@@ -372,8 +405,8 @@ def record(
                 conn.execute(
                     "UPDATE part_choices SET rank=NULL WHERE id=?", (existing["id"],)
                 )
-                _close_rank_gap(conn, house_id, old_rank)
-                _shift_ranks_up(conn, house_id, target)
+                _shift_ranks(conn, house_id, -1, old_rank)
+                _shift_ranks(conn, house_id, +1, target)
             updates = {k: v for k, v in (("mpn", mpn), ("manufacturer", manufacturer),
                                          ("description", description), ("design", design),
                                          ("note", note)) if v is not None}
@@ -391,7 +424,7 @@ def record(
             choice_id = existing["id"]
         else:
             target = min(rank, n_active + 1)
-            _shift_ranks_up(conn, house_id, target)
+            _shift_ranks(conn, house_id, +1, target)
             cur = conn.execute(
                 "INSERT INTO part_choices (house_part_id, lcsc_code, mpn, manufacturer, "
                 "description, rank, state, approved_at, design, note) "
@@ -424,24 +457,15 @@ def rerank(
     if new_rank < 1:
         raise ValueError(f"rerank() new_rank must be >= 1, got {new_rank}")
     with conn:
-        house = _find_house(conn, kind, value, package, qualifier)
-        if house is None:
-            raise ValueError(f"no house part for spec ({kind}, {value}, {package}, "
-                             f"{qualifier!r})")
-        choice = conn.execute(
-            "SELECT * FROM part_choices WHERE house_part_id=? AND state='active' "
-            "AND lcsc_code=?",
-            (house["id"], lcsc_code),
-        ).fetchone()
-        if choice is None:
-            raise ValueError(f"{lcsc_code} is not an active choice for this spec")
+        house = _require_house(conn, kind, value, package, qualifier)
+        choice = _require_active_choice(conn, house["id"], lcsc_code)
         n_active = len(_active_choices(conn, house["id"]))
         target = min(new_rank, n_active)
         old_rank = choice["rank"]
         if target != old_rank:
             conn.execute("UPDATE part_choices SET rank=NULL WHERE id=?", (choice["id"],))
-            _close_rank_gap(conn, house["id"], old_rank)
-            _shift_ranks_up(conn, house["id"], target)
+            _shift_ranks(conn, house["id"], -1, old_rank)
+            _shift_ranks(conn, house["id"], +1, target)
             conn.execute(
                 "UPDATE part_choices SET rank=? WHERE id=?", (target, choice["id"])
             )
@@ -466,23 +490,14 @@ def remove_choice(
 ) -> dict:
     """Remove a choice from the AVL — a state change to ``removed``, never a delete."""
     with conn:
-        house = _find_house(conn, kind, value, package, qualifier)
-        if house is None:
-            raise ValueError(f"no house part for spec ({kind}, {value}, {package}, "
-                             f"{qualifier!r})")
-        choice = conn.execute(
-            "SELECT * FROM part_choices WHERE house_part_id=? AND state='active' "
-            "AND lcsc_code=?",
-            (house["id"], lcsc_code),
-        ).fetchone()
-        if choice is None:
-            raise ValueError(f"{lcsc_code} is not an active choice for this spec")
+        house = _require_house(conn, kind, value, package, qualifier)
+        choice = _require_active_choice(conn, house["id"], lcsc_code)
         old_rank = choice["rank"]
         conn.execute(
             "UPDATE part_choices SET state='removed', rank=NULL WHERE id=?",
             (choice["id"],),
         )
-        _close_rank_gap(conn, house["id"], old_rank)
+        _shift_ranks(conn, house["id"], -1, old_rank)
         conn.execute(
             "INSERT INTO part_audit (house_part_id, event, lcsc_code, at, design, note, "
             "detail) VALUES (?, 'removed', ?, ?, NULL, ?, ?)",

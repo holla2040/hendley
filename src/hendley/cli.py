@@ -238,14 +238,13 @@ def _cmd_bom(client, args) -> int:
     from pathlib import Path
 
     from .bom import (
-        error_checks,
+        blocking_checks,
         format_resolution_report,
         load_resolution_json,
         render_bom_csv,
-        unresolved_lines,
     )
 
-    design, production_quantity, lines = load_resolution_json(args.resolution_json)
+    design, production_quantity, lines, raw_doc = load_resolution_json(args.resolution_json)
     csv_text = render_bom_csv(lines)
     if args.output:
         Path(args.output).write_text(csv_text)
@@ -255,26 +254,19 @@ def _cmd_bom(client, args) -> int:
     if args.report:
         print(format_resolution_report(design, lines, production_quantity),
               file=sys.stderr)
-    unresolved = unresolved_lines(lines)
-    if unresolved:
-        refs = ", ".join(",".join(x.designators) for x in unresolved)
-        print(f"error: {len(unresolved)} unresolved line(s) (no LCSC code): {refs} — "
-              "do not upload this BOM.", file=sys.stderr)
-        return 1
-    errors = error_checks(lines)
-    if errors:
-        names = ", ".join(sorted({c["check"] for _, c in errors}))
-        print(f"error: {len(errors)} blocking BOM check(s) ({names}) — "
-              "do not upload this BOM.", file=sys.stderr)
+    blockers = blocking_checks(lines)
+    if blockers:  # every blocker in one pass — no fix-one-class-rerun loop
+        for line, check in blockers:
+            print(f"error: {check['check']}: {check.get('message', '')}",
+                  file=sys.stderr)
+        print(f"error: {len(blockers)} blocker(s) — do not upload this BOM.",
+              file=sys.stderr)
         return 1
     # Clean emit to a file → record the immutable fact of what was ordered.
     if args.output and not args.no_snapshot:
         from .snapshot import write_release_snapshot
 
-        raw = json.loads(Path(args.resolution_json).read_text())
-        if isinstance(raw, list):  # bare-list form → normalize for the snapshot
-            raw = {"lines": raw}
-        snap = write_release_snapshot(raw, args.output)
+        snap = write_release_snapshot(raw_doc, args.output)
         print(f"release snapshot: {snap}", file=sys.stderr)
     return 0
 
@@ -469,7 +461,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         client = JLCClient(load_settings(args.keys)) if needs_client else None
         return args.func(client, args)
-    except (JLCError, FileNotFoundError, ValueError) as exc:
+    except (JLCError, OSError, ValueError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 

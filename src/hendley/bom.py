@@ -46,6 +46,10 @@ CSV_COLUMNS = ("Comment", "Designator", "Footprint", "LCSC Part #")
 # Provenance labels: where each line's part came from.
 LINE_SOURCES = ("db", "pick", "explicit")
 
+# The only check severities that exist; anything else is a contract violation
+# (a misspelled severity must fail loudly, not slip past the blocking gate).
+CHECK_SEVERITIES = ("error", "warning")
+
 
 @dataclass
 class BomLine:
@@ -74,11 +78,12 @@ class BomLine:
         checks = d.get("checks")
         if checks is not None and not (
             isinstance(checks, list)
-            and all(isinstance(c, dict) and c.get("check") and c.get("severity")
+            and all(isinstance(c, dict) and c.get("check")
+                    and c.get("severity") in CHECK_SEVERITIES
                     for c in checks)
         ):
             raise ValueError(f"line 'checks' must be a list of "
-                             f"{{check, severity, message}} dicts: {d!r}")
+                             f"{{check, severity: error|warning, message}} dicts: {d!r}")
         return cls(
             designators=[str(x) for x in designators],
             comment=d.get("comment"),
@@ -93,17 +98,25 @@ class BomLine:
 
 def load_resolution_json(
     path: str | Path,
-) -> tuple[str | None, int | None, list[BomLine]]:
-    """Load a resolution JSON file → (design name, production quantity, BOM lines)."""
+) -> tuple[str | None, int | None, list[BomLine], dict]:
+    """Load a resolution JSON file → (design, production quantity, lines, raw doc).
+
+    The raw doc is the parsed (bare lists normalized to ``{"lines": …}``)
+    document — the thing a release snapshot embeds. Returning it here means
+    the snapshot records exactly the document that was validated and
+    rendered, from one read.
+    """
     doc = json.loads(Path(path).read_text())
-    lines = doc.get("lines") if isinstance(doc, dict) else doc
-    design = doc.get("design") if isinstance(doc, dict) else None
-    n = doc.get("productionQuantity") if isinstance(doc, dict) else None
+    if not isinstance(doc, dict):
+        doc = {"lines": doc}
+    lines = doc.get("lines")
+    design = doc.get("design")
+    n = doc.get("productionQuantity")
     if not isinstance(lines, list):
         raise ValueError("resolution JSON must be a list, or an object with a 'lines' list")
     if n is not None and (not isinstance(n, int) or n < 1):
         raise ValueError(f"'productionQuantity' must be a positive integer, got {n!r}")
-    return (str(design) if design else None), n, [BomLine.from_dict(x) for x in lines]
+    return (str(design) if design else None), n, [BomLine.from_dict(x) for x in lines], doc
 
 
 def render_bom_csv(lines: Iterable[BomLine]) -> str:
@@ -125,13 +138,7 @@ def unresolved_lines(lines: Iterable[BomLine]) -> list[BomLine]:
 
 
 def error_checks(lines: Iterable[BomLine]) -> list[tuple[BomLine, dict]]:
-    """Every error-severity BOM Check across all lines — submission blockers.
-
-    (Resolver-emitted unresolved lines also carry an ``unresolved`` error
-    check, so for ``hendley resolve`` output this subsumes
-    :func:`unresolved_lines`; hand-composed JSON without ``checks`` still
-    gets the no-LCSC gate.)
-    """
+    """Every error-severity BOM Check carried by the lines."""
     return [(x, c) for x in lines for c in (x.checks or [])
             if c.get("severity") == "error"]
 
@@ -142,11 +149,30 @@ def warning_checks(lines: Iterable[BomLine]) -> list[tuple[BomLine, dict]]:
             if c.get("severity") == "warning"]
 
 
+def blocking_checks(lines: Iterable[BomLine]) -> list[tuple[BomLine, dict]]:
+    """THE submission gate: every reason this BOM must not be uploaded.
+
+    All carried error-severity checks, plus a synthesized ``unresolved``
+    check for each line with no LCSC code (so hand-composed JSON without
+    ``checks`` blocks exactly as before, and every blocker — whatever its
+    origin — surfaces in one pass with one shape).
+    """
+    lines = list(lines)
+    blockers = error_checks(lines)
+    for x in unresolved_lines(lines):
+        blockers.append((x, {
+            "check": "unresolved", "severity": "error",
+            "message": f"{','.join(x.designators)}: no LCSC code",
+        }))
+    return blockers
+
+
 def format_resolution_report(
     design: str | None, lines: list[BomLine], production_quantity: int | None = None
 ) -> str:
     """Human-readable trace of where every BOM line's part came from."""
     unresolved = unresolved_lines(lines)
+    blockers = blocking_checks(lines)
     parts = sum(len(x.designators) for x in lines)
     what = f"{len(lines)} line(s), {parts} part(s)/board"
     if production_quantity:
@@ -154,7 +180,8 @@ def format_resolution_report(
     headline = f"BOM resolution — {what}"
     if design:
         headline = f"BOM resolution for {design} — {what}"
-    headline += "  →  ALL RESOLVED" if not unresolved else f"  →  {len(unresolved)} UNRESOLVED"
+    headline += ("  →  READY TO UPLOAD" if not blockers
+                 else f"  →  {len(blockers)} BLOCKER(S) — DO NOT UPLOAD")
     out = [headline]
 
     by_source = {s: sum(1 for x in lines if x.source == s) for s in LINE_SOURCES}

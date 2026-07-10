@@ -79,7 +79,7 @@ def test_avl_exhausted_escalates_with_choice_stocks(db):
     result = resolve(db, [spec_line("R1")], 100, client=client)  # required 100
     row = result["lines"][0]
     assert row["lcsc"] is None
-    assert checks_named(row) == ["avl-exhausted", "unresolved"]
+    assert checks_named(row) == ["avl-exhausted"]  # 'unresolved' is bom-layer
     esc = result["escalations"][0]
     assert esc["reason"] == "avl-exhausted"
     assert [(c["lcscCode"], c["liveStock"]) for c in esc["choices"]] == [
@@ -90,7 +90,7 @@ def test_no_part_choices_escalates(db):
     client = FakeClient({})
     result = resolve(db, [spec_line("R9", value="47k")], 5, client=client)
     row = result["lines"][0]
-    assert checks_named(row) == ["no-part-choices", "unresolved"]
+    assert checks_named(row) == ["no-part-choices"]
     assert result["escalations"][0]["reason"] == "no-part-choices"
     assert client.calls == []  # nothing to verify → no API call at all
 
@@ -112,15 +112,37 @@ def test_explicit_insufficient_and_not_in_catalog(db):
     short, gone = result["lines"]
     assert checks_named(short) == ["insufficient-stock"]
     assert short["lcsc"] == "C8734"  # still selected — the user decides
-    assert checks_named(gone) == ["not-in-catalog", "unresolved"]
+    assert checks_named(gone) == ["not-in-catalog"]
     assert [e["reason"] for e in result["escalations"]] == [
         "insufficient-stock", "not-in-catalog"]
 
 
 def test_no_spec_no_code_line(db):
     result = resolve(db, [ResolveLine(designators=["J1"])], 5, client=FakeClient({}))
-    assert checks_named(result["lines"][0]) == ["no-code-uncheckable", "unresolved"]
+    assert checks_named(result["lines"][0]) == ["no-code-uncheckable"]
     assert result["escalations"][0]["reason"] == "no-code"
+
+
+def test_null_qualifier_matches_house_default(db):
+    record(db, "resistor", "22k", "0603", "C1")
+    line = ResolveLine.from_dict({
+        "designators": ["R1"],
+        "spec": {"kind": "resistor", "value": "22k", "package": "0603",
+                 "qualifier": None},  # natural agent JSON for "no qualifier"
+    })
+    result = resolve(db, [line], 5, client=FakeClient({"C1": 1000}))
+    assert result["lines"][0]["lcsc"] == "C1" and result["escalations"] == []
+
+
+def test_from_dict_rejects_bad_quantity_and_spec_lcsc_combo():
+    with pytest.raises(ValueError, match="quantityPer"):
+        ResolveLine.from_dict({"designators": ["D1"], "lcsc": "C1", "quantityPer": 0})
+    with pytest.raises(ValueError, match="quantityPer"):
+        ResolveLine.from_dict({"designators": ["D1"], "lcsc": "C1", "quantityPer": -1})
+    with pytest.raises(ValueError, match="both 'spec' and 'lcsc'"):
+        ResolveLine.from_dict({
+            "designators": ["R6"], "lcsc": "C1",
+            "spec": {"kind": "resistor", "value": "22k", "package": "0603"}})
 
 
 def test_one_batched_call_and_cache_refresh(db):
@@ -137,12 +159,13 @@ def test_one_batched_call_and_cache_refresh(db):
     assert cached["lastStock"] == 100 and cached["lastVerifiedAt"]
 
 
-def test_quantity_per_multiplies(db):
+def test_quantity_per_multiplies_and_survives_to_output(db):
     record(db, "led", "red", "0603", "C7")
     client = FakeClient({"C7": 1_000})
     line = spec_line("D1", kind="led", value="red", quantity_per=2)
     result = resolve(db, [line], 30, client=client)
     assert result["lines"][0]["requiredQty"] == 60  # 1 designator × 2 each × 30
+    assert result["lines"][0]["quantityPer"] == 2  # the fact record needs it
 
 
 def test_price_break_at_required_qty(db):
@@ -188,6 +211,14 @@ def test_escalation_report_reads_well(db):
     text = format_escalation_report(result)
     assert "1 ESCALATED" in text and "no-part-choices" in text
     assert "Substitutions (1)" in text
+
+
+def test_escalation_report_explicit_line_has_no_rank_label(db):
+    result = resolve(db, [ResolveLine(designators=["U1"], lcsc="C9")], 25,
+                     client=FakeClient({"C9": 3}))
+    text = format_escalation_report(result)
+    assert "rank-None" not in text
+    assert "C9: stock 3 < required 25" in text
 
 
 def test_checks_table_severities():

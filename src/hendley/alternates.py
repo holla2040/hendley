@@ -190,15 +190,26 @@ def fetch_candidates(
     return out
 
 
-def _unit_price_at_qty1(detail: dict | None) -> float | None:
-    """The unit price for a single unit, from the official ``priceRanges``."""
+def unit_price_at_qty(detail: dict | None, qty: int = 1) -> float | None:
+    """Unit price at the ``priceRanges`` break that applies to ``qty``.
+
+    Picks the range with the largest ``startQuantity`` <= qty; if none applies
+    (all breaks start above qty), falls back to the lowest break.
+    """
     ranges = (detail or {}).get("priceRanges") or []
-    for pr in ranges:
-        if pr.get("startQuantity") in (1, "1"):
-            return pr.get("unitPrice")
+    applicable = [p for p in ranges
+                  if int(p.get("startQuantity") or 0) <= qty
+                  and p.get("unitPrice") is not None]
+    if applicable:
+        return max(applicable, key=lambda p: int(p.get("startQuantity") or 0)).get("unitPrice")
     if ranges:
-        return min(ranges, key=lambda p: p.get("startQuantity") or 0).get("unitPrice")
+        return min(ranges, key=lambda p: int(p.get("startQuantity") or 0)).get("unitPrice")
     return None
+
+
+def _unit_price_at_qty1(detail: dict | None) -> float | None:
+    """The single-unit price (the qty=1 case of :func:`unit_price_at_qty`)."""
+    return unit_price_at_qty(detail, 1)
 
 
 def _summarize_target(code: str, detail: dict | None) -> dict:

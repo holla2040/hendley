@@ -2,8 +2,6 @@
 
 import json
 
-import pytest
-
 from hendley.cli import main as cli_main
 from hendley.snapshot import snapshot_path, write_release_snapshot
 
@@ -20,7 +18,7 @@ RESOLUTION = {
          "checks": [{"check": "substitution", "severity": "warning",
                      "message": "R1,R4: used rank-2 C2"}]},
         {"designators": ["U1"], "comment": "MT3608", "footprint": "SOT-23-6",
-         "lcsc": "C9", "source": "explicit", "requiredQty": 25,
+         "lcsc": "C9", "source": "explicit", "quantityPer": 2, "requiredQty": 50,
          "liveStock": 500, "unitPrice": 0.35, "offerType": "jlc-mounted",
          "checks": []},
     ],
@@ -35,21 +33,25 @@ def test_write_snapshot_embeds_resolution_verbatim(tmp_path):
     assert doc["snapshotVersion"] == 1 and doc["emittedAt"] == "2026-07-10T06:30:00+00:00"
     assert doc["design"] == "comet" and doc["productionQuantity"] == 25
     assert doc["csv"] == "comet_bom.csv"
-    assert doc["summary"] == {"lines": 2, "partsPerBoard": 3, "substitutions": 1}
+    # partsPerBoard honors quantityPer: R1,R4 ×1 each + U1 ×2 = 4
+    assert doc["summary"] == {"lines": 2, "partsPerBoard": 4, "substitutions": 1}
     # the fact record: every resolver field survives verbatim
     assert doc["resolution"] == RESOLUTION
     assert doc["resolution"]["lines"][0]["rankUsed"] == 2
     assert doc["resolution"]["lines"][0]["liveStock"] == 9000
 
 
-def test_snapshot_refuses_overwrite(tmp_path):
+def test_snapshot_never_overwrites_same_second_gets_suffix(tmp_path):
     csv = tmp_path / "comet_bom.csv"
-    write_release_snapshot(RESOLUTION, csv, when="2026-07-10T06:30:00+00:00")
-    with pytest.raises(FileExistsError, match="immutable"):
-        write_release_snapshot(RESOLUTION, csv, when="2026-07-10T06:30:00+00:00")
-    # a later emit is a NEW fact, not a collision
-    second = write_release_snapshot(RESOLUTION, csv, when="2026-07-10T07:00:00+00:00")
-    assert second != snapshot_path(csv, "2026-07-10T06:30:00+00:00")
+    when = "2026-07-10T06:30:00+00:00"
+    first = write_release_snapshot(RESOLUTION, csv, when=when)
+    second = write_release_snapshot(RESOLUTION, csv, when=when)  # same second: no crash
+    assert first.exists() and second.exists() and first != second
+    assert second.name == "comet_bom.20260710T063000Z-2.snapshot.json"
+    assert json.loads(first.read_text()) == json.loads(second.read_text())
+    # a later emit is a NEW fact under its own timestamp
+    third = write_release_snapshot(RESOLUTION, csv, when="2026-07-10T07:00:00+00:00")
+    assert third != snapshot_path(csv, when)
 
 
 def test_cli_clean_emit_writes_snapshot(tmp_path):

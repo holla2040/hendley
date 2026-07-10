@@ -26,11 +26,12 @@ from pathlib import Path
 SNAPSHOT_VERSION = 1
 
 
-def snapshot_path(csv_path: str | Path, when: str) -> Path:
-    """The timestamped sibling path for a CSV's snapshot."""
+def snapshot_path(csv_path: str | Path, when: str, seq: int = 0) -> Path:
+    """The timestamped sibling path for a CSV's snapshot (seq de-collides)."""
     csv_path = Path(csv_path)
     stamp = when.replace("-", "").replace(":", "").replace("+0000", "Z")
-    return csv_path.with_name(f"{csv_path.stem}.{stamp}.snapshot.json")
+    tail = f"-{seq + 1}" if seq else ""
+    return csv_path.with_name(f"{csv_path.stem}.{stamp}{tail}.snapshot.json")
 
 
 def write_release_snapshot(
@@ -41,13 +42,16 @@ def write_release_snapshot(
     """Write the immutable emit record beside the CSV; returns its path.
 
     ``resolution_doc`` is the raw resolution JSON (the ``hendley resolve``
-    output or agent-composed equivalent), embedded verbatim. Raises
-    ``FileExistsError`` rather than ever overwriting an existing snapshot.
+    output or agent-composed equivalent), embedded verbatim. Never overwrites:
+    a same-second emit gets a ``-2``/``-3`` suffix (each emit is its own fact).
     """
     when = when or datetime.now(timezone.utc).isoformat(timespec="seconds")
-    path = snapshot_path(csv_path, when)
-    if path.exists():
-        raise FileExistsError(f"snapshot already exists (snapshots are immutable): {path}")
+    for seq in range(100):
+        path = snapshot_path(csv_path, when, seq)
+        if not path.exists():
+            break
+    else:  # pragma: no cover - 100 same-second emits
+        raise FileExistsError(f"snapshot names exhausted for {csv_path} at {when}")
     lines = resolution_doc.get("lines") or []
     doc = {
         "snapshotVersion": SNAPSHOT_VERSION,
@@ -57,7 +61,9 @@ def write_release_snapshot(
         "csv": Path(csv_path).name,
         "summary": {
             "lines": len(lines),
-            "partsPerBoard": sum(len(x.get("designators") or []) for x in lines),
+            "partsPerBoard": sum(
+                len(x.get("designators") or []) * int(x.get("quantityPer") or 1)
+                for x in lines),
             "substitutions": sum(1 for x in lines if x.get("substitution")),
         },
         "resolution": resolution_doc,

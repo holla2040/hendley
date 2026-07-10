@@ -78,9 +78,13 @@ JSON's `escalations`):
 
 - **`no-part-choices`** (first use of a spec) — discover candidates:
   `hendley alternates <seed> --category <slug> --package "<exact spec>"
-  --json` with a seed part, or no seed via `--category components -p
-  search="<tokens>"` (FTS). Package match is exact, no wildcards; numeric
-  filters go over the verified `parameters[]` yourself, not query params.
+  --json`. The positional seed code is **required** (it only anchors the
+  report's reference row — candidates come from the category/filters), so
+  when the spec has no known part, seed with any similar code already in
+  hand (another spec's house part, an explicit part from this design) plus
+  `--category components -p search="<tokens>"` (FTS) — or ask the user for
+  a starting point. Package match is exact, no wildcards; numeric filters
+  go over the verified `parameters[]` yourself, not query params.
 - **`avl-exhausted`** — same, seeded from the escalation's best-known choice
   (its live stocks are already in hand).
 - **`insufficient-stock` / `not-in-catalog`** (explicit parts) — the user

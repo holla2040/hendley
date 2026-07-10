@@ -255,3 +255,39 @@ def test_migrated_db_supports_new_semantics(v1_db_path):
     record(conn, "resistor", "22k", "0603", "C31850", rank=2)  # deliberate re-approval
     assert codes(lookup(conn, "resistor", "22k", "0603")) == ["C4190", "C31850"]
     conn.close()
+
+
+def test_failed_migration_rolls_back_to_pristine_v1(v1_db_path, monkeypatch):
+    """A mid-migration failure must leave the v1 DB untouched and retryable.
+
+    Without single-transaction DDL+DML, the table rename commits early and a
+    later failure bricks the DB (every open re-fails on the rename). Force a
+    failure inside the migration body and prove the rollback + clean retry.
+    """
+    import hendley.partsdb as partsdb
+
+    real_body = partsdb._migrate_v1_to_v2_body
+
+    def exploding_body(conn):
+        real_body(conn)
+        raise RuntimeError("simulated crash after all migration work")
+
+    monkeypatch.setattr(partsdb, "_migrate_v1_to_v2_body", exploding_body)
+    with pytest.raises(RuntimeError):
+        open_db(v1_db_path)
+
+    # rollback left a pristine v1 database: still version 1, original table only
+    conn = sqlite3.connect(v1_db_path)
+    version = conn.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone()[0]
+    assert version == "1"
+    tables = {r[0] for r in conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table'")}
+    assert "house_parts" in tables and "house_parts_v1" not in tables
+    assert "part_choices" not in tables
+    conn.close()
+
+    # and the migration simply succeeds on the next open
+    monkeypatch.setattr(partsdb, "_migrate_v1_to_v2_body", real_body)
+    conn = open_db(v1_db_path)
+    assert codes(lookup(conn, "resistor", "22k", "0603")) == ["C4190"]
+    conn.close()
