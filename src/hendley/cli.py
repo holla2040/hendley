@@ -168,14 +168,14 @@ def _cmd_db_list(client, args) -> int:
 
 
 def _cmd_db_refresh(client, args) -> int:
-    """Batch live-verify every current house part; update the advisory cache."""
+    """Batch live-verify every active part choice; update the advisory cache."""
     from .alternates import _unit_price_at_qty1
     from .partsdb import list_parts, open_db, update_verified
 
     conn = open_db(args.db)
-    codes = sorted({p["lcscCode"] for p in list_parts(conn)})
+    codes = sorted({c["lcscCode"] for p in list_parts(conn) for c in p["choices"]})
     if not codes:
-        print("house-parts DB has no current parts — nothing to refresh.")
+        print("house-parts DB has no approved choices — nothing to refresh.")
         return 0
     details = {d.get("componentCode"): d
                for d in (client.get_component_detail_by_code(codes) or [])}
