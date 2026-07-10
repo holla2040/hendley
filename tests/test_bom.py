@@ -6,10 +6,12 @@ import pytest
 
 from hendley.bom import (
     BomLine,
+    error_checks,
     format_resolution_report,
     load_resolution_json,
     render_bom_csv,
     unresolved_lines,
+    warning_checks,
 )
 
 
@@ -87,6 +89,37 @@ def test_report_flags_unresolved_loudly():
     out = format_resolution_report(None, [BomLine(["J1"], comment="USB-C")])
     assert "1 UNRESOLVED" in out
     assert "do not upload" in out and "— NO PART —" in out
+
+
+def test_checks_severity_split_and_validation():
+    sub = {"check": "substitution", "severity": "warning", "message": "R1: used rank-2"}
+    short = {"check": "insufficient-stock", "severity": "error",
+             "message": "U1: stock 10 < required 250"}
+    lines = [BomLine(["R1"], lcsc="C2", checks=[sub]),
+             BomLine(["U1"], lcsc="C9", checks=[short]),
+             BomLine(["C5"], lcsc="C14663")]  # no checks at all — fine
+    assert [c["check"] for _, c in error_checks(lines)] == ["insufficient-stock"]
+    assert [c["check"] for _, c in warning_checks(lines)] == ["substitution"]
+    with pytest.raises(ValueError, match="checks"):
+        BomLine.from_dict({"designators": ["R1"], "checks": [{"oops": True}]})
+    parsed = BomLine.from_dict({"designators": ["R1"], "lcsc": "C2", "checks": [sub]})
+    assert parsed.checks == [sub]
+
+
+def test_report_lists_checks_by_severity():
+    lines = [
+        BomLine(["R1", "R4"], lcsc="C2", checks=[
+            {"check": "substitution", "severity": "warning",
+             "message": "R1,R4: rank-1 C1 stock 40 < required 50 → used rank-2 C2"}]),
+        BomLine(["U1"], lcsc="C9", checks=[
+            {"check": "insufficient-stock", "severity": "error",
+             "message": "U1: C9 stock 10 < required 25"}]),
+    ]
+    out = format_resolution_report("comet", lines)
+    assert "Checks: 1 error(s), 1 warning(s)" in out
+    assert "ERROR insufficient-stock" in out and "warn  substitution" in out
+    # every line has an lcsc, so the CSV renders — but the errors still block upload
+    assert "ALL RESOLVED" in out
 
 
 def test_report_shows_board_count_and_required_qty():

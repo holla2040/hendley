@@ -58,6 +58,7 @@ class BomLine:
     source: str | None = None  # db | pick | explicit
     required_qty: int | None = None  # designators × qtyPer × N (report-only)
     note: str | None = None  # report-only context (why / since when)
+    checks: list | None = None  # BOM Check dicts {check, severity, message}
 
     @classmethod
     def from_dict(cls, d: dict) -> "BomLine":
@@ -70,6 +71,14 @@ class BomLine:
                 f"line source {source!r} not one of {LINE_SOURCES}: {d!r}"
             )
         required_qty = d.get("requiredQty")
+        checks = d.get("checks")
+        if checks is not None and not (
+            isinstance(checks, list)
+            and all(isinstance(c, dict) and c.get("check") and c.get("severity")
+                    for c in checks)
+        ):
+            raise ValueError(f"line 'checks' must be a list of "
+                             f"{{check, severity, message}} dicts: {d!r}")
         return cls(
             designators=[str(x) for x in designators],
             comment=d.get("comment"),
@@ -78,6 +87,7 @@ class BomLine:
             source=source,
             required_qty=int(required_qty) if required_qty is not None else None,
             note=d.get("note"),
+            checks=checks,
         )
 
 
@@ -114,6 +124,24 @@ def unresolved_lines(lines: Iterable[BomLine]) -> list[BomLine]:
     return [x for x in lines if not x.lcsc]
 
 
+def error_checks(lines: Iterable[BomLine]) -> list[tuple[BomLine, dict]]:
+    """Every error-severity BOM Check across all lines — submission blockers.
+
+    (Resolver-emitted unresolved lines also carry an ``unresolved`` error
+    check, so for ``hendley resolve`` output this subsumes
+    :func:`unresolved_lines`; hand-composed JSON without ``checks`` still
+    gets the no-LCSC gate.)
+    """
+    return [(x, c) for x in lines for c in (x.checks or [])
+            if c.get("severity") == "error"]
+
+
+def warning_checks(lines: Iterable[BomLine]) -> list[tuple[BomLine, dict]]:
+    """Every warning-severity BOM Check — reported, never blocking."""
+    return [(x, c) for x in lines for c in (x.checks or [])
+            if c.get("severity") == "warning"]
+
+
 def format_resolution_report(
     design: str | None, lines: list[BomLine], production_quantity: int | None = None
 ) -> str:
@@ -133,6 +161,14 @@ def format_resolution_report(
     tagged = ", ".join(f"{n} {s}" for s, n in by_source.items() if n)
     if tagged:
         out.append(f"Sources: {tagged}")
+
+    errors, warnings = error_checks(lines), warning_checks(lines)
+    if errors or warnings:
+        out.append(f"Checks: {len(errors)} error(s), {len(warnings)} warning(s)")
+        for _, c in errors:
+            out.append(f"  ERROR {c['check']}: {c.get('message', '')}")
+        for _, c in warnings:
+            out.append(f"  warn  {c['check']}: {c.get('message', '')}")
 
     def fmt(line: BomLine) -> str:
         bits = [",".join(line.designators)]

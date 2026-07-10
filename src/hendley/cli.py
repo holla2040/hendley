@@ -238,6 +238,7 @@ def _cmd_bom(client, args) -> int:
     from pathlib import Path
 
     from .bom import (
+        error_checks,
         format_resolution_report,
         load_resolution_json,
         render_bom_csv,
@@ -258,6 +259,12 @@ def _cmd_bom(client, args) -> int:
     if unresolved:
         refs = ", ".join(",".join(x.designators) for x in unresolved)
         print(f"error: {len(unresolved)} unresolved line(s) (no LCSC code): {refs} — "
+              "do not upload this BOM.", file=sys.stderr)
+        return 1
+    errors = error_checks(lines)
+    if errors:
+        names = ", ".join(sorted({c["check"] for _, c in errors}))
+        print(f"error: {len(errors)} blocking BOM check(s) ({names}) — "
               "do not upload this BOM.", file=sys.stderr)
         return 1
     return 0
