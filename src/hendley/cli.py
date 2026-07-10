@@ -267,6 +267,15 @@ def _cmd_bom(client, args) -> int:
         print(f"error: {len(errors)} blocking BOM check(s) ({names}) — "
               "do not upload this BOM.", file=sys.stderr)
         return 1
+    # Clean emit to a file → record the immutable fact of what was ordered.
+    if args.output and not args.no_snapshot:
+        from .snapshot import write_release_snapshot
+
+        raw = json.loads(Path(args.resolution_json).read_text())
+        if isinstance(raw, list):  # bare-list form → normalize for the snapshot
+            raw = {"lines": raw}
+        snap = write_release_snapshot(raw, args.output)
+        print(f"release snapshot: {snap}", file=sys.stderr)
     return 0
 
 
@@ -428,6 +437,9 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("-o", "--output", help="Write the CSV here (default: stdout).")
     sp.add_argument("--report", action="store_true",
                     help="Also print the human-readable resolution report (to stderr).")
+    sp.add_argument("--no-snapshot", action="store_true",
+                    help="Skip the release snapshot a clean -o emit writes beside "
+                         "the CSV (the immutable what-was-ordered record).")
     sp.set_defaults(func=_cmd_bom)
 
     sp = sub.add_parser("scr", help="Generate a Fusion .scr migration script from swap files.")
