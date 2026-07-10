@@ -214,6 +214,25 @@ def _cmd_db_refresh(client, args) -> int:
     return 0
 
 
+def _cmd_resolve(client, args) -> int:
+    """Rank-walk a resolve request's lines against the AVLs + live stock."""
+    from pathlib import Path
+
+    from .partsdb import open_db
+    from .resolve import format_escalation_report, load_request_json, resolve
+
+    design, n, lines = load_request_json(args.request_json)
+    conn = open_db(args.db)
+    result = resolve(conn, lines, n, client=client, design=design)
+    text = json.dumps(result, indent=2, ensure_ascii=False)
+    if args.output:
+        Path(args.output).write_text(text + "\n")
+    else:
+        print(text)
+    print(format_escalation_report(result), file=sys.stderr)
+    return 1 if result["escalations"] else 0
+
+
 def _cmd_bom(client, args) -> int:
     """Render an agent-composed resolution JSON into the JLCPCB upload BOM CSV."""
     from pathlib import Path
@@ -383,6 +402,18 @@ def build_parser() -> argparse.ArgumentParser:
                                          "(the only db action that hits the API).")
     d.add_argument("--db", help="Path to the house-parts DB.")
     d.set_defaults(func=_cmd_db_refresh)
+
+    sp = sub.add_parser(
+        "resolve",
+        help="Resolve a request's lines against the house AVLs + live stock "
+             "(rank-walk; silent substitution; escalations to stderr, exit 1).")
+    sp.add_argument("request_json", help="Agent-composed resolve request "
+                                         "(contract in hendley.resolve).")
+    sp.add_argument("-o", "--output", help="Write the resolution JSON here "
+                                           "(default: stdout).")
+    sp.add_argument("--db", help="Path to the house-parts DB "
+                                 "(default: $HENDLEY_DB or ~/.hendley/parts.db).")
+    sp.set_defaults(func=_cmd_resolve)
 
     sp = sub.add_parser("bom", help="Render a resolution JSON into the JLCPCB upload BOM CSV.")
     sp.add_argument("resolution_json", help="Path to the agent-composed resolution JSON.")
