@@ -135,19 +135,19 @@ def _cmd_alternates(client: JLCClient, args) -> int:
 
 
 def _cmd_db_lookup(client, args) -> int:
-    """Look up the current house part (and history) for one spec key."""
+    """Look up the House Part (ranked choices) and audit history for one spec key."""
     from .partsdb import history, lookup, open_db
 
     conn = open_db(args.db)
     _print({
-        "current": lookup(conn, args.kind, args.value, args.package, args.qualifier),
+        "housePart": lookup(conn, args.kind, args.value, args.package, args.qualifier),
         "history": history(conn, args.kind, args.value, args.package, args.qualifier),
     })
     return 0
 
 
 def _cmd_db_record(client, args) -> int:
-    """Record a pick as the current house part for a spec (promotes; keeps history)."""
+    """Approve a part as a ranked choice for a spec (default rank 1 = promotion)."""
     from .partsdb import open_db, record
 
     conn = open_db(args.db)
@@ -155,8 +155,29 @@ def _cmd_db_record(client, args) -> int:
         conn, args.kind, args.value, args.package, args.lcsc,
         qualifier=args.qualifier, mpn=args.mpn, manufacturer=args.manufacturer,
         description=args.description, design=args.design, note=args.note,
+        rank=args.rank,
     )
     _print(row)
+    return 0
+
+
+def _cmd_db_rerank(client, args) -> int:
+    """Move an active choice to a new rank on its spec's AVL."""
+    from .partsdb import open_db, rerank
+
+    conn = open_db(args.db)
+    _print(rerank(conn, args.kind, args.value, args.package, args.lcsc, args.rank,
+                  qualifier=args.qualifier, note=args.note))
+    return 0
+
+
+def _cmd_db_remove(client, args) -> int:
+    """Remove a choice from its spec's AVL (state change; the row is kept)."""
+    from .partsdb import open_db, remove_choice
+
+    conn = open_db(args.db)
+    _print(remove_choice(conn, args.kind, args.value, args.package, args.lcsc,
+                         qualifier=args.qualifier, note=args.note))
     return 0
 
 
@@ -319,14 +340,19 @@ def build_parser() -> argparse.ArgumentParser:
                             help="Beyond-house-default spec, e.g. '100V', '1%%' "
                                  "(default: none = the house default).")
 
-    d = dbsub.add_parser("lookup", help="Current house part (and history) for one spec.")
+    d = dbsub.add_parser("lookup", help="House Part with ranked choices (the AVL) "
+                                        "+ audit history for one spec.")
     _spec_args(d)
     d.set_defaults(func=_cmd_db_lookup)
 
-    d = dbsub.add_parser("record", help="Record a pick as the house part for a spec "
-                                        "(promotes; old pick kept as history).")
+    d = dbsub.add_parser("record", help="Approve a part as a ranked choice for a spec "
+                                        "(default rank 1 = promotion; existing choices "
+                                        "shift down, staying approved).")
     _spec_args(d)
     d.add_argument("--lcsc", required=True, help="Chosen part's LCSC code, e.g. C31850.")
+    d.add_argument("--rank", type=int, default=1,
+                   help="Rank on the AVL (1 = tried first; out-of-range appends; "
+                        "default 1).")
     d.add_argument("--mpn", help="Manufacturer part number.")
     d.add_argument("--manufacturer", help="Manufacturer display name.")
     d.add_argument("--description", help="Part description.")
@@ -334,12 +360,26 @@ def build_parser() -> argparse.ArgumentParser:
     d.add_argument("--note", help="Why this pick, e.g. 'C31850 out of stock 2026-07-09'.")
     d.set_defaults(func=_cmd_db_record)
 
-    d = dbsub.add_parser("list", help="All current house parts.")
+    d = dbsub.add_parser("rerank", help="Move an active choice to a new rank on its AVL.")
+    _spec_args(d)
+    d.add_argument("--lcsc", required=True, help="The choice's LCSC code.")
+    d.add_argument("--rank", type=int, required=True, help="New rank (1 = tried first).")
+    d.add_argument("--note", help="Why the re-rank.")
+    d.set_defaults(func=_cmd_db_rerank)
+
+    d = dbsub.add_parser("remove", help="Remove a choice from its AVL "
+                                        "(state change, audited; the row is kept).")
+    _spec_args(d)
+    d.add_argument("--lcsc", required=True, help="The choice's LCSC code.")
+    d.add_argument("--note", help="Why the removal, e.g. 'EOL' or 'failed in rev B'.")
+    d.set_defaults(func=_cmd_db_remove)
+
+    d = dbsub.add_parser("list", help="All House Parts with their ranked choices.")
     d.add_argument("--db", help="Path to the house-parts DB.")
     d.add_argument("--kind", help="Filter by kind, e.g. resistor.")
     d.set_defaults(func=_cmd_db_list)
 
-    d = dbsub.add_parser("refresh", help="Batch live-verify all current house parts "
+    d = dbsub.add_parser("refresh", help="Batch live-verify all active part choices "
                                          "(the only db action that hits the API).")
     d.add_argument("--db", help="Path to the house-parts DB.")
     d.set_defaults(func=_cmd_db_refresh)
