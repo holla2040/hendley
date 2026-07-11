@@ -168,9 +168,12 @@ def test_queue_discovers_verifies_filters_and_ranks(tmp_path):
     top = entry["candidates"][0]
     assert top["verified"] and top["liveStock"] == 90_000 and top["score"] > 0
     assert top["model"] == "MPN-C_NEW1"  # live identity, not the stale index row
-    # discovery queried the mapped category with the exact package filter
+    # discovery queried the mapped category with the exact package AND value
     assert src.discover_queries == [
-        {"category": "resistors", "params": {"package": "0603"}}]
+        {"category": "resistors", "params": {"package": "0603",
+                                             "resistance": 22000}}]
+    # the decisive parameters ride along for the reviewer
+    assert "keyParams" in top
 
 
 def test_queue_unmapped_kind_ships_empty_with_note(tmp_path):

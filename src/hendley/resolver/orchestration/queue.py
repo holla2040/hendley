@@ -47,11 +47,36 @@ KIND_CATEGORIES = {
 }
 
 
+# jlcsearch's dense per-category value params (verified live): resistance in
+# ohms, capacitance in farads. Kinds without one discover by package only.
+def _value_params(spec: SpecKey) -> dict:
+    from ...requirements.specs import base_value
+
+    base = base_value(spec.kind, spec.value)
+    if base is None:
+        return {}
+    if spec.kind == "resistor":
+        return {"resistance": int(base) if base == int(base) else base}
+    if spec.kind == "capacitor":
+        return {"capacitance": f"{base:.15f}".rstrip("0")}
+    return {}
+
+
+_KEY_PARAMS = ("Resistance", "Capacitance", "Inductance", "Tolerance",
+               "Voltage Rating", "Voltage Rated", "Power(Watts)")
+
+
+def _key_params(parameters: list | None) -> dict:
+    return {p["parameterName"]: p["parameterValue"] for p in (parameters or [])
+            if p.get("parameterName") in _KEY_PARAMS}
+
+
 def _verified_candidates(datasource: DataSource, category: str, spec: SpecKey,
                          exclude: set[str]) -> list[dict]:
-    """Discover by category+package, then live-verify every hit (one batch)."""
+    """Discover by category+package+value, then live-verify every hit (one batch)."""
     rows = datasource.discover({"category": category,
-                                "params": {"package": spec.package}})
+                                "params": {"package": spec.package,
+                                           **_value_params(spec)}})
     codes = [r["code"] for r in rows if r.get("code") and r["code"] not in exclude]
     if not codes:
         return []
@@ -76,6 +101,7 @@ def _verified_candidates(datasource: DataSource, category: str, spec: SpecKey,
             "libraryType": d.get("libraryType") if verified else None,
             "description": d.get("describe") if verified else r.get("description"),
             "parameters": d.get("parameters") if verified else None,
+            "keyParams": _key_params(d.get("parameters")) if verified else {},
         })
     return out
 

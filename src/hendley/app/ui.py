@@ -128,7 +128,7 @@ code { font-family:ui-monospace, monospace; font-size:.88em; }
 "use strict";
 const $ = id => document.getElementById(id);
 const S = { requirements: null, placements: null, resolution: null, queue: null,
-            approvals: [] };
+            picks: {} };  // picks: entryIndex -> [{code, mpn}] in rank order
 
 function msg(text, cls) { const m = $("msg"); m.textContent = text;
   m.className = cls || "dim"; }
@@ -250,7 +250,7 @@ function runResolve() { run("resolving", async () => {
   const data = await api("/api/resolve", {
     requirements: S.requirements, placements: S.placements,
     provider: $("q-provider").value });
-  S.resolution = data.resolution; S.queue = data.queue || null; S.approvals = [];
+  S.resolution = data.resolution; S.queue = data.queue || null; S.picks = {};
   renderResolution(); renderQueue();
   const esc_ = data.resolution.escalations.length;
   msg(esc_ ? `${esc_} escalation(s) — clear the approval queue below` : "all clean",
@@ -281,11 +281,20 @@ function renderResolution() {
 function renderQueue() {
   const q = S.queue;
   if (!q || !q.entries.length) { $("queue").innerHTML = ""; return; }
-  $("queue").innerHTML = `<h2>Approval queue — ${q.entries.length} decision(s)</h2>` +
+  const total = Object.values(S.picks).reduce((n, a) => n + a.length, 0);
+  $("queue").innerHTML = `<h2>Approval queue — ${q.entries.length} decision(s)</h2>
+    <p class="dim">Click parts in the order you want them tried: first click =
+    rank 1 (used for this order), later clicks = approved backups. Click again
+    to unpick.</p>` +
     q.entries.map((e, i) => queueCard(e, i)).join("") +
     `<div class="row"><button class="act" onclick="approveAll()">
      Record approvals &amp; re-resolve</button>
-     <span class="dim" id="apr-count">0 selected</span></div>`;
+     <span class="dim">${total} pick(s)</span></div>`;
+}
+
+function pickRank(i, code) {
+  const at = (S.picks[i] || []).findIndex(p => p.code === code);
+  return at < 0 ? null : at + 1;
 }
 
 function queueCard(e, i) {
@@ -293,15 +302,21 @@ function queueCard(e, i) {
   const avl = e.avlChoices.length ? `<div class="dim">AVL: ` + e.avlChoices.map(c =>
     `rank-${c.rank ?? "—"} ${esc(c.ref || c.mpn || "?")} (stock ${c.liveStock})`)
     .join(" · ") + `</div>` : "";
-  const cands = e.candidates.length ? `<table><tr><th></th><th>code</th><th>mpn</th>
-    <th>stock</th><th>unit $</th><th>class</th><th>score</th><th>why</th></tr>` +
-    e.candidates.map(c => `<tr>
-      <td><input type="radio" name="pick-${i}" onchange='pick(${i},
-        ${JSON.stringify(c.code)}, ${JSON.stringify(c.model || "")})'></td>
+  const cands = e.candidates.length ? `<table><tr><th>pick</th><th>code</th><th>mpn</th>
+    <th>specs</th><th>stock</th><th>unit $</th><th>class</th><th>score</th><th>why</th></tr>` +
+    e.candidates.map(c => {
+      const rank = pickRank(i, c.code);
+      const params = Object.values(c.keyParams || {}).map(esc).join(" · ");
+      return `<tr>
+      <td><button class="act small${rank ? "" : " quiet"}" onclick='togglePick(${i},
+        ${JSON.stringify(c.code)}, ${JSON.stringify(c.model || "")})'>${
+        rank ? "rank " + rank : "pick"}</button></td>
       <td><code>${esc(c.code)}</code></td><td>${esc(c.model || "")}</td>
+      <td>${params}</td>
       <td>${c.liveStock ?? "—"}</td><td>${c.unitPrice1 ?? "—"}</td>
       <td>${esc(c.libraryType || "")}</td><td>${c.score}</td>
-      <td class="why">${(c.why || []).map(esc).join("<br>")}</td></tr>`).join("")
+      <td class="why">${(c.why || []).map(esc).join("<br>")}</td></tr>`;
+    }).join("")
     + `</table>` :
     `<p class="dim">${esc(e.discovery.note || "no candidates found")}</p>`;
   return `<div class="card"><h3>${esc(e.designators.join(","))} — ${esc(spec)}
@@ -309,18 +324,24 @@ function queueCard(e, i) {
     <span class="dim">need ${e.requiredQty}</span></h3>${avl}${cands}</div>`;
 }
 
-function pick(i, code, mpn) {
-  const e = S.queue.entries[i];
-  S.approvals = S.approvals.filter(a => a._i !== i);
-  S.approvals.push({ _i: i, spec: e.spec, lcsc: code, mpn: mpn || undefined,
-    design: S.resolution.design || undefined,
-    note: `picked in approval queue (${e.reason})` });
-  $("apr-count").textContent = `${S.approvals.length} selected`;
+function togglePick(i, code, mpn) {
+  const arr = (S.picks[i] = S.picks[i] || []);
+  const at = arr.findIndex(p => p.code === code);
+  if (at >= 0) arr.splice(at, 1); else arr.push({code, mpn});
+  renderQueue();
 }
 
 function approveAll() { run("recording approvals", async () => {
-  if (!S.approvals.length) throw new Error("nothing selected");
-  const approvals = S.approvals.map(({_i, ...a}) => a);
+  const approvals = [];
+  for (const [i, arr] of Object.entries(S.picks)) {
+    const e = S.queue.entries[i];
+    arr.forEach((p, idx) => approvals.push({
+      spec: e.spec, lcsc: p.code, mpn: p.mpn || undefined, rank: idx + 1,
+      design: S.resolution.design || undefined,
+      note: `approval queue pick (${e.reason}), rank ${idx + 1}`,
+    }));
+  }
+  if (!approvals.length) throw new Error("nothing picked");
   await api("/api/approve", {approvals});
   msg(`recorded ${approvals.length} pick(s) — re-resolving`, "ok");
   await runResolve(); loadParts();

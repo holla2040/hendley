@@ -63,3 +63,31 @@ def test_comment_falls_back_to_mpn():
 def test_bare_part_has_no_mode():
     bom = requirements_from_design(None, [_part("J1", "CONN-4")], 1)
     assert bom.lines[0].mode is None  # surfaces as a check downstream, not an error
+
+
+def test_generic_passive_states_its_own_spec():
+    parts = [_part("R10", "82K")]
+    placements = [Placement("R10", x=0, y=0, angle=0, footprint="R-0402")]
+    bom = requirements_from_design(None, parts, 1, placements)
+    line = bom.lines[0]
+    assert line.mode == "spec"
+    assert (line.spec.kind, line.spec.value, line.spec.package) == \
+        ("resistor", "82k", "0402")
+
+
+def test_spec_inference_never_overrides_explicit_ids():
+    parts = [_part("R1", "22k", lcsc="C31850")]
+    placements = [Placement("R1", x=0, y=0, angle=0, footprint="R-0603")]
+    bom = requirements_from_design(None, parts, 1, placements)
+    assert bom.lines[0].mode == "provider" and bom.lines[0].spec is None
+
+
+def test_equivalent_value_spellings_group_by_spec():
+    parts = [_part("C9", ".1u"), _part("C11", "100n")]
+    placements = [Placement("C9", x=0, y=0, angle=0, footprint="C-0603"),
+                  Placement("C11", x=1, y=0, angle=0, footprint="C-0603")]
+    bom = requirements_from_design(None, parts, 1, placements)
+    # same canonical spec, but different comments keep separate lines is fine;
+    # what matters: both lines carry the SAME spec key
+    specs = {ln.spec for ln in bom.lines}
+    assert len(specs) == 1 and next(iter(specs)).value == "100n"
