@@ -13,7 +13,9 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import urllib.error
 
+from .bridge import BridgeError
 from .client import JLCClient, JLCError
 
 
@@ -134,6 +136,65 @@ def _cmd_alternates(client: JLCClient, args) -> int:
     return 0
 
 
+def _cmd_pcba(client, args) -> int:
+    """Generate the JLCPCB PCBA order files (bom.csv + cpl.csv) from the live design."""
+    from pathlib import Path
+
+    from .bridge import FusionBridge
+    from .fusion import STOCK_BLOCKERS, check_stock, format_stock_report
+    from .pcba import (
+        BOM_FIELDS,
+        CPL_FIELDS,
+        build_bom_rows,
+        build_cpl_rows,
+        extract_board,
+        extract_schematic,
+        find_rotations_file,
+        load_rotations,
+        write_csv,
+    )
+
+    bridge = FusionBridge(host=args.fusion_host)
+    design, parts = extract_schematic(bridge)  # must run before the one-way BOARD; switch
+    print(f"design '{design}': {len(parts)} part(s) read from the schematic", file=sys.stderr)
+    placements = extract_board(bridge)
+    print(f"{len(placements)} placement(s) read from the board "
+          "(Fusion's engine is now on the board context)", file=sys.stderr)
+
+    placed = {p.designator for p in placements}
+    unplaced = [p.designator for p in parts if p.designator not in placed]
+    orphans = sorted(placed - {p.designator for p in parts})
+    if unplaced:
+        print(f"warning: in schematic but not on board: {', '.join(unplaced)}", file=sys.stderr)
+    if orphans:
+        print(f"warning: on board but not in schematic: {', '.join(orphans)}", file=sys.stderr)
+
+    corrections = load_rotations(args.rotations)
+    if find_rotations_file(args.rotations) is None:
+        print("warning: no data/cpl-rotations.json found — CPL carries raw Fusion angles",
+              file=sys.stderr)
+
+    bom_rows = build_bom_rows(parts, placements)
+    cpl_rows, applied = build_cpl_rows(parts, placements, corrections)
+    for a in applied:
+        print(f"rotation corrected: {a['designator']} {a['rawAngle']}° → {a['rotation']}° "
+              f"(matched {a['matched']})", file=sys.stderr)
+
+    outdir = Path(args.outdir).expanduser()
+    outdir.mkdir(parents=True, exist_ok=True)
+    write_csv(bom_rows, BOM_FIELDS, outdir / "bom.csv")
+    write_csv(cpl_rows, CPL_FIELDS, outdir / "cpl.csv")
+    print(f"wrote {outdir / 'bom.csv'} ({len(bom_rows)} lines) and "
+          f"{outdir / 'cpl.csv'} ({len(cpl_rows)} placements)", file=sys.stderr)
+
+    if args.no_verify:
+        return 0
+    rows = check_stock(parts, client, min_stock=args.min_stock)
+    print(format_stock_report(rows, min_stock=args.min_stock))
+    # Same gate as `stock`: nonzero exit when a part would block the order.
+    return 1 if any(r["status"] in STOCK_BLOCKERS for r in rows) else 0
+
+
 def _cmd_scr(client, args) -> int:
     """Generate a Fusion ``.scr`` migration script from one or more swap files."""
     from pathlib import Path
@@ -216,6 +277,23 @@ def build_parser() -> argparse.ArgumentParser:
                     help="List jlcsearch category slugs and exit.")
     sp.set_defaults(func=_cmd_alternates)
 
+    sp = sub.add_parser(
+        "pcba",
+        help="Generate JLCPCB PCBA order files (bom.csv + cpl.csv) from the live Fusion design.",
+    )
+    sp.add_argument("-o", "--outdir", default="~/tmp/hendley_output",
+                    help="Directory for bom.csv + cpl.csv (default: ~/tmp/hendley_output).")
+    sp.add_argument("--min-stock", type=int, default=1,
+                    help="Flag parts below this stock as LOW (default 1: only flag out-of-stock).")
+    sp.add_argument("--no-verify", action="store_true",
+                    help="Skip the live JLC stock check (no credentials needed).")
+    sp.add_argument("--fusion-host",
+                    help="Fusion bridge host (default: HENDLEY_FUSION_HOST, else the WSL gateway).")
+    sp.add_argument("--rotations",
+                    help="Path to cpl-rotations.json (default: data/cpl-rotations.json, "
+                         "found by walking up from the cwd).")
+    sp.set_defaults(func=_cmd_pcba)
+
     sp = sub.add_parser("scr", help="Generate a Fusion .scr migration script from swap files.")
     sp.add_argument("swaps_json", nargs="+",
                     help="One or more swap JSON files; merged into one combo script.")
@@ -236,12 +314,18 @@ def main(argv: list[str] | None = None) -> int:
         args.command == "scr"
         or (args.command == "fusion" and getattr(args, "no_enrich", False))
         or (args.command == "alternates" and getattr(args, "list_categories", False))
+        or (args.command == "pcba" and getattr(args, "no_verify", False))
     )
     needs_client = not offline
     try:
         client = JLCClient(load_settings(args.keys)) if needs_client else None
         return args.func(client, args)
-    except (JLCError, FileNotFoundError, ValueError) as exc:
+    except urllib.error.URLError as exc:
+        print(f"error: cannot reach the Fusion bridge ({exc.reason}). Is Fusion running with "
+              "the MCP Server enabled and the port-forward in place? See README "
+              "\"Reading from Fusion Electronics\".", file=sys.stderr)
+        return 1
+    except (JLCError, BridgeError, FileNotFoundError, ValueError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 

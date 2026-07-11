@@ -297,3 +297,55 @@ before using** (this is the "unsaved by default" caveat below).
 - The **schematic `value`** (e.g. 220 Ω → 330 Ω) is also settable this way —
   `Electron.run "VALUE R6 330"` — so even the value change Hendley used to defer
   to a manual step can now go in the `.scr`/command stream.
+
+## ⭐ Board placements over the bridge — the one-way `BOARD` switch (verified)
+
+Board-side entities (`electronics.Element` etc.) read **empty** while the
+*schematic* view is active — `{"items":[]}`, not an error (same failure shape as
+the unscoped-attribute gotcha). To read placements, switch the active view to the
+board layout over the same channel:
+
+```python
+app.executeTextCommand('Electron.run "BOARD;"')   # via fusion_mcp_execute
+```
+
+⚠️ **The switch is ONE-WAY** (maintainer-confirmed): there is no command to
+return to the schematic view. So **read everything schematic-side first**
+(`electronics.Part` + scoped `electronics.Attribute`), then switch, then read
+the board.
+
+⚠️ **The switch does NOT visibly raise the board window** (maintainer-observed,
+live): the schematic can stay the front window throughout while `BOARD;` flips
+the electronics **engine's current-drawing context** — which is what the bridge
+queries. The context later reverts to the schematic on its own (observed after
+the user next interacts with the schematic window), after which Element reads
+are empty again. Treat "which entity reads non-empty" — not the visible window —
+as the source of truth, and tell the user to make the schematic current (click
+its tab/canvas) before the next schematic-first run.
+
+After the switch (verified live on `comet`, 2026-07-10):
+
+- `electronics.Element` = one row per placed package. Columns: `object_id`,
+  `name` (designator), `value`, `x`, `y` (**mm**, board origin — may be negative),
+  `angle` (deg), `mirror` (1 = bottom side), `spin`, `smashed`, `populate`,
+  `locked`, `package_object_id`, `package3d_object_id`.
+- `electronics.Package` — join `package_object_id` → `name` for the **library
+  footprint name** (e.g. `DO-214AC(SMA)`, `R-0603`). This is the footprint
+  identity used by `data/cpl-rotations.json` (below).
+- Element count matched the schematic's real (non-pseudo) part count exactly.
+
+### CPL generation + `data/cpl-rotations.json`
+
+This whole flow is committed as **`hendley pcba`** (`src/hendley/bridge.py` +
+`src/hendley/pcba.py`) — schematic read, one-way `BOARD;` switch, placement
+read, rotation corrections, live JLC stock check, and exactly two output files
+(`bom.csv` + `cpl.csv`). **Run the command; don't rebuild this pipeline by
+hand.** One standing data file supports it: **`data/cpl-rotations.json`**
+records per-footprint rotation corrections — some library footprints are drawn
+with a zero-orientation that differs from JLC's feeder expectation, so those
+parts need the same hand-rotate in JLC's order preview on *every* submission.
+Corrections are keyed by **LCSC code or library footprint name** (never
+designator — the error is a property of the library model and follows the part
+across designs); `rotationOffsetDeg` is **positive = counterclockwise** (JLC's
+convention); applied as `(angle + offset) % 360`. When the user reports a part
+needed rotating in the preview, add an entry.

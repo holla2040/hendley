@@ -22,7 +22,7 @@ Hendley, "the Scrounger", in *The Great Escape*.)
   data}` envelope unwrap.
 - `src/hendley/cli.py` — argparse CLI; entry point `hendley = hendley.cli:main`.
   Commands: `ping`, `detail`, `private`, `library`, `fusion`, `stock`, `scr`,
-  `alternates`.
+  `alternates`, `pcba`.
 - `src/hendley/alternates.py` — alternate-part discovery: `fetch_candidates()`
   (DISCOVER candidate codes from the third-party parametric index
   `jlcsearch.tscircuit.com` — the official API can't search), `discover_and_verify()`
@@ -49,10 +49,29 @@ Hendley, "the Scrounger", in *The Great Escape*.)
   (look up stock/price by JLC code), and the inventory check —
   `check_stock()`/`format_stock_report()` (classify each part out/low/not_found/
   no_code/ok via one `getComponentDetailByCode` call). `extract_components()`
-  is Fusion-side only (runs *inside* Fusion 360's embedded Python) and is still a
-  **stub** — the live read is currently done interactively over the HTTP bridge
-  (see "Fusion access from WSL"); wrapping it into a committed extractor is the one
-  open Fusion-side task.
+  is a **stub** kept for an eventual in-Fusion add-in; the live read is
+  committed in `bridge.py` + `pcba.py` (below) and needs no Fusion-side code.
+- `src/hendley/bridge.py` — `FusionBridge`: the committed HTTP client for
+  Fusion's local endpoint. Encodes the full verified handshake (gateway IP with
+  spoofed `Host: 127.0.0.1:27182`, `MCP-Session-Id` capture/resend,
+  `notifications/initialized` before any `tools/call`) plus `read()`,
+  `read_all()` (pagination), `execute_script()`, and `run_eagle()` (the
+  `Electron.run` wrapper). Host order: arg → `HENDLEY_FUSION_HOST` → WSL
+  default-gateway IP.
+- `src/hendley/pcba.py` — JLCPCB order-file generation behind `hendley pcba`:
+  `extract_schematic()` (Part + part-scoped Attribute reads; excludes GND/supply
+  pseudo-parts and the title block), `extract_board()` (probes
+  `electronics.Element`, fires the one-way `BOARD;` switch when needed, joins
+  `electronics.Package` for footprint names), rotation corrections
+  (`load_rotations`/`rotation_for` over `data/cpl-rotations.json`), and the
+  BOM/CPL builders (`build_bom_rows`, `build_cpl_rows`, `write_csv`).
+- `data/cpl-rotations.json` — per-footprint CPL rotation corrections. Some
+  library footprints are drawn rotated vs. what JLC's feeders expect; each fix
+  is recorded ONCE, keyed by **LCSC code or library footprint name — never
+  designator** (the flaw belongs to the library model and follows the part
+  across designs). `rotationOffsetDeg` is positive = CCW (JLC's convention).
+  When the user reports hand-rotating a part in JLC's order preview, add an
+  entry here (lcsc, mpn, footprint, offset, verified date/design).
 - `src/hendley/__init__.py` — public API exports (`JLCClient`, `JLCError`,
   config helpers).
 - `docs/api-reference.md` — **the API contract** (reverse-engineered from the
@@ -84,6 +103,19 @@ of their words into the existing tooling.** Three standing rules for that role:
   a module from the repo root — `PYTHONPATH=src python -m hendley.cli <cmd>` (or
   `python -m hendley <cmd>`), which needs only `requests`. Every `hendley <cmd>`
   below works identically that way.
+
+**⭐ The one-prompt job — "Generate the files necessary for JLCPCB"** (or any
+ask for the BOM/CPL/order files): run **`hendley pcba`**. One command, no
+scratch scripts, no hand-built bridge pipeline — it reads the live design over
+the HTTP bridge (schematic first, then the one-way `BOARD;` switch), applies
+`data/cpl-rotations.json`, verifies stock against the live JLC API, and writes
+**exactly two files** — `bom.csv` + `cpl.csv` — to `~/tmp/hendley_output/`.
+Preconditions: Fusion open with the design's **schematic view active** (and the
+port-forward up). Afterward: relay the stock report (nonzero exit = blockers),
+remind the user the engine is left on the board context (click the schematic
+tab before re-running), and if they mention having to hand-rotate a part in
+JLC's order preview, add the correction to `data/cpl-rotations.json` (keyed by
+LCSC/footprint) so it's automatic from then on.
 
 Many conversations are a one-shot lookup — *"is C25768 in stock?"* → `hendley
 detail`; *"check this BOM before I order"* → `hendley stock`. The main multi-step
@@ -215,6 +247,10 @@ part" — jlcsearch is the discovery surface.
 - `stock`, `alternates` — print a **human report by default**; add **`--json`**
   for structured output. These are the *only* two commands that accept `--json`.
 - `ping` — prints a status line. `scr` — prints the `.scr` (or `-o FILE` to write).
+- `pcba` — writes `bom.csv` + `cpl.csv` to `--outdir` (default
+  `~/tmp/hendley_output/`), progress to stderr, the stock report to stdout;
+  exits nonzero on stock blockers (same gate as `stock`). `--no-verify` skips
+  the JLC check (offline, no credentials). No `--json` flag.
 - Each command's flags are exactly those in `hendley <cmd> --help`; don't assume a
   flag exists because another command has it.
 

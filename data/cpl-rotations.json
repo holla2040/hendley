@@ -1,0 +1,7 @@
+{
+  "schemaVersion": 1,
+  "description": "Per-footprint CPL rotation corrections for JLCPCB PCBA orders. Some library footprints are drawn with a zero-orientation that differs from what JLC's feeder data expects, so those parts need the same manual rotation in JLC's order preview on every submission. This file records each such correction ONCE, keyed by part identity (not designator — the error is a property of the library model/footprint, so it follows the part into every future design). When generating a CPL from a Fusion design, look up each part here (match on lcsc OR footprint) and add rotationOffsetDeg to the board angle (mod 360).",
+  "convention": "rotationOffsetDeg is degrees COUNTERCLOCKWISE (JLC's positive direction; one click of JLC's preview rotate button = +90).",
+  "howToAddAnEntry": "When a part needs hand-rotating in the JLC order preview, record: its LCSC code, MPN, the library footprint name (electronics.Package name from the board read), the offset that fixed it, and the date/design it was verified on.",
+  "corrections": []
+}

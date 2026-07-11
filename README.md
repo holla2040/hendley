@@ -62,6 +62,10 @@ out faster and with fewer surprises.
 Read-only component (parts inventory) endpoints, signed with JLCPCB's `JOP`
 authentication scheme, exposed through a `hendley` CLI and a small Python API:
 
+- **Generate the JLCPCB order files** (`hendley pcba`) — read the live Fusion
+  design over the HTTP bridge and write `bom.csv` + `cpl.csv`, rotation-corrected
+  and stock-checked, ready to upload. See
+  [Generating JLCPCB order files](#generating-jlcpcb-order-files-hendley-pcba).
 - **Find an alternate part** (`hendley alternates`) — discover candidate
   replacements from a parametric index and verify each one **live** against JLC
   for stock, price, and specs, then weigh the trade-off and choose. See
@@ -180,6 +184,7 @@ hendley [--keys PATH] <command> [options]
 | `hendley library [--limit N]` | Browse the assembly component library. |
 | `hendley fusion PARTS.json [--no-enrich]` | Ingest a Fusion parts-export JSON and enrich each part against JLC (stock, price tiers, basic/extended). `--no-enrich` validates the file offline without calling the API. |
 | `hendley stock PARTS.json [--min-stock N] [--json]` | **Inventory check** — look up live stock for every part in a BOM and flag any that are out of stock, not found, or below `--min-stock`. Exits nonzero if any part is out-of-stock or not found, so it can gate a submission (`hendley stock bom.json && submit`). |
+| `hendley pcba [-o DIR] [--min-stock N] [--no-verify] [--fusion-host IP] [--rotations FILE]` | **Generate the JLCPCB PCBA order files** — read the currently open Fusion design over the HTTP bridge (schematic, then board) and write exactly two files, `bom.csv` + `cpl.csv` (default `~/tmp/hendley_output/`), with `data/cpl-rotations.json` corrections applied, then run the live JLC stock check (exits nonzero on blockers; `--no-verify` skips it, offline). See [Generating JLCPCB order files](#generating-jlcpcb-order-files-hendley-pcba). |
 | `hendley scr SWAPS.json [SWAPS2.json ...] [-o FILE.scr] [--design NAME]` | Generate a Fusion `.scr` migration script from one or more swap files (merged into one combo script). Emits the `CHANGE PACKAGE` + `ATTRIBUTE` commands you run in Fusion. Runs offline — no credentials needed. See [The `.scr` file format](#the-scr-file-format). |
 | `hendley alternates CODE --category SLUG [--package PKG] [-p KEY=VALUE ...] [--top N] [--json]` | **Find an alternate** for a part: DISCOVER candidates from the third-party parametric index `jlcsearch.tscircuit.com`, then VERIFY *every* hit against the live JLC API (stock, price, parameters) and print a trade-off table. It does **not** rank or pick — you (or Claude) weigh stock / price / spec margin / package. `--list-categories` lists the slugs (offline). See [Finding a replacement part](#finding-a-replacement-part). |
 
@@ -338,6 +343,56 @@ Remove the (correct) gateway forward when you're done with:
 ```powershell
 netsh interface portproxy delete v4tov4 listenaddress=172.17.64.1 listenport=27182
 ```
+
+## Generating JLCPCB order files (`hendley pcba`)
+
+The one-command flow: with your design open in Fusion (**schematic view
+active**), run
+
+```bash
+hendley pcba
+```
+
+and Hendley reads the live design over the HTTP bridge and writes **exactly two
+files** to `~/tmp/hendley_output/` (override with `-o DIR`):
+
+- **`bom.csv`** — `Comment, Designator, Footprint, JLCPCB Part #`; parts grouped
+  by identical value / footprint / code, designators natural-sorted. `Comment`
+  is the schematic value, falling back to the MPN; the JLC code comes from each
+  part's `LCSC` attribute.
+- **`cpl.csv`** — `Designator, Mid X, Mid Y, Layer, Rotation`; one row per
+  populated placement, coordinates in mm.
+
+Under the hood it: reads the schematic (parts + attributes; GND/supply symbols
+and the title block are excluded), switches the electronics engine to the board
+with the EAGLE `BOARD;` command (**one-way** — there is no command back, so the
+schematic is always read first; the board window is not visibly raised, but
+reactivate the schematic in the Fusion UI before the next run), reads the
+placements and footprint names, applies rotation corrections (below), and
+finally runs the same live JLC stock check as `hendley stock` — exiting nonzero
+on out-of-stock / not-found parts so it can gate a submission. `--no-verify`
+skips the check and needs no credentials.
+
+Parts with no `LCSC` attribute (test points, programming pads, connectors you
+solder yourself) are kept in both files but flagged; JLC's uploader lists them
+unmatched and you leave them unselected.
+
+### CPL rotation corrections (`data/cpl-rotations.json`)
+
+Some library footprints are drawn with a zero-orientation different from what
+JLC's feeder data expects — those parts need the same manual rotation in JLC's
+order preview on **every** order. `data/cpl-rotations.json` records each fix
+once, keyed by **part identity** (LCSC code or library footprint name — never
+the designator: the flaw belongs to the library model and follows the part into
+every design that uses it). `hendley pcba` adds each matched part's
+`rotationOffsetDeg` (positive = counterclockwise, JLC's convention) to its board
+angle. When a part needs hand-rotating in the preview, add an entry — it never
+needs fixing again.
+
+Known caveat: `Mid X`/`Mid Y` is the footprint **origin** (not the part
+centroid), relative to the board origin — JLC's preview normally normalizes
+this; if a part previews off-pad, that's an origin mismatch worth recording
+alongside the rotations.
 
 ## The workflow
 
@@ -581,8 +636,11 @@ on **horton** (the Linux dev box), session
 
 ## Future enhancement: streamlining JLCPCB board submission
 
-> **Earmarked, not yet scoped.** This is a known pain point we intend to address
-> later; nothing here is implemented. Captured so we don't lose the problem.
+> **Partially addressed.** `hendley pcba` now generates the BOM + CPL directly
+> from the live design (rotation-corrected, stock-checked) — see
+> [Generating JLCPCB order files](#generating-jlcpcb-order-files-hendley-pcba).
+> The remaining piece — driving JLC's own upload/validation through the order
+> API — is earmarked, not yet scoped.
 
 Submitting a PCBA order through the JLCPCB **website** is one of the slowest,
 most tedious parts of the whole workflow. The order form validates your uploads
