@@ -10,6 +10,7 @@ from hendley.pcba import (
     Placement,
     build_bom_rows,
     build_cpl_rows,
+    is_dnp,
     is_pseudo_part,
     load_rotations,
     natural_key,
@@ -74,6 +75,25 @@ def test_dnp_parts_are_left_out_of_bom_and_cpl():
     pl2.populate = False
     bom = build_bom_rows([p1, p2], [pl1, pl2])
     assert bom[0]["Designator"] == "R1"
+    cpl, _ = build_cpl_rows([p1, p2], [pl1, pl2])
+    assert [r["Designator"] for r in cpl] == ["R1"]
+
+
+def test_is_dnp_reads_the_schematic_attribute():
+    assert is_dnp(DesignPart("M+", attributes={"DNP": "1"}))
+    assert is_dnp(DesignPart("JP", attributes={"DNP": "true"}))
+    # empty or "0" means populate; so does no DNP attribute at all
+    assert not is_dnp(DesignPart("R1", attributes={"DNP": ""}))
+    assert not is_dnp(DesignPart("R1", attributes={"DNP": "0"}))
+    assert not is_dnp(DesignPart("R1"))
+
+
+def test_dnp_attribute_excludes_part_from_bom_and_cpl():
+    p1, pl1 = _r("R1", "C1")
+    p2, pl2 = _r("M+", None, value="", footprint="TPTHRU-SLOT-1-3")
+    p2.attributes = {"DNP": "1"}
+    bom = build_bom_rows([p1, p2], [pl1, pl2])
+    assert [r["Designator"] for r in bom] == ["R1"]
     cpl, _ = build_cpl_rows([p1, p2], [pl1, pl2])
     assert [r["Designator"] for r in cpl] == ["R1"]
 

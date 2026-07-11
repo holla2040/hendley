@@ -12,6 +12,9 @@ Extraction rules (verified live, documented in ``docs/fusion-notes.md``):
   unscoped reads return empty, not an error.
 - GND/supply pseudo-parts (``package3d_object_id`` = 0) and the title-block /
   logo part (``U$…`` with no LCSC/MPN) are excluded from the BOM.
+- Parts marked do-not-populate — the schematic ``DNP`` attribute set to
+  anything but ``0`` (test points, mount holes, programming pads), or the
+  board element's ``populate`` flag off — are excluded from both files.
 - The JLC code is the ``LCSC`` attribute; MPN is ``MPN`` (fallback ``MP``).
 - Board entities read empty until the board is the engine's current drawing;
   ``BOARD;`` switches it (without raising the board window). There is no
@@ -67,6 +70,15 @@ def is_pseudo_part(part_row: dict, attrs: dict[str, str]) -> bool:
         return True  # GND / supply pseudo-parts carry no package
     has_part_id = attrs.get("LCSC") or attrs.get("MPN") or attrs.get("MP")
     return part_row["name"].startswith("U$") and not has_part_id  # title block / logo
+
+
+def is_dnp(part: DesignPart) -> bool:
+    """True when the schematic marks the part do-not-populate (``DNP`` attribute).
+
+    Any value other than empty or ``0`` counts as set, matching the loose way
+    libraries fill it in (``1``, ``true``, ``yes``).
+    """
+    return (part.attributes or {}).get("DNP", "").strip() not in ("", "0")
 
 
 def part_from_row(part_row: dict, attrs: dict[str, str]) -> DesignPart:
@@ -194,13 +206,14 @@ def build_bom_rows(parts: list[DesignPart], placements: list[Placement]) -> list
 
     Comment is the schematic value, falling back to the MPN. Footprint is the
     board's library package name (falling back to the PACKAGE attribute).
-    Do-not-populate parts are left out (matching their absence from the CPL).
+    Do-not-populate parts — the ``DNP`` attribute or the board's ``populate``
+    flag — are left out (matching their absence from the CPL).
     """
     place_by_desig = {pl.designator: pl for pl in placements}
     groups: dict[tuple[str, str, str], list[str]] = {}
     for part in parts:
         placed = place_by_desig.get(part.designator)
-        if placed is not None and not placed.populate:
+        if is_dnp(part) or (placed is not None and not placed.populate):
             continue
         footprint = (placed.footprint if placed else None) or part.package or ""
         comment = (part.value or "").strip() or (part.manufacturer_part or "")
@@ -223,7 +236,7 @@ def build_bom_rows(parts: list[DesignPart], placements: list[Placement]) -> list
 def build_cpl_rows(
     parts: list[DesignPart], placements: list[Placement], corrections: list[dict] | None = None
 ) -> tuple[list[dict], list[dict]]:
-    """One CPL row per populated placement, rotation corrections applied.
+    """One CPL row per populated placement (DNP parts skipped), corrections applied.
 
     Returns ``(rows, applied)`` where ``applied`` records each correction that
     fired (designator, raw angle, corrected rotation, matched key) so callers
@@ -234,9 +247,9 @@ def build_cpl_rows(
     rows: list[dict] = []
     applied: list[dict] = []
     for pl in placements:
-        if not pl.populate:
-            continue
         part = part_by_desig.get(pl.designator)
+        if not pl.populate or (part is not None and is_dnp(part)):
+            continue
         rotation = pl.angle
         c = rotation_for(corrections, part.jlc_code if part else None, pl.footprint)
         if c:

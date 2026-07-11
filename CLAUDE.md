@@ -60,7 +60,9 @@ Hendley, "the Scrounger", in *The Great Escape*.)
   default-gateway IP.
 - `src/hendley/pcba.py` — JLCPCB order-file generation behind `hendley pcba`:
   `extract_schematic()` (Part + part-scoped Attribute reads; excludes GND/supply
-  pseudo-parts and the title block), `extract_board()` (probes
+  pseudo-parts and the title block), `is_dnp()` (parts whose `DNP` attribute is
+  set to anything but `0` are dropped from the BOM, CPL, and stock check —
+  test points, mount holes, programming pads), `extract_board()` (probes
   `electronics.Element`, fires the one-way `BOARD;` switch when needed, joins
   `electronics.Package` for footprint names), rotation corrections
   (`load_rotations`/`rotation_for` over `data/cpl-rotations.json`), and the
@@ -120,8 +122,9 @@ Hendley — say any of these:
   help                     this menu
 
 Order files land in ~/tmp/hendley_output/ (bom.csv + cpl.csv, nothing else).
-Out-of-stock parts are flagged; rotation fixes in data/cpl-rotations.json apply
-automatically. After a run, click Fusion's schematic tab before running again.
+Out-of-stock parts are flagged; DNP parts (DNP attribute = 1) are left out; rotation
+fixes in data/cpl-rotations.json apply automatically. After a run, click Fusion's
+schematic tab before running again.
 ```
 
 ## The workflow — having a conversation about JLC parts

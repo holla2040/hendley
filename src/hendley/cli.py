@@ -150,6 +150,7 @@ def _cmd_pcba(client, args) -> int:
         extract_board,
         extract_schematic,
         find_rotations_file,
+        is_dnp,
         load_rotations,
         write_csv,
     )
@@ -160,6 +161,11 @@ def _cmd_pcba(client, args) -> int:
     placements = extract_board(bridge)
     print(f"{len(placements)} placement(s) read from the board "
           "(Fusion's engine is now on the board context)", file=sys.stderr)
+
+    dnp = [p.designator for p in parts if is_dnp(p)]
+    if dnp:
+        print(f"DNP (excluded from BOM, CPL, and stock check): {', '.join(dnp)}",
+              file=sys.stderr)
 
     placed = {p.designator for p in placements}
     unplaced = [p.designator for p in parts if p.designator not in placed]
@@ -189,7 +195,7 @@ def _cmd_pcba(client, args) -> int:
 
     if args.no_verify:
         return 0
-    rows = check_stock(parts, client, min_stock=args.min_stock)
+    rows = check_stock([p for p in parts if not is_dnp(p)], client, min_stock=args.min_stock)
     print(format_stock_report(rows, min_stock=args.min_stock))
     # Same gate as `stock`: nonzero exit when a part would block the order.
     return 1 if any(r["status"] in STOCK_BLOCKERS for r in rows) else 0
