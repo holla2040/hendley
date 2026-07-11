@@ -4,7 +4,8 @@ import json
 
 import pytest
 
-from hendley.fusion import DesignPart, check_stock, format_stock_report, load_parts_json
+from hendley.ingestion.fusion.parts_json import DesignPart, load_parts_json
+from hendley.reporting.stock import check_stock, format_stock_report
 
 
 class FakeClient:

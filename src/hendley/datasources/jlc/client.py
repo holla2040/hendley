@@ -41,7 +41,7 @@ from urllib.parse import urlsplit
 import requests
 
 from . import auth
-from .config import Settings, load_settings
+from ...config import Settings, load_settings
 
 _USER_AGENT = f"hendley/0.1.0 (python {platform.python_version()})"
 

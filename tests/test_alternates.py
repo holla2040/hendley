@@ -8,7 +8,7 @@ import json
 
 import pytest
 
-from hendley.alternates import (
+from hendley.datasources.jlc.alternates import (
     discover_and_verify,
     fetch_candidates,
     format_alternates_report,

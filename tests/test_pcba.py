@@ -3,18 +3,20 @@
 import csv
 import json
 
-from hendley.fusion import DesignPart
-from hendley.pcba import (
-    BOM_FIELDS,
-    CPL_FIELDS,
+from hendley.ingestion.fusion.live_design import (
     Placement,
-    build_bom_rows,
-    build_cpl_rows,
     is_dnp,
     is_pseudo_part,
-    load_rotations,
     natural_key,
     part_from_row,
+)
+from hendley.ingestion.fusion.parts_json import DesignPart
+from hendley.providers.jlcpcb.order_files import (
+    BOM_FIELDS,
+    CPL_FIELDS,
+    build_bom_rows,
+    build_cpl_rows,
+    load_rotations,
     rotation_for,
     write_csv,
 )

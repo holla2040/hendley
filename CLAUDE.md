@@ -11,62 +11,74 @@ Hendley, "the Scrounger", in *The Great Escape*.)
 
 ## Architecture / file map
 
+The package follows `docs/architecture.md` §13: ingestion → domain →
+resolver/knowledge → providers, with the CLI (and later the app) as thin
+consumers. Nothing under `resolver/`, `knowledge/`, or `domain/` may import
+concrete `providers/*` or `datasources/jlc` — only the base protocols.
+
 - `src/hendley/config.py` — loads credentials from the git-ignored `.keys` file;
   resolves endpoint. `Credentials`, `Settings`, `load_credentials`,
   `load_settings`. Path order: explicit arg → `HENDLEY_KEYS` → `.keys` found by
   walking up from cwd. Endpoint order: `HENDLEY_ENDPOINT` → default host.
-- `src/hendley/auth.py` — `JOP` request signing (HMAC-SHA256). Builds the
-  `Authorization` header and the string-to-sign.
-- `src/hendley/client.py` — `JLCClient`: signed `_post` plumbing plus the
-  read-only component endpoints; `JLCError` and the `{code, success, message,
-  data}` envelope unwrap.
-- `src/hendley/cli.py` — argparse CLI; entry point `hendley = hendley.cli:main`.
-  Commands: `ping`, `detail`, `private`, `library`, `fusion`, `stock`, `scr`,
-  `alternates`, `pcba`.
-- `src/hendley/alternates.py` — alternate-part discovery: `fetch_candidates()`
-  (DISCOVER candidate codes from the third-party parametric index
-  `jlcsearch.tscircuit.com` — the official API can't search), `discover_and_verify()`
-  (VERIFY *every* hit in one batched `getComponentDetailByCode` call — jlcsearch
-  stock is a stale snapshot), and `format_alternates_report()` (the trade-off
-  table). It deliberately does **not** rank or pick (no stock/price sort, no
-  Basic filter) — Claude/the user weighs the verified data. jlcsearch matches
-  `package` (and other string filters) by **exact equality, no wildcards**; the
-  fuzzy escape hatch is `--category components -p search=…` (FTS). `CATEGORIES`
-  holds the 44 jlcsearch category slugs.
-- `src/hendley/scr.py` — Fusion `.scr` migration-script generator: `PartSwap`,
-  `load_swaps_json()`, `render_script()`. Turns a list of part swaps (designator
-  + package variant + attributes) into the EAGLE command-line script the user
-  runs in Fusion (`File > Execute Script`, or `neu_dev.run_text_command("SCRIPT
-  …")` in the text-command Py mode). The write side: the Electronics **object**
-  API is read-only, but the EAGLE command line **is** reachable over the HTTP
+- `src/hendley/cli/` — argparse CLI; entry point `hendley = hendley.cli:main`
+  (also `python -m hendley.cli`). `__init__.py` holds `build_parser`/`main`;
+  commands live in `catalog.py` (`ping`, `detail`, `private`, `library`,
+  `alternates`), `manufacturing.py` (`fusion`, `stock`, `pcba`/`jlc`), and
+  `migration.py` (`scr`).
+- `src/hendley/datasources/jlc/` — everything that talks to JLC-side services:
+  - `auth.py` — `JOP` request signing (HMAC-SHA256). Builds the
+    `Authorization` header and the string-to-sign.
+  - `client.py` — `JLCClient`: signed `_post` plumbing plus the read-only
+    component endpoints; `JLCError` and the `{code, success, message, data}`
+    envelope unwrap.
+  - `alternates.py` — alternate-part discovery: `fetch_candidates()`
+    (DISCOVER candidate codes from the third-party parametric index
+    `jlcsearch.tscircuit.com` — the official API can't search),
+    `discover_and_verify()` (VERIFY *every* hit in one batched
+    `getComponentDetailByCode` call — jlcsearch stock is a stale snapshot),
+    and `format_alternates_report()` (the trade-off table). It deliberately
+    does **not** rank or pick — Claude/the user weighs the verified data.
+    jlcsearch matches `package` (and other string filters) by **exact
+    equality, no wildcards**; the fuzzy escape hatch is `--category components
+    -p search=…` (FTS). `CATEGORIES` holds the 44 jlcsearch category slugs.
+- `src/hendley/ingestion/fusion/` — reading designs out of Fusion:
+  - `bridge.py` — `FusionBridge`: the committed HTTP client for Fusion's local
+    endpoint. Encodes the full verified handshake (gateway IP with spoofed
+    `Host: 127.0.0.1:27182`, `MCP-Session-Id` capture/resend,
+    `notifications/initialized` before any `tools/call`) plus `read()`,
+    `read_all()` (pagination), `execute_script()`, and `run_eagle()` (the
+    `Electron.run` wrapper). Host order: arg → `HENDLEY_FUSION_HOST` → WSL
+    default-gateway IP.
+  - `live_design.py` — live extraction behind `hendley pcba`:
+    `extract_schematic()` (Part + part-scoped Attribute reads; excludes
+    GND/supply pseudo-parts and the title block), `extract_board()` (probes
+    `electronics.Element`, fires the one-way `BOARD;` switch when needed,
+    joins `electronics.Package` for footprint names), `is_dnp()`, `Placement`,
+    `natural_key()`.
+  - `parts_json.py` — the `DesignPart` model and `load_parts_json()` (the
+    parts-export ingest contract); `extract_components()` is a **stub** kept
+    for an eventual in-Fusion add-in.
+- `src/hendley/providers/jlcpcb/` — JLCPCB-specific manufacturing output:
+  - `order_files.py` — the BOM/CPL builders (`build_bom_rows`,
+    `build_cpl_rows`, `write_csv`, `BOM_FIELDS`/`CPL_FIELDS`) and rotation
+    corrections (`load_rotations`/`rotation_for` over
+    `data/cpl-rotations.json`).
+- `src/hendley/reporting/stock.py` — JLC enrichment + the inventory check:
+  `enrich_with_jlc()`, `check_stock()`/`format_stock_report()` (classify each
+  part out/low/not_found/no_code/ok via one `getComponentDetailByCode` call),
+  `STOCK_BLOCKERS`.
+- `src/hendley/migration/fusion_script/scr.py` — Fusion `.scr`
+  migration-script generator: `PartSwap`, `load_swaps_json()`,
+  `render_script()`. Turns a list of part swaps (designator + package variant
+  + attributes) into the EAGLE command-line script the user runs in Fusion
+  (`File > Execute Script`, or `neu_dev.run_text_command("SCRIPT …")` in the
+  text-command Py mode). The write side: the Electronics **object** API is
+  read-only, but the EAGLE command line **is** reachable over the HTTP
   endpoint via `executeTextCommand('Electron.run "script C:\\path\\changes.scr"')` — so
   Hendley can either hand the user the `.scr` *or* fire it into Fusion over the
   bridge (see "Fusion access from WSL → write side" below). `CHANGE PACKAGE`
-  precedes `ATTRIBUTE` per part
-  (variant switch can reset variant-default attrs); injection chars are rejected.
-- `src/hendley/fusion.py` — Fusion Electronics bridge: the `DesignPart` model,
-  `load_parts_json()` (ingest the parts-export contract), `enrich_with_jlc()`
-  (look up stock/price by JLC code), and the inventory check —
-  `check_stock()`/`format_stock_report()` (classify each part out/low/not_found/
-  no_code/ok via one `getComponentDetailByCode` call). `extract_components()`
-  is a **stub** kept for an eventual in-Fusion add-in; the live read is
-  committed in `bridge.py` + `pcba.py` (below) and needs no Fusion-side code.
-- `src/hendley/bridge.py` — `FusionBridge`: the committed HTTP client for
-  Fusion's local endpoint. Encodes the full verified handshake (gateway IP with
-  spoofed `Host: 127.0.0.1:27182`, `MCP-Session-Id` capture/resend,
-  `notifications/initialized` before any `tools/call`) plus `read()`,
-  `read_all()` (pagination), `execute_script()`, and `run_eagle()` (the
-  `Electron.run` wrapper). Host order: arg → `HENDLEY_FUSION_HOST` → WSL
-  default-gateway IP.
-- `src/hendley/pcba.py` — JLCPCB order-file generation behind `hendley pcba`:
-  `extract_schematic()` (Part + part-scoped Attribute reads; excludes GND/supply
-  pseudo-parts and the title block), `is_dnp()` (parts whose `DNP` attribute is
-  set to anything but `0` are dropped from the BOM, CPL, and stock check —
-  test points, mount holes, programming pads), `extract_board()` (probes
-  `electronics.Element`, fires the one-way `BOARD;` switch when needed, joins
-  `electronics.Package` for footprint names), rotation corrections
-  (`load_rotations`/`rotation_for` over `data/cpl-rotations.json`), and the
-  BOM/CPL builders (`build_bom_rows`, `build_cpl_rows`, `write_csv`).
+  precedes `ATTRIBUTE` per part (variant switch can reset variant-default
+  attrs); injection chars are rejected.
 - `data/cpl-rotations.json` — per-footprint CPL rotation corrections. Some
   library footprints are drawn rotated vs. what JLC's feeders expect; each fix
   is recorded ONCE, keyed by **LCSC code or library footprint name — never
@@ -79,13 +91,18 @@ Hendley, "the Scrounger", in *The Great Escape*.)
 - `docs/api-reference.md` — **the API contract** (reverse-engineered from the
   Java SDK). Source of truth for endpoints, request/response shapes, and the
   not-yet-wrapped PCB/TDP order routes.
+- `docs/adr/` — architecture decision records (ranking synthesis, SQLite,
+  app-first interface, …).
 - `sdk/` — reference JLCPCB Java SDK jars (Core + Business).
 - `image/` — project avatar (`hendley.png`, `hendley_80x80.png`).
 - `.keys` — credentials (git-ignored; never commit). `notes` — holds the
   developer-portal URL (not the API host).
 
-- `tests/` — `test_auth.py` (signing, pinned to the Java SDK algorithm) and
-  `test_fusion.py` (parts-export ingest contract).
+- `tests/` — `test_auth.py` (signing, pinned to the Java SDK algorithm),
+  `test_fusion.py` (parts-export ingest contract), `test_pcba.py` (BOM/CPL
+  builders), `test_pcba_golden.py` (end-to-end golden gate for `hendley
+  pcba` — byte-identical CSVs against a fake bridge), `test_alternates.py`,
+  `test_scr.py`.
 
 ## `help` — the plain-speak menu (READ THIS FIRST)
 
@@ -204,13 +221,13 @@ below — to get its designator and the exact package variant names.) Drive it a
    Always **surface electrical caveats** — e.g. downsizing 0603→0402 drops the
    power/voltage rating, so check the part's actual dissipation first. Recommend
    one with reasoning the user can override.
-5. **Build the swap and generate the `.scr`.** Do NOT read `scr.py` source for the
+5. **Build the swap and generate the `.scr`.** Do NOT read the `scr` module source for the
    input format — the swap-JSON contract is documented in **README → "The
-   workflow" (the `.scr` file format)** and the `hendley.scr` module docstring.
+   workflow" (the `.scr` file format)** and the `hendley.migration.fusion_script.scr` module docstring.
    Fields (only `designator` required), filled from data you already have:
    - `designator` — the schematic ref (e.g. `R6`). Find it in the BOM
      (`hendley fusion PARTS.json --no-enrich`, or grep the parts JSON) by matching
-     the **old** JLC code; the parts-JSON contract is in `fusion.py`.
+     the **old** JLC code; the parts-JSON contract is in `ingestion/fusion/parts_json.py`.
    - `package` — the library **variant name**: the *exact* library name read off
      the device, which carries a **leading hyphen** (e.g. `-0402`, not `0402` —
      `CHANGE PACKAGE '0402'` errors). OMIT for a same-package swap. Read the real

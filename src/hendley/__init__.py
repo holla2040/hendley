@@ -3,7 +3,7 @@
 Named for James Garner's character in *The Dirty Dozen*.
 """
 
-from .client import JLCClient, JLCError
+from .datasources.jlc.client import JLCClient, JLCError
 from .config import Credentials, Settings, load_credentials, load_settings
 
 __version__ = "0.1.0"

@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from hendley.scr import PartSwap, load_swaps_json, render_script
+from hendley.migration.fusion_script.scr import PartSwap, load_swaps_json, render_script
 
 
 def test_from_dict_aliases_and_order():
