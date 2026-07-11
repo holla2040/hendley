@@ -21,7 +21,16 @@ import urllib.error
 from ..datasources.jlc.client import JLCClient, JLCError
 from ..ingestion.fusion.bridge import BridgeError
 from .catalog import cmd_alternates, cmd_detail, cmd_library, cmd_ping, cmd_private
-from .manufacturing import cmd_fusion, cmd_pcba, cmd_stock
+from .knowledge import (
+    cmd_db_list,
+    cmd_db_lookup,
+    cmd_db_record,
+    cmd_db_refresh,
+    cmd_db_remove,
+    cmd_db_rerank,
+    cmd_resolve,
+)
+from .manufacturing import cmd_bom, cmd_fusion, cmd_pcba, cmd_stock
 from .migration import cmd_scr
 
 
@@ -97,6 +106,89 @@ def build_parser() -> argparse.ArgumentParser:
                          "found by walking up from the cwd).")
     sp.set_defaults(func=cmd_pcba)
 
+    sp = sub.add_parser("db", help="House-parts database: Hendley's spec → chosen-part memory.")
+    dbsub = sp.add_subparsers(dest="db_action", required=True)
+
+    def _spec_args(parser) -> None:
+        parser.add_argument("--db", help="Path to the house-parts DB "
+                            "(default: $HENDLEY_DB or ~/.hendley/parts.db).")
+        parser.add_argument("--kind", required=True,
+                            help="Canonical part kind, e.g. resistor, capacitor.")
+        parser.add_argument("--value", required=True,
+                            help="Canonical value string, e.g. 22k, 100n.")
+        parser.add_argument("--package", required=True, help="Package, e.g. 0603.")
+        parser.add_argument("--qualifier", default="",
+                            help="Beyond-house-default spec, e.g. '100V', '1%%' "
+                                 "(default: none = the house default).")
+
+    d = dbsub.add_parser("lookup", help="House Part with ranked choices (the AVL) "
+                                        "+ audit history for one spec.")
+    _spec_args(d)
+    d.set_defaults(func=cmd_db_lookup)
+
+    d = dbsub.add_parser("record", help="Approve a part as a ranked choice for a spec "
+                                        "(default rank 1 = promotion; existing choices "
+                                        "shift down, staying approved).")
+    _spec_args(d)
+    d.add_argument("--lcsc", help="Chosen part's LCSC code, e.g. C31850.")
+    d.add_argument("--mpn", help="Manufacturer part number (the neutral identity).")
+    d.add_argument("--rank", type=int, default=1,
+                   help="Rank on the AVL (1 = tried first; out-of-range appends; "
+                        "default 1).")
+    d.add_argument("--manufacturer", help="Manufacturer display name.")
+    d.add_argument("--description", help="Part description.")
+    d.add_argument("--design", help="Design that triggered this pick.")
+    d.add_argument("--note", help="Why this pick, e.g. 'C31850 out of stock 2026-07-09'.")
+    d.set_defaults(func=cmd_db_record)
+
+    d = dbsub.add_parser("rerank", help="Move an active choice to a new rank on its AVL.")
+    _spec_args(d)
+    d.add_argument("--lcsc", "--ref", dest="ref", required=True,
+                   help="The choice's LCSC code (or MPN).")
+    d.add_argument("--rank", type=int, required=True, help="New rank (1 = tried first).")
+    d.add_argument("--note", help="Why the re-rank.")
+    d.set_defaults(func=cmd_db_rerank)
+
+    d = dbsub.add_parser("remove", help="Remove a choice from its AVL "
+                                        "(state change, audited; the row is kept).")
+    _spec_args(d)
+    d.add_argument("--lcsc", "--ref", dest="ref", required=True,
+                   help="The choice's LCSC code (or MPN).")
+    d.add_argument("--note", help="Why the removal, e.g. 'EOL' or 'failed in rev B'.")
+    d.set_defaults(func=cmd_db_remove)
+
+    d = dbsub.add_parser("list", help="All House Parts with their ranked choices.")
+    d.add_argument("--db", help="Path to the house-parts DB.")
+    d.add_argument("--kind", help="Filter by kind, e.g. resistor.")
+    d.set_defaults(func=cmd_db_list)
+
+    d = dbsub.add_parser("refresh", help="Batch live-verify all active part choices "
+                                         "(the only db action that hits the API).")
+    d.add_argument("--db", help="Path to the house-parts DB.")
+    d.set_defaults(func=cmd_db_refresh)
+
+    sp = sub.add_parser(
+        "resolve",
+        help="Resolve a Requirements BOM against the house AVLs + live stock "
+             "(rank-walk; silent substitution; escalations to stderr, exit 1).")
+    sp.add_argument("request_json", help="Requirements BOM / resolve request JSON "
+                                         "(contract in hendley.domain.model).")
+    sp.add_argument("-o", "--output", help="Write the resolution JSON here "
+                                           "(default: stdout).")
+    sp.add_argument("--db", help="Path to the house-parts DB "
+                                 "(default: $HENDLEY_DB or ~/.hendley/parts.db).")
+    sp.set_defaults(func=cmd_resolve)
+
+    sp = sub.add_parser("bom", help="Render a resolution JSON into the JLCPCB upload BOM CSV.")
+    sp.add_argument("resolution_json", help="Path to the resolution JSON.")
+    sp.add_argument("-o", "--output", help="Write the CSV here (default: stdout).")
+    sp.add_argument("--report", action="store_true",
+                    help="Also print the human-readable resolution report (to stderr).")
+    sp.add_argument("--no-snapshot", action="store_true",
+                    help="Skip the release snapshot a clean -o emit writes beside "
+                         "the CSV (the immutable what-was-ordered record).")
+    sp.set_defaults(func=cmd_bom)
+
     sp = sub.add_parser("scr", help="Generate a Fusion .scr migration script from swap files.")
     sp.add_argument("swaps_json", nargs="+",
                     help="One or more swap JSON files; merged into one combo script.")
@@ -111,10 +203,12 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     from ..config import load_settings
 
-    # Offline modes need no credentials: `scr` is pure generation; `fusion --no-enrich`
-    # only parses.
+    # Offline modes need no credentials: `scr`/`bom` are pure generation; `fusion
+    # --no-enrich` only parses; `db` is local SQLite except `db refresh` (live verify).
     offline = (
         args.command == "scr"
+        or args.command == "bom"
+        or (args.command == "db" and getattr(args, "db_action", None) != "refresh")
         or (args.command == "fusion" and getattr(args, "no_enrich", False))
         or (args.command == "alternates" and getattr(args, "list_categories", False))
         or (args.command in ("pcba", "jlc") and getattr(args, "no_verify", False))

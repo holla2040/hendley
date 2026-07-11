@@ -48,6 +48,45 @@ def cmd_stock(client, args) -> int:
     return 1 if any(r["status"] in STOCK_BLOCKERS for r in rows) else 0
 
 
+def cmd_bom(client, args) -> int:
+    """Render a resolution JSON into the JLCPCB upload BOM CSV."""
+    from pathlib import Path
+
+    from ..providers.jlcpcb.bom_csv import (
+        blocking_checks,
+        format_resolution_report,
+        load_resolution_json,
+        render_bom_csv,
+    )
+
+    design, production_quantity, lines, raw_doc = load_resolution_json(args.resolution_json)
+    csv_text = render_bom_csv(lines)
+    if args.output:
+        Path(args.output).write_text(csv_text)
+        rendered = sum(1 for x in lines if not x.dnp)
+        print(f"wrote {rendered} BOM line(s) to {args.output}", file=sys.stderr)
+    else:
+        print(csv_text, end="")
+    if args.report:
+        print(format_resolution_report(design, lines, production_quantity),
+              file=sys.stderr)
+    blockers = blocking_checks(lines)
+    if blockers:  # every blocker in one pass — no fix-one-class-rerun loop
+        for line, check in blockers:
+            print(f"error: {check['check']}: {check.get('message', '')}",
+                  file=sys.stderr)
+        print(f"error: {len(blockers)} blocker(s) — do not upload this BOM.",
+              file=sys.stderr)
+        return 1
+    # Clean emit to a file → record the immutable fact of what was ordered.
+    if args.output and not args.no_snapshot:
+        from ..reporting.snapshot import write_release_snapshot
+
+        snap = write_release_snapshot(raw_doc, args.output)
+        print(f"release snapshot: {snap}", file=sys.stderr)
+    return 0
+
+
 def cmd_pcba(client, args) -> int:
     """Generate the JLCPCB PCBA order files (bom.csv + cpl.csv) from the live design."""
     from pathlib import Path
