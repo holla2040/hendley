@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# hendley — zero-setup launcher. Clone the repo, cd in, run `./hendley app`.
+# First run creates a private venv (.venv) and installs the package into it;
+# every run after that execs the real CLI directly. No activation, ever.
+set -euo pipefail
+
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+VENV="$HERE/.venv"
+
+if [ ! -x "$VENV/bin/hendley" ]; then
+    echo "hendley: first run — setting up (one-time, ~30s)..." >&2
+    python3 -m venv "$VENV"
+    "$VENV/bin/python" -m pip install --quiet --upgrade pip
+    "$VENV/bin/python" -m pip install --quiet -e "$HERE"
+fi
+
+exec "$VENV/bin/hendley" "$@"
