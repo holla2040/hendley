@@ -85,6 +85,45 @@ Hendley, "the Scrounger", in *The Great Escape*.)
 - `tests/` — `test_auth.py` (signing, pinned to the Java SDK algorithm) and
   `test_fusion.py` (parts-export ingest contract).
 
+## `help` — the plain-speak menu (READ THIS FIRST)
+
+The user must never need the README or the source to use this project, and
+never need to guess magic words. Match their message against this table
+**before anything else**:
+
+- **`help`** (bare word, or "what can you do", "commands", "menu") → print the
+  menu below **verbatim**. Run nothing. Ask nothing. Add nothing.
+- **`jlc`**, **`hendley jlc`**, **`pcba`**, "order files", "generate files for
+  JLC/JLCPCB", "bom and cpl", or any ask for the JLC order files → run
+  **`hendley pcba`** immediately. Do NOT ping first, do NOT present options, do
+  NOT ask what they want — run it, then relay the stock report and flag
+  blockers. (`hendley jlc` is a real alias of `pcba` — if they typed it, run it.)
+- "is `<Cxxxx>` in stock", "check `<Cxxxx>`" → `hendley detail <code>`,
+  summarize stock/price/package.
+- "find a replacement/alternate for `<part>`" → the alternates workflow below.
+- "check stock on the design/BOM" → `hendley pcba --no-verify` is NOT it — run
+  the full `hendley pcba` (its stock report is the check), or `hendley stock
+  PARTS.json` if they point at a parts JSON.
+
+### The menu (print verbatim on `help`)
+
+```
+Hendley — say any of these:
+
+  jlc                      generate bom.csv + cpl.csv from the open Fusion design
+                           and check JLC stock (= hendley pcba). Fusion must be
+                           open with the SCHEMATIC view active.
+  is C25804 in stock?      live stock / price / specs for one part
+  find a replacement for R8 (out of stock / different package / different value)
+                           discover + verify alternates, then build the Fusion swap
+  check stock              stock-check every part in the open design before ordering
+  help                     this menu
+
+Order files land in ~/tmp/hendley_output/ (bom.csv + cpl.csv, nothing else).
+Out-of-stock parts are flagged; rotation fixes in data/cpl-rotations.json apply
+automatically. After a run, click Fusion's schematic tab before running again.
+```
+
 ## The workflow — having a conversation about JLC parts
 
 The point of Hendley: the user runs Claude in this repo, says something in plain
@@ -100,9 +139,9 @@ of their words into the existing tooling.** Three standing rules for that role:
   tool doesn't have, tell the user — don't add it.
 - **Running the CLI:** prefer `hendley` if it's on PATH. On a fresh checkout where
   `pip install -e .` didn't land it on PATH (or the venv isn't active), run it as
-  a module from the repo root — `PYTHONPATH=src python -m hendley.cli <cmd>` (or
-  `python -m hendley <cmd>`), which needs only `requests`. Every `hendley <cmd>`
-  below works identically that way.
+  a module from the repo root — `PYTHONPATH=src python3 -m hendley.cli <cmd>` (or
+  `python3 -m hendley <cmd>`; plain `python` is missing on some hosts), which
+  needs only `requests`. Every `hendley <cmd>` below works identically that way.
 
 **⭐ The one-prompt job — "Generate the files necessary for JLCPCB"** (or any
 ask for the BOM/CPL/order files): run **`hendley pcba`**. One command, no

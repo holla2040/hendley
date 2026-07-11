@@ -279,6 +279,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     sp = sub.add_parser(
         "pcba",
+        aliases=["jlc"],
         help="Generate JLCPCB PCBA order files (bom.csv + cpl.csv) from the live Fusion design.",
     )
     sp.add_argument("-o", "--outdir", default="~/tmp/hendley_output",
@@ -314,7 +315,7 @@ def main(argv: list[str] | None = None) -> int:
         args.command == "scr"
         or (args.command == "fusion" and getattr(args, "no_enrich", False))
         or (args.command == "alternates" and getattr(args, "list_categories", False))
-        or (args.command == "pcba" and getattr(args, "no_verify", False))
+        or (args.command in ("pcba", "jlc") and getattr(args, "no_verify", False))
     )
     needs_client = not offline
     try:
