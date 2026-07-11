@@ -111,12 +111,21 @@ def cmd_resolve(client, args) -> int:
 
     requirements = load_request_json(args.request_json)
     store = PartsDb(args.db)
-    result = resolve(store, requirements,
-                     datasource=JLCDataSource(client), strategy=JLCPCBStrategy())
+    datasource, strategy = JLCDataSource(client), JLCPCBStrategy()
+    result = resolve(store, requirements, datasource=datasource, strategy=strategy)
     text = json.dumps(result, indent=2, ensure_ascii=False)
     if args.output:
         Path(args.output).write_text(text + "\n")
     else:
         print(text)
     print(format_escalation_report(result), file=sys.stderr)
+    if result["escalations"] and args.queue:
+        from ..resolver.orchestration.queue import build_approval_queue
+
+        queue = build_approval_queue(store, requirements, result,
+                                     datasource=datasource, strategy=strategy)
+        Path(args.queue).write_text(
+            json.dumps(queue, indent=2, ensure_ascii=False) + "\n")
+        print(f"approval queue ({len(queue['entries'])} entr(y/ies)): {args.queue}",
+              file=sys.stderr)
     return 1 if result["escalations"] else 0

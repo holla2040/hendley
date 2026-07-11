@@ -1,0 +1,174 @@
+"""The approval queue — ONE batched decision point per order.
+
+The resolution loop's contract with the human: everything the resolver can
+settle, it settles; everything it can't becomes one reviewable document —
+the **approval queue** — with verified, constraint-filtered, ranked
+candidates and their explanations. The engineer clears the queue (approve /
+override / defer per entry), the picks are recorded to the knowledge store,
+and re-resolution runs clean. One interruption per order, not one per part
+(the AGREED sourcing design's target).
+
+The queue is a versioned JSON document (``approvalQueueVersion``): the app's
+review screen renders it, the agent can consume the same file, and a future
+web UI needs nothing new.
+
+Candidate discovery needs a jlcsearch category. For common kinds the mapping
+below drives automatic discovery; for anything else the entry ships with an
+empty candidate list and a note — picking a category (or a fuzzy ``search``)
+is judgment, and the reviewer supplies it.
+"""
+
+from __future__ import annotations
+
+from ...datasources.base import DataSource
+from ...domain.model import RequirementsBom, SpecKey
+from ...knowledge.partsdb import PartsDb
+from ...providers.base import ProviderStrategy
+from ..constraints import filter_candidates
+from ..ranking import rank_candidates
+
+APPROVAL_QUEUE_VERSION = 1
+
+# kind (spec vocabulary) → jlcsearch category slug, for automatic discovery.
+# Deliberately conservative: only unambiguous mappings; everything else is
+# the reviewer's call (--category / search in the alternates flow).
+KIND_CATEGORIES = {
+    "resistor": "resistors",
+    "resistor_array": "resistor_arrays",
+    "capacitor": "capacitors",
+    "led": "leds",
+    "diode": "diodes",
+    "mosfet": "mosfets",
+    "fuse": "fuses",
+    "ldo": "ldos",
+    "potentiometer": "potentiometers",
+    "relay": "relays",
+    "switch": "switches",
+}
+
+
+def _verified_candidates(datasource: DataSource, category: str, spec: SpecKey,
+                         exclude: set[str]) -> list[dict]:
+    """Discover by category+package, then live-verify every hit (one batch)."""
+    rows = datasource.discover({"category": category,
+                                "params": {"package": spec.package}})
+    codes = [r["code"] for r in rows if r.get("code") and r["code"] not in exclude]
+    if not codes:
+        return []
+    facts = datasource.verify(codes)
+    out = []
+    for r in rows:
+        code = r.get("code")
+        if not code or code in exclude:
+            continue
+        fact = facts.get(code)
+        verified = bool(fact and fact.found)
+        d = fact.raw if fact else {}
+        out.append({
+            "code": code,
+            "model": (d.get("componentModel") if verified else None) or r.get("mfr"),
+            "package": (d.get("componentSpecification") if verified else None)
+                       or r.get("package"),
+            "verified": verified,
+            "liveStock": fact.stock if verified else None,
+            "jlcsearchStock": r.get("jlcsearch_stock"),
+            "unitPrice1": _price1(d) if verified else r.get("price1"),
+            "libraryType": d.get("libraryType") if verified else None,
+            "description": d.get("describe") if verified else r.get("description"),
+            "parameters": d.get("parameters") if verified else None,
+        })
+    return out
+
+
+def _price1(detail: dict) -> float | None:
+    ranges = detail.get("priceRanges") or []
+    usable = [p for p in ranges if p.get("unitPrice") is not None]
+    if not usable:
+        return None
+    return min(usable, key=lambda p: int(p.get("startQuantity") or 0)).get("unitPrice")
+
+
+def build_approval_queue(
+    store: PartsDb,
+    requirements: RequirementsBom,
+    resolution: dict,
+    *,
+    datasource: DataSource,
+    strategy: ProviderStrategy,
+) -> dict:
+    """Turn a resolution's escalations into the single reviewable queue."""
+    entries = []
+    for esc in resolution.get("escalations", []):
+        line = requirements.lines[esc["lineIndex"]]
+        spec = line.spec
+        required = line.required_qty(requirements.production_quantity)
+        avl_refs = {c["ref"] for c in esc.get("choices", []) if c.get("ref")}
+
+        candidates: list[dict] = []
+        rejected: list[dict] = []
+        discovery: dict = {"category": None, "automatic": False}
+        if spec is not None:
+            category = KIND_CATEGORIES.get(spec.kind)
+            discovery["category"] = category
+            if category:
+                discovery["automatic"] = True
+                raw = _verified_candidates(datasource, category, spec, avl_refs)
+                valid, rejected = filter_candidates(spec, raw)
+                candidates = rank_candidates(
+                    valid, required_qty=required, strategy=strategy,
+                    store=store, spec=spec)
+            else:
+                discovery["note"] = (
+                    f"no automatic category for kind {spec.kind!r} — pick a "
+                    "jlcsearch category (or a fuzzy search) and discover manually")
+        else:
+            discovery["note"] = ("no spec on this line — an exact-part decision, "
+                                 "not a discovery problem")
+
+        entries.append({
+            "lineIndex": esc["lineIndex"],
+            "designators": esc["designators"],
+            "spec": esc["spec"],
+            "ref": esc.get("ref"),
+            "mpn": esc.get("mpn"),
+            "reason": esc["reason"],
+            "requiredQty": required,
+            "avlChoices": esc.get("choices", []),
+            "discovery": discovery,
+            "candidates": candidates,
+            "rejectedCandidates": rejected,
+        })
+
+    return {
+        "approvalQueueVersion": APPROVAL_QUEUE_VERSION,
+        "design": requirements.design,
+        "productionQuantity": requirements.production_quantity,
+        "provider": strategy.provider,
+        "entries": entries,
+    }
+
+
+def apply_approvals(store: PartsDb, approvals: list[dict]) -> list[dict]:
+    """Record the engineer's queue answers as deliberate Part Choices.
+
+    Each approval: ``{"spec": {...}, "lcsc"/"providerRefs"/"mpn"/...,
+    "rank"?, "design"?, "note"?}``. Returns the recorded choice rows.
+    Re-resolve afterwards — recording never mutates a resolution in place.
+    """
+    recorded = []
+    for a in approvals:
+        spec = SpecKey.from_dict(a["spec"])
+        provider_refs = dict(a.get("providerRefs") or {})
+        if a.get("lcsc"):
+            provider_refs.setdefault("jlcpcb", a["lcsc"])
+        recorded.append(store.record(
+            spec,
+            mpn=a.get("mpn"),
+            manufacturer=a.get("manufacturer"),
+            provider_refs=provider_refs or None,
+            rank=int(a.get("rank", 1)),
+            description=a.get("description"),
+            design=a.get("design"),
+            note=a.get("note"),
+        ))
+    return recorded

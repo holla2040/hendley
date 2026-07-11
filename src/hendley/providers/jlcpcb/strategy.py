@@ -40,21 +40,14 @@ class JLCPCBStrategy:
         return True, []
 
     def score(self, candidate: dict, required_qty: int) -> list[dict]:
-        """JLC-flavored contributions for candidate ranking (Phase 5 consumer)."""
-        contributions = []
-        stock = int(candidate.get("liveStock") or 0)
-        if required_qty > 0 and stock:
-            margin = stock / required_qty
-            contributions.append({
-                "factor": "stock-margin",
-                "weight": min(margin, 100.0),
-                "why": f"live stock {stock} = {margin:.0f}x the required {required_qty}",
-            })
+        """JLC-only ranking contributions. Generic factors (stock margin,
+        price, history) belong to the ranking engine — the strategy adds only
+        what is provider-specific."""
         offer = candidate.get("libraryType")
         if offer:
-            contributions.append({
+            return [{
                 "factor": "offer-class",
                 "weight": 0.0,  # displayed, never selected on (fee policy, CLAUDE.md)
                 "why": f"JLC {offer} part (loading-fee class — your call, not a rank factor)",
-            })
-        return contributions
+            }]
+        return []

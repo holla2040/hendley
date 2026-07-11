@@ -177,6 +177,9 @@ def build_parser() -> argparse.ArgumentParser:
                                            "(default: stdout).")
     sp.add_argument("--db", help="Path to the house-parts DB "
                                  "(default: $HENDLEY_DB or ~/.hendley/parts.db).")
+    sp.add_argument("--queue", help="On escalations, also write the batched approval "
+                                    "queue (discovered + verified + ranked candidates "
+                                    "per escalated line) to this JSON file.")
     sp.set_defaults(func=cmd_resolve)
 
     sp = sub.add_parser("bom", help="Render a resolution JSON into the JLCPCB upload BOM CSV.")
