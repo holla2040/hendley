@@ -116,7 +116,12 @@ Requires an active Electronics document. Read returns rows as a JSON string in
   `module_object_id`, `deviceset_object_id`, `device_object_id`,
   `package3d_object_id`. **No part-number columns inline** — those are
   attributes (below). `comet` has 50 Part rows, many of which are GND/supply
-  pseudo-parts (`value` = `GND`, `package3d_object_id` = 0).
+  pseudo-parts. ⚠️ Do NOT use `package3d_object_id == 0` to spot them — a
+  real part whose library device lacks a 3D model also reads 0 (bit us with
+  R10, 2026-07-10). The honest discriminator is the device's 2D footprint:
+  join `electronics.Device` on `device_object_id` and check
+  `package_object_id != 0` (supply symbols have none). 3D models are
+  irrelevant to this tool.
 - `electronics.Attribute` = name/value metadata attached to a part. Filter by
   **`part_object_id`** (`{property:"part_object_id", op:"eq", value:<Part.object_id>}`)
   to get a part's metadata, including library-defined defaults. Columns:

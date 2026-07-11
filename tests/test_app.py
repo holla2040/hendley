@@ -52,9 +52,12 @@ class FakeBridge:
             return [{"object_id": 1, "name": r"C:\T\demo sch.sch"}]
         if entity_type == "electronics.Part":
             return [{"object_id": 10, "name": "R1", "value": "22k",
-                     "package3d_object_id": 5},
+                     "device_object_id": 100},
                     {"object_id": 11, "name": "TP1", "value": "",
-                     "package3d_object_id": 6}]
+                     "device_object_id": 101}]
+        if entity_type == "electronics.Device":
+            return [{"object_id": 100, "package_object_id": 412},
+                    {"object_id": 101, "package_object_id": 415}]
         if entity_type == "electronics.Attribute":
             [flt] = obj["filters"]
             return ([{"name": "LCSC", "value": "C31850"}] if flt["value"] == 10

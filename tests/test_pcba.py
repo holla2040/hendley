@@ -34,13 +34,14 @@ def test_natural_key_orders_r2_before_r13():
 
 
 def test_pseudo_part_rules():
-    # GND/supply symbols carry no package
-    assert is_pseudo_part({"name": "GND1", "package3d_object_id": 0}, {})
-    # title block: U$ prefix and no part identity
-    assert is_pseudo_part({"name": "U$1", "package3d_object_id": 7}, {})
+    # GND/supply symbols: their device carries no footprint
+    assert is_pseudo_part({"name": "GND1"}, {}, has_footprint=False)
+    # title block: U$ prefix and no part identity (even with a footprint)
+    assert is_pseudo_part({"name": "U$1"}, {}, has_footprint=True)
     # ...but a U$-named part WITH an LCSC code is real
-    assert not is_pseudo_part({"name": "U$2", "package3d_object_id": 7}, {"LCSC": "C1"})
-    assert not is_pseudo_part({"name": "R1", "package3d_object_id": 7}, {})
+    assert not is_pseudo_part({"name": "U$2"}, {"LCSC": "C1"}, has_footprint=True)
+    # a real part is real regardless of 3D models — the footprint is the signal
+    assert not is_pseudo_part({"name": "R10", "value": "81K"}, {}, has_footprint=True)
 
 
 def test_part_from_row_maps_attributes():

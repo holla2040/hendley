@@ -11,8 +11,11 @@ Extraction rules (verified live, documented in ``docs/fusion-notes.md``):
 
 - ``electronics.Attribute`` reads MUST be scoped by ``part_object_id`` —
   unscoped reads return empty, not an error.
-- GND/supply pseudo-parts (``package3d_object_id`` = 0) and the title-block /
-  logo part (``U$…`` with no LCSC/MPN) are excluded.
+- GND/supply pseudo-parts (their library device carries **no footprint** —
+  ``electronics.Device.package_object_id`` = 0) and the title-block / logo
+  part (``U$…`` with no LCSC/MPN) are excluded. Only the 2D footprint
+  matters; 3D models are irrelevant to this tool (a real part whose device
+  has no 3D model, e.g. a fresh library variant, must never be filtered).
 - Parts marked do-not-populate — the schematic ``DNP`` attribute set to
   anything but ``0`` (test points, mount holes, programming pads), or the
   board element's ``populate`` flag off — are carried but flagged via
@@ -55,10 +58,16 @@ def natural_key(designator: str):
 # Schematic side
 # ---------------------------------------------------------------------------
 
-def is_pseudo_part(part_row: dict, attrs: dict[str, str]) -> bool:
-    """True for rows that are not real components (GND/supply symbols, title block)."""
-    if part_row.get("package3d_object_id", 0) == 0:
-        return True  # GND / supply pseudo-parts carry no package
+def is_pseudo_part(part_row: dict, attrs: dict[str, str], has_footprint: bool) -> bool:
+    """True for rows that are not real components (GND/supply symbols, title block).
+
+    ``has_footprint`` is whether the part's library device carries a 2D
+    footprint (``electronics.Device.package_object_id`` != 0) — the one
+    honest discriminator: supply symbols have none, every orderable part
+    has one.
+    """
+    if not has_footprint:
+        return True  # GND / supply pseudo-parts carry no footprint
     has_part_id = attrs.get("LCSC") or attrs.get("MPN") or attrs.get("MP")
     return part_row["name"].startswith("U$") and not has_part_id  # title block / logo
 
@@ -101,6 +110,9 @@ def extract_schematic(bridge: FusionBridge) -> tuple[str, list[DesignPart]]:
             "(board→schematic has no command; click the schematic tab) and check for "
             "open modal dialogs"
         )
+    # device id → has a 2D footprint (rows can repeat; the dict dedupes)
+    device_footprint = {d["object_id"]: bool(d.get("package_object_id"))
+                        for d in bridge.read_all("electronics.Device")}
     parts: list[DesignPart] = []
     for row in part_rows:
         attr_rows = bridge.read_all(
@@ -108,7 +120,8 @@ def extract_schematic(bridge: FusionBridge) -> tuple[str, list[DesignPart]]:
             {"filters": [{"property": "part_object_id", "op": "eq", "value": row["object_id"]}]},
         )
         attrs = {a["name"]: a["value"] for a in attr_rows}
-        if not is_pseudo_part(row, attrs):
+        has_footprint = device_footprint.get(row.get("device_object_id"), False)
+        if not is_pseudo_part(row, attrs, has_footprint):
             parts.append(part_from_row(row, attrs))
     parts.sort(key=lambda p: natural_key(p.designator))
     return design, parts

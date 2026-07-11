@@ -16,15 +16,30 @@ from hendley.cli import main
 SCHEMATICS = [{"object_id": 1, "name": r"C:\Temp\golden sch.sch"}]
 
 PARTS = [
-    {"object_id": 10, "name": "R1", "value": "22k", "package3d_object_id": 5},
-    {"object_id": 11, "name": "R2", "value": "22k", "package3d_object_id": 5},
-    {"object_id": 12, "name": "C1", "value": "1u", "package3d_object_id": 6},
-    {"object_id": 13, "name": "D1", "value": "", "package3d_object_id": 7},
-    {"object_id": 14, "name": "TP1", "value": "", "package3d_object_id": 8},
-    {"object_id": 15, "name": "J1", "value": "CONN-4", "package3d_object_id": 9},
-    {"object_id": 16, "name": "J2", "value": "CONN-2", "package3d_object_id": 9},
-    {"object_id": 17, "name": "GND1", "value": "", "package3d_object_id": 0},
-    {"object_id": 18, "name": "U$1", "value": "", "package3d_object_id": 4},
+    {"object_id": 10, "name": "R1", "value": "22k", "device_object_id": 100},
+    {"object_id": 11, "name": "R2", "value": "22k", "device_object_id": 100},
+    {"object_id": 12, "name": "C1", "value": "1u", "device_object_id": 101},
+    {"object_id": 13, "name": "D1", "value": "", "device_object_id": 102},
+    {"object_id": 14, "name": "TP1", "value": "", "device_object_id": 103},
+    {"object_id": 15, "name": "J1", "value": "CONN-4", "device_object_id": 104},
+    {"object_id": 16, "name": "J2", "value": "CONN-2", "device_object_id": 104},
+    {"object_id": 17, "name": "GND1", "value": "", "device_object_id": 105},
+    {"object_id": 18, "name": "U$1", "value": "", "device_object_id": 106},
+]
+
+# The library devices: footprint presence (package_object_id) is what
+# separates real parts from supply symbols. Device 100 deliberately has NO
+# 3D model — 3D is irrelevant to this tool. Rows repeat (the live endpoint
+# does that); extraction must dedupe.
+DEVICES = [
+    {"object_id": 100, "name": "-0603", "package_object_id": 412},
+    {"object_id": 100, "name": "-0603", "package_object_id": 412},
+    {"object_id": 101, "name": "-0603", "package_object_id": 413},
+    {"object_id": 102, "name": "", "package_object_id": 414},
+    {"object_id": 103, "name": "", "package_object_id": 415},
+    {"object_id": 104, "name": "", "package_object_id": 416},
+    {"object_id": 105, "name": "", "package_object_id": 0},  # SUPPLY SYMBOL
+    {"object_id": 106, "name": "", "package_object_id": 417},  # title block
 ]
 
 ATTRS = {
@@ -120,6 +135,8 @@ class FakeBridge:
             return list(ELEMENTS) if self.board_switched else []
         if entity_type == "electronics.Package":
             return list(PACKAGES)
+        if entity_type == "electronics.Device":
+            return list(DEVICES)
         raise AssertionError(f"unexpected entity type {entity_type!r}")
 
 
