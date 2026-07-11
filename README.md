@@ -328,7 +328,12 @@ change across WSL restarts — re-check it with the `ip route` line above and
 re-add the rule if Fusion becomes unreachable.
 
 **Health check / troubleshooting.** On Windows, `curl http://127.0.0.1:27182/mcp`
-should return `{"error": "Not Found"}` instantly when Fusion's server is healthy.
+should return an instant JSON error when Fusion's server is healthy —
+`{"error": "Not Found"}` on older builds, `{"error": "Server does not offer an
+SSE stream at this endpoint"}` on newer ones (observed 2026-07-10). Either body
+means healthy; only a hang or "connection closed unexpectedly" is bad. (In
+PowerShell, `curl` is `Invoke-WebRequest` and paints non-2xx responses as red
+exceptions — read the body, not the color.)
 If it (or Claude Desktop) "closes the connection unexpectedly," a bad `0.0.0.0`
 forward is almost certainly hijacking loopback — delete it and the symptom
 clears:
