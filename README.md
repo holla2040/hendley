@@ -21,6 +21,17 @@ Today, Hendley can inspect live JLC component details, check BOM stock, discover
 - **JLCPCB PCBA order-file generation** (`hendley pcba`) — `bom.csv` + `cpl.csv`
   from the live Fusion design, rotation-corrected, DNP-aware, and stock-checked
   (see [Generating JLCPCB order files](#generating-jlcpcb-order-files-hendley-pcba))
+- **the house-parts knowledge base** (`hendley db`) — House Parts with
+  deliberately ranked, audited Part Choices (the AVL), provider-neutral
+  identity, SQLite at `~/.hendley/parts.db`
+- **spec-driven resolution** (`hendley resolve`) — rank-walk the AVL against
+  live stock at the order's board count, silent substitution down the rank,
+  one batched approval queue (discovered + verified + ranked candidates) for
+  the gaps
+- **gated BOM emission** (`hendley bom`) — the upload CSV plus an immutable
+  release snapshot; error checks block the emit (JLCPCB and PCBWay formats)
+- **the Hendley app** (`hendley app`) — the local web UI over all of the
+  above: House Parts / Resolve / Order (see [The app](#the-app-hendley-app))
 - generation of Fusion `.scr` migration scripts
 - optional, explicit execution of reviewed scripts through Fusion's command channel
 
@@ -36,7 +47,13 @@ The target product is described in [`docs/PRD.md`](docs/PRD.md). It adds:
 - JLCPCB and PCBWay Provider Strategies
 - provider-specific Manufacturing BOM adapters
 
-The existing CLI is a working foundation, not yet the complete resolver defined by the PRD.
+The core pipeline (ingestion → canonical Requirements BOM → constraint
+filtering → deliberate-AVL resolution with computed candidate ranking →
+engineer approval → provider adapters → gated output) is implemented, with
+JLCPCB as the live provider and PCBWay as the provider-independence proof.
+Still open (see `docs/adr/` and `docs/architecture.md` §14): user-editable
+ranking configuration, the AI assistance layer, additional ECAD importers,
+and organization-level knowledge scopes.
 
 ## Why Hendley
 
@@ -190,6 +207,10 @@ hendley scr swaps.json -o changes.scr
 | `hendley fusion PARTS.json` | Validate and optionally enrich Fusion parts-export data. |
 | `hendley stock PARTS.json` | Check BOM inventory and return nonzero on blocking stock problems. |
 | `hendley pcba` (alias: `hendley jlc`) | Generate the JLCPCB PCBA order files (`bom.csv` + `cpl.csv`) from the live Fusion design, rotation-corrected and stock-checked; exits nonzero on stock blockers. |
+| `hendley app` | Start the local web app (House Parts / Resolve / Order) on 127.0.0.1 — the primary interface. |
+| `hendley db lookup\|record\|rerank\|remove\|list\|refresh` | The house-parts knowledge base: House Parts with deliberately ranked, audited Part Choices (the AVL). Local SQLite; only `refresh` hits the live API. |
+| `hendley resolve REQUEST.json` | Resolve a Requirements BOM against the AVLs + live stock at the order's board count; `--queue` writes the batched approval queue for escalations; exits 1 on escalations. |
+| `hendley bom RESOLUTION.json` | Render a resolution into the upload BOM CSV (JLCPCB, or `--provider pcbway`); a clean `-o` emit also writes the immutable release snapshot; blockers exit 1. |
 | `hendley alternates CODE ...` | Discover candidates and verify each against live JLC data. |
 | `hendley scr SWAPS.json ...` | Generate Fusion `.scr` migration commands from explicit reviewed swaps. |
 
@@ -203,6 +224,31 @@ line; `scr` prints (or writes with `-o`) the `.scr` script; `pcba` writes its tw
 CSVs and prints the stock report. A command's flags are exactly what
 `hendley <cmd> --help` lists — don't assume a flag exists because another
 command has it.
+
+## The app (`hendley app`)
+
+The primary interface (ADR-0003/0004): a local web app served by the CLI —
+Python stdlib only, zero extra dependencies, bound to `127.0.0.1`.
+
+```bash
+hendley app            # serves http://127.0.0.1:8341/ and opens the browser
+```
+
+Three tabs, each a thin surface over the same library the CLI uses:
+
+- **House Parts** — browse and search the AVLs; record, re-rank, and remove
+  Part Choices (all audited); live-refresh the advisory stock cache.
+- **Resolve** — read the open Fusion design (or paste a Requirements BOM),
+  set the Production Quantity, resolve, and clear the **approval queue**:
+  every escalated line arrives with discovered, live-verified,
+  constraint-filtered, ranked candidates and a `why` for each score.
+  Approvals write to the knowledge base and re-resolve.
+- **Order** — the blocking gate (`READY TO UPLOAD` / blockers), order-file
+  emission, and the release-snapshot browser.
+
+Under WSL2 the Windows browser reaches the WSL loopback directly — no
+port-forwarding needed for the app itself. The app starts fine without JLC
+credentials; live actions report the missing `.keys` when first used.
 
 ## Generating JLCPCB order files (`hendley pcba`)
 
@@ -502,18 +548,19 @@ The target resolver keeps these responsibilities separate:
 
 ## Roadmap
 
-Near-term development should proceed from the PRD and architecture rather than expanding the CLI opportunistically.
+The PRD/architecture v1 pipeline is implemented (2026-07-10): canonical
+Requirements BOM schema, live Fusion ingestion, deterministic constraints,
+JLCPCB strategy + adapter, candidate ranking with explanations, approval
+persistence (the audited AVL), the PCBWay strategy/adapter provider-
+independence proof, and the app as the primary interface.
 
-Priority areas:
+Next, from the PRD and the open decisions in `docs/architecture.md` §14:
 
-1. Canonical Requirements BOM schema
-2. Live Fusion-to-Requirements-BOM ingestion
-3. Deterministic passive-component constraints
-4. JLCPCB/LCSC Provider Strategy
-5. ranking and explanation
-6. engineer approval and decision persistence
-7. JLCPCB Manufacturing BOM Adapter
-8. PCBWay strategy and adapter to validate provider independence
+1. User-editable ranking configuration (weights are hardcoded; ADR when it hurts)
+2. The AI assistance layer (`ai/` — advisory, optional, replaceable)
+3. Additional ECAD importers (generic CSV, KiCad)
+4. Lifecycle data (needs a source beyond the JLC API)
+5. Organization-level knowledge scopes
 
 PCBA order placement and website-loop automation are useful future ideas but are outside the Version 1 resolver scope.
 

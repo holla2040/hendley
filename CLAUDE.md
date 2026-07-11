@@ -23,8 +23,53 @@ concrete `providers/*` or `datasources/jlc` — only the base protocols.
 - `src/hendley/cli/` — argparse CLI; entry point `hendley = hendley.cli:main`
   (also `python -m hendley.cli`). `__init__.py` holds `build_parser`/`main`;
   commands live in `catalog.py` (`ping`, `detail`, `private`, `library`,
-  `alternates`), `manufacturing.py` (`fusion`, `stock`, `pcba`/`jlc`), and
-  `migration.py` (`scr`).
+  `alternates`), `manufacturing.py` (`fusion`, `stock`, `pcba`/`jlc`, `bom`),
+  `knowledge.py` (`db lookup/record/rerank/remove/list/refresh`, `resolve`),
+  `app.py` (`app`), and `migration.py` (`scr`).
+- `src/hendley/app/` — **the app, the primary interface** (ADR-0003/0004):
+  `hendley app` serves a stdlib-only local web UI on 127.0.0.1 (`server.py` =
+  JSON API 1:1 over library calls; `ui.py` = the single embedded page). Tabs:
+  House Parts (AVL manager), Resolve (intake → resolution → approval queue),
+  Order (gate + emit + snapshots). Zero new dependencies.
+- `src/hendley/domain/model.py` — the canonical vocabulary: `SpecKey`,
+  `RequirementLine` (one selection mode: spec | mpn | provider refs; `dnp`
+  carried), `RequirementsBom` (versioned JSON, `requirementsBomVersion: 1`),
+  `Check` + the `CHECKS` severity table (error blocks upload / warning /
+  info). Core layers (`domain`, `knowledge`, `resolver`, `requirements`)
+  never import concrete providers or `datasources/jlc`.
+- `src/hendley/requirements/normalizer.py` — mechanical Fusion→RequirementsBom
+  mapping (designator grouping, DNP flag, LCSC/MPN pass-through); spec
+  canonicalization stays judgment (agent/app/engineer).
+- `src/hendley/knowledge/partsdb.py` — the house-parts DB (SQLite v3 at
+  `~/.hendley/parts.db`, `HENDLEY_DB` to override): House Parts (opaque id +
+  spec-tuple index), ranked Part Choices (deliberate rank, `active|removed`),
+  `choice_provider_ids` (provider-neutral identity: mpn/manufacturer preferred,
+  LCSC code is the `jlcpcb` ref; per-provider advisory stock/price cache —
+  NEVER order against it), append-only audit trail. Migrations chain
+  v1→v2→v3 on open, one transaction each, file backup (`.v<N>.bak`) first.
+  `PartsDb` class = the KnowledgeStore contract.
+- `src/hendley/resolver/` — provider-independent core:
+  - `orchestration/resolve.py` — the rank-walk resolver (one batched verify,
+    silent substitution down the AVL, escalations carrying per-choice live
+    stock, DNP pass-through) over injected DataSource + ProviderStrategy.
+  - `orchestration/queue.py` — the ONE batched approval queue (discover by
+    kind→category, verify, filter, rank; `apply_approvals` records picks).
+  - `constraints/engine.py` — deterministic candidate rejection BEFORE
+    ranking (unverified, wrong package), reasons attached.
+  - `ranking/engine.py` — orders NEWLY DISCOVERED candidates only (ADR-0001;
+    the AVL rank is deliberate and never computed): prior approval > stock
+    margin > price, every score decomposed into a visible `why` list.
+- `src/hendley/providers/` — strategies select, adapters format:
+  - `jlcpcb/` — `strategy.py` (jlc-mounted, live-verified), `adapter.py`
+    (validate = blocking gate; export = bom.csv + cpl.csv + rotations),
+    `bom_csv.py` (resolution→CSV renderer + gate), `order_files.py`
+    (BOM/CPL builders behind `hendley pcba`).
+  - `pcbway/` — the anti-coupling proof: MPN-based strategy
+    (`requires_live_stock=False`, facts honestly `unverified` — no PCBWay
+    API, no scraping) + the MPN BOM template adapter.
+- `src/hendley/reporting/snapshot.py` — Release Snapshots: the immutable
+  what-was-ordered record written beside a clean CSV emit (DB holds policy;
+  the snapshot holds fact).
 - `src/hendley/datasources/jlc/` — everything that talks to JLC-side services:
   - `auth.py` — `JOP` request signing (HMAC-SHA256). Builds the
     `Authorization` header and the string-to-sign.
@@ -117,25 +162,38 @@ never need to guess magic words. Match their message against this table
   **`hendley pcba`** immediately. Do NOT ping first, do NOT present options, do
   NOT ask what they want — run it, then relay the stock report and flag
   blockers. (`hendley jlc` is a real alias of `pcba` — if they typed it, run it.)
+- **`app`**, "start the app", "open hendley" → run **`hendley app`** (the
+  primary UI: House Parts / Resolve / Order at http://127.0.0.1:8341).
+- "resolve the BOM", "order N boards", "prepare a PCBA order from specs" →
+  the **order-bom skill** (`.claude/skills/order-bom/SKILL.md`): Requirements
+  BOM → `hendley resolve --queue` → one approval batch → `hendley bom`.
 - "is `<Cxxxx>` in stock", "check `<Cxxxx>`" → `hendley detail <code>`,
   summarize stock/price/package.
 - "find a replacement/alternate for `<part>`" → the alternates workflow below.
 - "check stock on the design/BOM" → `hendley pcba --no-verify` is NOT it — run
   the full `hendley pcba` (its stock report is the check), or `hendley stock
   PARTS.json` if they point at a parts JSON.
+- "what parts do we use for `<spec>`", "house parts", "the AVL" →
+  `hendley db lookup/list` (local SQLite, no credentials needed).
 
 ### The menu (print verbatim on `help`)
 
 ```
 Hendley — say any of these:
 
+  app                      open the Hendley app (House Parts / Resolve / Order)
+                           in your browser — the main way to drive everything below
   jlc                      generate bom.csv + cpl.csv from the open Fusion design
                            and check JLC stock (= hendley pcba). Fusion must be
                            open with the SCHEMATIC view active.
+  order 25 boards          resolve the design against your approved house parts
+                           (the AVL) at that quantity, one approval batch for any
+                           gaps, then emit the upload CSV + release snapshot
   is C25804 in stock?      live stock / price / specs for one part
   find a replacement for R8 (out of stock / different package / different value)
                            discover + verify alternates, then build the Fusion swap
   check stock              stock-check every part in the open design before ordering
+  house parts              show the approved parts list (AVL) for a spec, or all
   help                     this menu
 
 Order files land in ~/tmp/hendley_output/ (bom.csv + cpl.csv, nothing else).
@@ -310,6 +368,15 @@ part" — jlcsearch is the discovery surface.
   `~/tmp/hendley_output/`), progress to stderr, the stock report to stdout;
   exits nonzero on stock blockers (same gate as `stock`). `--no-verify` skips
   the JLC check (offline, no credentials). No `--json` flag.
+- `resolve` — resolution JSON to stdout (or `-o FILE`), escalation report to
+  stderr, exit 1 on escalations; `--queue FILE` also writes the approval
+  queue. `--provider pcbway` needs no credentials (nothing live-verifiable).
+- `bom` — the upload CSV to stdout (or `-o FILE`, which also writes the
+  release snapshot on a clean gate); blockers to stderr + exit 1. Offline.
+- `db …` — local SQLite, offline, JSON to stdout — except `db refresh`,
+  the one db action that hits the live API.
+- `app` — starts the local web UI (127.0.0.1, default port 8341); needs no
+  credentials to start (live actions construct the client lazily).
 - Each command's flags are exactly those in `hendley <cmd> --help`; don't assume a
   flag exists because another command has it.
 
