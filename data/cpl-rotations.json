@@ -3,5 +3,50 @@
   "description": "Per-footprint CPL rotation corrections for JLCPCB PCBA orders. Some library footprints are drawn with a zero-orientation that differs from what JLC's feeder data expects, so those parts need the same manual rotation in JLC's order preview on every submission. This file records each such correction ONCE, keyed by part identity (not designator — the error is a property of the library model/footprint, so it follows the part into every future design). When generating a CPL from a Fusion design, look up each part here (match on lcsc OR footprint) and add rotationOffsetDeg to the board angle (mod 360).",
   "convention": "rotationOffsetDeg is degrees COUNTERCLOCKWISE (JLC's positive direction; one click of JLC's preview rotate button = +90).",
   "howToAddAnEntry": "When a part needs hand-rotating in the JLC order preview, record: its LCSC code, MPN, the library footprint name (electronics.Package name from the board read), the offset that fixed it, and the date/design it was verified on.",
-  "corrections": []
+  "corrections": [
+    {
+      "footprint": "D-SOD123",
+      "rotationOffsetDeg": 180,
+      "verified": "2026-07-11 comet order preview vs board pad nets (D1 C19077497 SMF5.0A, D2 C5380710 DSS34): JLC cathode band rendered on the anode end"
+    },
+    {
+      "footprint": "DO-214AC(SMA)",
+      "rotationOffsetDeg": 180,
+      "verified": "2026-07-11 comet order preview vs board pad nets (D3 C2837271 SS34, D6 C19077482 1SMA4744A): JLC cathode band rendered on the anode end"
+    },
+    {
+      "lcsc": "C19077439",
+      "mpn": "BZT52C4V7S",
+      "footprint": "D-SOD323",
+      "rotationOffsetDeg": 180,
+      "verified": "2026-07-11 comet order preview vs board pad nets (D5): JLC cathode band rendered on the anode end"
+    },
+    {
+      "lcsc": "C970025",
+      "mpn": "TPSP3010-04UTG",
+      "footprint": "SP3010-04UTG",
+      "rotationOffsetDeg": 270,
+      "verified": "2026-07-11 comet order preview (D4): body rendered 90 CCW beyond design, crosswise to the copper pad column, pin-1 dot at the pin-5 end"
+    },
+    {
+      "lcsc": "C52717",
+      "mpn": "STM8S003F3P6TR",
+      "footprint": "20-TSSOP",
+      "rotationOffsetDeg": 270,
+      "verified": "2026-07-11 comet order preview (U1): body rendered 90 CCW beyond design, long axis crosswise to the pad rows, pin-1 dot at upper-left where design pin 1 is upper-right"
+    },
+    {
+      "lcsc": "C84817",
+      "mpn": "MT3608",
+      "footprint": "SOT95P280X145-6N",
+      "rotationOffsetDeg": 270,
+      "verified": "2026-07-11 comet order preview (U2): body rendered 90 CCW beyond design, crosswise to the pad rows, pin-1 dot at upper-left where design pin 1 is upper-right"
+    },
+    {
+      "lcsc": "C315567",
+      "footprint": "8-POWERVDFN",
+      "rotationOffsetDeg": 270,
+      "verified": "2026-07-11 comet order preview (Q3): pin-1 dot rendered at lower-right where design pin 1 is lower-left, consistent with 90 CCW error"
+    }
+  ]
 }
