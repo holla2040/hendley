@@ -49,7 +49,7 @@ def cmd_stock(client, args) -> int:
 
 
 def cmd_bom(client, args) -> int:
-    """Render a resolution JSON into the JLCPCB upload BOM CSV."""
+    """Render a resolution JSON into the provider's upload BOM CSV."""
     from pathlib import Path
 
     from ..providers.jlcpcb.bom_csv import (
@@ -58,6 +58,9 @@ def cmd_bom(client, args) -> int:
         load_resolution_json,
         render_bom_csv,
     )
+
+    if getattr(args, "provider", "jlcpcb") == "pcbway":
+        return _cmd_bom_pcbway(args)
 
     design, production_quantity, lines, raw_doc = load_resolution_json(args.resolution_json)
     csv_text = render_bom_csv(lines)
@@ -87,22 +90,53 @@ def cmd_bom(client, args) -> int:
     return 0
 
 
+def _cmd_bom_pcbway(args) -> int:
+    """PCBWay render path: MPN-based BOM, same gate/snapshot semantics."""
+    import json
+    from pathlib import Path
+
+    from ..providers.pcbway.adapter import PCBWayAdapter, render_pcbway_csv
+
+    raw_doc = json.loads(Path(args.resolution_json).read_text())
+    if not isinstance(raw_doc, dict):
+        raw_doc = {"lines": raw_doc}
+    csv_text = render_pcbway_csv(raw_doc)
+    if args.output:
+        Path(args.output).write_text(csv_text)
+        rendered = sum(1 for x in raw_doc.get("lines") or [] if not x.get("dnp"))
+        print(f"wrote {rendered} BOM line(s) to {args.output}", file=sys.stderr)
+    else:
+        print(csv_text, end="")
+    blockers = PCBWayAdapter().validate(raw_doc)
+    if blockers:
+        for check in blockers:
+            print(f"error: {check.check}: {check.message}", file=sys.stderr)
+        print(f"error: {len(blockers)} blocker(s) — do not upload this BOM.",
+              file=sys.stderr)
+        return 1
+    if args.output and not args.no_snapshot:
+        from ..reporting.snapshot import write_release_snapshot
+
+        snap = write_release_snapshot(raw_doc, args.output)
+        print(f"release snapshot: {snap}", file=sys.stderr)
+    return 0
+
+
 def cmd_pcba(client, args) -> int:
-    """Generate the JLCPCB PCBA order files (bom.csv + cpl.csv) from the live design."""
+    """Generate the JLCPCB PCBA order files (bom.csv + cpl.csv) from the live design.
+
+    The pcba fast path: live extraction → Requirements BOM (normalizer) → an
+    explicit-ref resolution document → the JLCPCB adapter. No knowledge-store
+    resolution here — the design's own LCSC attributes are the picks.
+    """
     from pathlib import Path
 
     from ..ingestion.fusion import bridge as bridge_mod
     from ..ingestion.fusion.live_design import extract_board, extract_schematic, is_dnp
-    from ..providers.jlcpcb.order_files import (
-        BOM_FIELDS,
-        CPL_FIELDS,
-        build_bom_rows,
-        build_cpl_rows,
-        find_rotations_file,
-        load_rotations,
-        write_csv,
-    )
+    from ..providers.jlcpcb.adapter import JLCPCBAdapter
+    from ..providers.jlcpcb.order_files import find_rotations_file
     from ..reporting.stock import STOCK_BLOCKERS, check_stock, format_stock_report
+    from ..requirements import requirements_from_design
 
     bridge = bridge_mod.FusionBridge(host=args.fusion_host)
     design, parts = extract_schematic(bridge)  # must run before the one-way BOARD; switch
@@ -124,23 +158,43 @@ def cmd_pcba(client, args) -> int:
     if orphans:
         print(f"warning: on board but not in schematic: {', '.join(orphans)}", file=sys.stderr)
 
-    corrections = load_rotations(args.rotations)
     if find_rotations_file(args.rotations) is None:
         print("warning: no data/cpl-rotations.json found — CPL carries raw Fusion angles",
               file=sys.stderr)
 
-    bom_rows = build_bom_rows(parts, placements)
-    cpl_rows, applied = build_cpl_rows(parts, placements, corrections)
-    for a in applied:
-        print(f"rotation corrected: {a['designator']} {a['rawAngle']}° → {a['rotation']}° "
-              f"(matched {a['matched']})", file=sys.stderr)
+    requirements = requirements_from_design(design, parts, 1, placements)
+    resolution = {
+        "design": design,
+        "productionQuantity": 1,
+        "provider": "jlcpcb",
+        "lines": [
+            {
+                "designators": ln.designators,
+                "comment": ln.comment,
+                "footprint": ln.footprint,
+                "ref": ln.provider_ref("jlcpcb"),
+                "mpn": ln.mpn,
+                "manufacturer": ln.manufacturer,
+                "dnp": ln.dnp,
+                "quantityPer": ln.quantity_per,
+                "source": "explicit" if ln.provider_ref("jlcpcb") else None,
+            }
+            for ln in requirements.lines
+        ],
+        "placements": [
+            {"designator": p.designator, "x": p.x, "y": p.y, "angle": p.angle,
+             "mirror": p.mirror, "populate": p.populate, "footprint": p.footprint}
+            for p in placements
+        ],
+    }
 
     outdir = Path(args.outdir).expanduser()
-    outdir.mkdir(parents=True, exist_ok=True)
-    write_csv(bom_rows, BOM_FIELDS, outdir / "bom.csv")
-    write_csv(cpl_rows, CPL_FIELDS, outdir / "cpl.csv")
-    print(f"wrote {outdir / 'bom.csv'} ({len(bom_rows)} lines) and "
-          f"{outdir / 'cpl.csv'} ({len(cpl_rows)} placements)", file=sys.stderr)
+    paths = JLCPCBAdapter().export(
+        resolution, outdir, rotations=args.rotations,
+        on_note=lambda msg: print(msg, file=sys.stderr))
+    counts = [max(0, sum(1 for _ in p.open()) - 1) for p in paths]
+    print(f"wrote {paths[0]} ({counts[0]} lines) and "
+          f"{paths[1]} ({counts[1]} placements)", file=sys.stderr)
 
     if args.no_verify:
         return 0

@@ -102,16 +102,23 @@ def cmd_resolve(client, args) -> int:
 
     from ..datasources.jlc.source import JLCDataSource
     from ..knowledge.partsdb import PartsDb
-    from ..providers.jlcpcb.strategy import JLCPCBStrategy
     from ..resolver.orchestration.resolve import (
         format_escalation_report,
         load_request_json,
         resolve,
     )
 
+    if getattr(args, "provider", "jlcpcb") == "pcbway":
+        from ..providers.pcbway.strategy import PCBWayStrategy
+
+        strategy = PCBWayStrategy()
+    else:
+        from ..providers.jlcpcb.strategy import JLCPCBStrategy
+
+        strategy = JLCPCBStrategy()
     requirements = load_request_json(args.request_json)
     store = PartsDb(args.db)
-    datasource, strategy = JLCDataSource(client), JLCPCBStrategy()
+    datasource = JLCDataSource(client)
     result = resolve(store, requirements, datasource=datasource, strategy=strategy)
     text = json.dumps(result, indent=2, ensure_ascii=False)
     if args.output:

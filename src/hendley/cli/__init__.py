@@ -180,6 +180,9 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--queue", help="On escalations, also write the batched approval "
                                     "queue (discovered + verified + ranked candidates "
                                     "per escalated line) to this JSON file.")
+    sp.add_argument("--provider", choices=("jlcpcb", "pcbway"), default="jlcpcb",
+                    help="Provider strategy (default jlcpcb). pcbway resolves to "
+                         "MPN identities, honestly unverified (no live stock source).")
     sp.set_defaults(func=cmd_resolve)
 
     sp = sub.add_parser("bom", help="Render a resolution JSON into the JLCPCB upload BOM CSV.")
@@ -190,6 +193,9 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--no-snapshot", action="store_true",
                     help="Skip the release snapshot a clean -o emit writes beside "
                          "the CSV (the immutable what-was-ordered record).")
+    sp.add_argument("--provider", choices=("jlcpcb", "pcbway"), default="jlcpcb",
+                    help="Upload format (default jlcpcb: LCSC-coded CSV; pcbway: "
+                         "MPN-based template).")
     sp.set_defaults(func=cmd_bom)
 
     sp = sub.add_parser("scr", help="Generate a Fusion .scr migration script from swap files.")
@@ -215,6 +221,8 @@ def main(argv: list[str] | None = None) -> int:
         or (args.command == "fusion" and getattr(args, "no_enrich", False))
         or (args.command == "alternates" and getattr(args, "list_categories", False))
         or (args.command in ("pcba", "jlc") and getattr(args, "no_verify", False))
+        # pcbway has no live stock source — resolution never calls the JLC API
+        or (args.command == "resolve" and getattr(args, "provider", "") == "pcbway")
     )
     needs_client = not offline
     try:

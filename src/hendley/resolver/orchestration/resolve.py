@@ -189,6 +189,31 @@ def _resolve_spec_line(row, line, house, facts, required, escalations, index,
         escalations.append(_escalation(index, line, "no-part-choices", [], provider))
         return
 
+    if not getattr(strategy, "requires_live_stock", True):
+        # No live stock source for this provider: take the first choice with a
+        # usable identity, honestly marked unverified (never invented inventory).
+        for choice in choices:
+            ref = choice["providerRefs"].get(provider)
+            if ref or choice["mpn"]:
+                row["source"] = "db"
+                row["rankUsed"] = choice["rank"]
+                row["ref"] = ref
+                row["mpn"] = row["mpn"] or choice["mpn"]
+                row["manufacturer"] = row["manufacturer"] or choice["manufacturer"]
+                row["offerType"] = strategy.offer_type
+                row["checks"].append(make_check(
+                    "unverified",
+                    f"{','.join(line.designators)}: "
+                    f"{ref or choice['mpn']} — no live {provider} stock source; "
+                    "availability must be confirmed with the provider").to_dict())
+                return
+        row["checks"].append(make_check(
+            "avl-exhausted",
+            f"{','.join(line.designators)} ({_spec_str(line.spec)}): no approved "
+            f"choice carries an identity usable for {provider}").to_dict())
+        escalations.append(_escalation(index, line, "avl-exhausted", [], provider))
+        return
+
     for choice in choices:
         ref = choice["providerRefs"].get(provider)
         if ref and _stock(facts, ref) >= required:

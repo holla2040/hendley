@@ -24,6 +24,10 @@ class ProviderStrategy(Protocol):
 
     provider: str  # e.g. "jlcpcb", "pcbway"
     offer_type: str  # the Solution offer type this strategy computes
+    # False = this provider has no live stock source: spec lines resolve to
+    # the first AVL choice with a usable identity, marked `unverified`
+    # (provenance stays honest — no invented inventory).
+    requires_live_stock: bool
 
     def query_context(self, requirements: RequirementsBom, candidate_refs: list[str]) -> list[str]:
         """Refs to live-verify for this resolution (may add/drop refs)."""

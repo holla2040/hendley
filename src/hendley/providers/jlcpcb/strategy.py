@@ -11,6 +11,7 @@ class JLCPCBStrategy:
 
     provider = "jlcpcb"
     offer_type = "jlc-mounted"
+    requires_live_stock = True
 
     def query_context(self, requirements: RequirementsBom,
                       candidate_refs: list[str]) -> list[str]:
