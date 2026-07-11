@@ -20,6 +20,7 @@ import urllib.error
 
 from ..datasources.jlc.client import JLCClient, JLCError
 from ..ingestion.fusion.bridge import BridgeError
+from .app import cmd_app
 from .catalog import cmd_alternates, cmd_detail, cmd_library, cmd_ping, cmd_private
 from .knowledge import (
     cmd_db_list,
@@ -198,6 +199,20 @@ def build_parser() -> argparse.ArgumentParser:
                          "MPN-based template).")
     sp.set_defaults(func=cmd_bom)
 
+    sp = sub.add_parser("app", help="Start the local Hendley web app (the primary UI).")
+    sp.add_argument("--port", type=int, default=8341,
+                    help="Port on 127.0.0.1 (default 8341; 0 = pick a free one).")
+    sp.add_argument("--db", help="Path to the house-parts DB "
+                                 "(default: $HENDLEY_DB or ~/.hendley/parts.db).")
+    sp.add_argument("-o", "--outdir", default="~/tmp/hendley_output",
+                    help="Order-file output directory (default: ~/tmp/hendley_output).")
+    sp.add_argument("--fusion-host",
+                    help="Fusion bridge host (default: HENDLEY_FUSION_HOST, else the "
+                         "WSL gateway).")
+    sp.add_argument("--no-browser", action="store_true",
+                    help="Don't open the browser automatically.")
+    sp.set_defaults(func=cmd_app)
+
     sp = sub.add_parser("scr", help="Generate a Fusion .scr migration script from swap files.")
     sp.add_argument("swaps_json", nargs="+",
                     help="One or more swap JSON files; merged into one combo script.")
@@ -217,6 +232,7 @@ def main(argv: list[str] | None = None) -> int:
     offline = (
         args.command == "scr"
         or args.command == "bom"
+        or args.command == "app"  # live access is constructed lazily per request
         or (args.command == "db" and getattr(args, "db_action", None) != "refresh")
         or (args.command == "fusion" and getattr(args, "no_enrich", False))
         or (args.command == "alternates" and getattr(args, "list_categories", False))
