@@ -2,87 +2,94 @@
 
 <img src="image/hendley.png" alt="Hendley — James Garner as Hendley, 'the Scrounger', in The Great Escape" width="160" align="right">
 
-A small Python tool for querying the **JLCPCB** parts inventory (LCSC / JLC
-components) and — going forward — for consolidating part information pulled
-directly from **Autodesk Fusion Electronics**, so you can validate part
-availability and speed up JLCPCB **PCB Assembly (PCBA)** order submissions.
+Hendley is a Python tool for querying JLCPCB/LCSC component data and integrating that information with Autodesk Fusion Electronics.
 
-> Named after James Garner's character Hendley, "the Scrounger", in the film
-> *The Great Escape*.
+Today, Hendley can inspect live JLC component details, check BOM stock, discover and verify alternates, read a live Fusion Electronics design, and generate explicit Fusion migration scripts. The project is evolving toward an AI-assisted, provider-independent BOM Resolver that transforms engineering requirements into an approved manufacturing BOM.
 
-Hendley is a Python reimplementation of JLCPCB's official Java OpenAPI SDK. The
-reverse-engineered API contract is documented in
-[`docs/api-reference.md`](docs/api-reference.md).
+> Hendley is named after James Garner's character in *The Great Escape*: "the Scrounger" who finds what the team needs.
 
-> **Note:** the reference JLCPCB Java SDK jars are **not** distributed with this
-> repo. You don't need them to run Hendley — they were only used to reverse-
-> engineer the contract. If you want to cross-check against them, download the
-> Core + Business SDK jars from JLCPCB yourself and drop them in a local `sdk/`
-> directory (git-ignored).
+## Project Status
+
+### Available today
+
+- JLCPCB OpenAPI authentication and component queries
+- component detail, stock, pricing, parameters, and datasheet information
+- assembly-library and private-inventory queries
+- BOM stock checking
+- alternate discovery with live JLC verification
+- live Fusion Electronics reads over Fusion's local HTTP interface
+- **JLCPCB PCBA order-file generation** (`hendley pcba`) — `bom.csv` + `cpl.csv`
+  from the live Fusion design, rotation-corrected, DNP-aware, and stock-checked
+  (see [Generating JLCPCB order files](#generating-jlcpcb-order-files-hendley-pcba))
+- generation of Fusion `.scr` migration scripts
+- optional, explicit execution of reviewed scripts through Fusion's command channel
+
+### Target product
+
+The target product is described in [`docs/PRD.md`](docs/PRD.md). It adds:
+
+- a provider-independent Requirements BOM
+- deterministic constraint validation
+- ranked and explainable candidate recommendations
+- engineer review and approval
+- reusable project and user knowledge
+- JLCPCB and PCBWay Provider Strategies
+- provider-specific Manufacturing BOM adapters
+
+The existing CLI is a working foundation, not yet the complete resolver defined by the PRD.
 
 ## Why Hendley
 
-In *The Great Escape*, Hendley is **"the Scrounger"** — the guy who quietly goes
-out and comes back with whatever the team needs. That's the job here: Hendley
-scrounges JLCPCB so you don't have to sit on the JLC parts site hand-searching
-for components, stock, and equivalents.
+For generic components, the circuit usually requires engineering characteristics rather than one permanently fixed purchasable part.
 
-A concrete example. Say your schematic is full of **0603** resistors, each
-already tagged with a JLC/LCSC part number, and you decide to move the whole
-board to **0402** to save space. Now you need, for *every* resistor, the
-equivalent **0402** part that:
+For example:
 
-- matches the electrical spec (resistance, tolerance, power rating, …),
-- is actually **in stock** at JLCPCB, and
-- ideally is a Basic/preferred assembly part to keep PCBA cost down.
+```text
+22 kΩ
+±1%
+0603
+minimum 100 mW
+```
 
-Doing that by hand — one web search per part — is exactly the tedium Hendley is
-meant to remove. That is what `hendley alternates` does **today**: give it a part
-and a constraint ("same package", "at least 40 A") and it discovers candidate
-replacements, verifies each one's **live** JLC stock / price / specs, and lays
-out the trade-off so you can pick. See
-[Finding a replacement part](#finding-a-replacement-part).
+The specific JLC/LCSC part depends on current stock, provider eligibility, lifecycle, cost, and build quantity. Manually searching and maintaining those identifiers can consume hours after the design is complete.
 
-**Where this is heading.** Hendley reads the design and looks up each part, you
-pick the replacements, and it generates a Fusion `.scr` script that applies the
-package + part-number changes ([The `.scr` file format](#the-scr-file-format)).
-The Fusion Electronics *object* API is read-only — **but the EAGLE command line
-is reachable from Python over HTTP** via
-`executeTextCommand('Electron.run "script C:\\path\\changes.scr"')`, so Hendley can
-fire the `.scr` straight into the running schematic over the HTTP bridge (no manual
-*Execute Script* step). That closes the loop: writing the new JLC part number
-back into the schematic at the new package size, turning a whole-board package
-migration from a day of manual searching into a single query. The point of all
-this: validate
-availability and source equivalents automatically, so JLCPCB **PCBA** orders go
-out faster and with fewer surprises.
+Hendley's long-term goal is to keep engineering intent stable and resolve procurement choices later:
 
-## What it does today
+```text
+Fusion / ECAD design
+        |
+        v
+Requirements BOM
+        |
+        v
+Resolver + Provider Strategy
+        |
+        v
+Engineer approval
+        |
+        v
+Manufacturing BOM
+```
 
-Read-only component (parts inventory) endpoints, signed with JLCPCB's `JOP`
-authentication scheme, exposed through a `hendley` CLI and a small Python API:
+> **Free engineers to do design.**
 
-- **Generate the JLCPCB order files** (`hendley pcba`) — read the live Fusion
-  design over the HTTP bridge and write `bom.csv` + `cpl.csv`, rotation-corrected
-  and stock-checked, ready to upload. See
-  [Generating JLCPCB order files](#generating-jlcpcb-order-files-hendley-pcba).
-- **Find an alternate part** (`hendley alternates`) — discover candidate
-  replacements from a parametric index and verify each one **live** against JLC
-  for stock, price, and specs, then weigh the trade-off and choose. See
-  [Finding a replacement part](#finding-a-replacement-part).
-- **Inventory check** a BOM (`hendley stock`) — flag out-of-stock / problem parts
-  before a board submission.
-- Generate Fusion Electronics migration scripts (`.scr`) to batch part package
-  and attribute changes — see
-  [The `.scr` file format](#the-scr-file-format).
-- Look up full component detail (price tiers, stock, parameters, datasheet).
-- Browse the assembly component library.
-- List your private / consigned JLC inventory.
-- Verify that your credentials and request signing are working.
+## Documentation
+
+Read the design documents in this order:
+
+1. [`docs/vision.md`](docs/vision.md) — why the project exists
+2. [`docs/architecture-principles.md`](docs/architecture-principles.md) — rules the implementation must preserve
+3. [`docs/PRD.md`](docs/PRD.md) — product scope, workflows, and acceptance criteria
+4. [`docs/architecture.md`](docs/architecture.md) — target modules, interfaces, and migration from the current codebase
+
+Additional repository documentation:
+
+- [`docs/api-reference.md`](docs/api-reference.md) — reverse-engineered JLCPCB API contract
+- [`docs/fusion-notes.md`](docs/fusion-notes.md) — Fusion HTTP integration details
 
 ## Install
 
-Requires **Python >= 3.10**. The core install depends only on `requests`.
+Requires Python 3.10 or later.
 
 ```bash
 git clone git@github.com:holla2040/hendley.git
@@ -92,262 +99,110 @@ source .venv/bin/activate
 pip install -e .
 ```
 
-Optional extras:
+Development dependencies:
 
 ```bash
-pip install -e ".[dev]"       # pytest, ruff
+pip install -e ".[dev]"
 ```
 
-> **If `hendley` isn't found after install** — usually the virtualenv isn't
-> activated, or `pip install -e .` put the script somewhere off your `PATH`. You
-> don't need the installed command: run it as a module from the repo root, which
-> only needs `requests`:
->
-> ```bash
-> PYTHONPATH=src python -m hendley.cli ping     # or: python -m hendley ping
-> ```
->
-> Every `hendley <cmd>` example in this README works the same way via that form.
+The core package depends on `requests`.
 
-### Set your JLC API keys (required)
-
-Hendley authenticates every request with JLCPCB OpenAPI credentials. Without them
-the CLI cannot reach the API. The credentials are **not** committed — they are
-read at runtime from a **`.keys` file you create at the project root** (the
-repo's `.gitignore` already excludes `.keys`, `*.pem`, and `*.key` so they can
-never be committed).
-
-1. Get your credentials from the JLCPCB developer console (`api.jlcpcb.com`):
-   **AppID**, **Accesskey**, and **SecretKey**.
-2. Create **`.keys`** in the repo root (same folder as `pyproject.toml`) with
-   this exact layout (placeholders shown — substitute your own values):
-
-   ```
-   JLCAPI:
-       AppID:     <your-app-id>
-       Accesskey: <your-access-key>
-       SecretKey: <your-secret-key>
-   ```
-
-   These three fields are all Hendley uses. The JLCPCB `.keys` file may also
-   contain an RSA "Tokenization Key" block — Hendley **ignores it** (it would
-   only matter for order placement, which is not implemented), so you can leave
-   it in or strip it out.
-3. Alternatively, point `HENDLEY_KEYS` at a `.keys` file elsewhere
-   (see [Environment variables](#environment-variables)).
-
-See [Configuration](#configuration) for full details on the file format and
-discovery order.
-
-## Quickstart
-
-1. Install and set your `.keys` file as above.
-2. Verify credentials and signing:
+If the installed command is unavailable, run Hendley from the repository:
 
 ```bash
-hendley ping
+PYTHONPATH=src python -m hendley.cli ping
 ```
 
-`ping` distinguishes the two states you might hit:
+## Configure JLCPCB Credentials
 
-- **Signing OK, permission missing** — the request authenticated correctly but
-  your app lacks the component API permission. Enable it for your app in the
-  JLC developer console, then retry.
-- **Signature rejected** — check the `AppID` / `Accesskey` / `SecretKey` in
-  `.keys`.
+Hendley reads JLCPCB OpenAPI credentials from a git-ignored `.keys` file.
 
-3. **Find an alternate for a part.** Pick the category (`--list-categories`) and
-   the constraint, then let Hendley discover + verify candidates:
-
-```bash
-hendley alternates --list-categories                  # the category slugs (offline)
-hendley detail C315567                                 # get the part's exact package string
-hendley alternates C315567 --category mosfets --package "DFN-8(3x3)" --top 10
-```
-
-   Hendley prints the target, then candidates with their **live** stock, price,
-   and specs — it does not pick for you. Pass `--json` to get the full data (e.g.
-   to hand to Claude for the trade-off). Full details, including the fuzzy
-   `search` path, are in [Finding a replacement part](#finding-a-replacement-part).
-
-## CLI command reference
-
-```
-hendley [--keys PATH] <command> [options]
-```
-
-| Command | Description |
-|---------|-------------|
-| `hendley ping` | Verify credentials + signing; reports whether signing works and whether the component API permission is enabled. |
-| `hendley detail C2040 [C... ...]` | Full component detail for one or more JLC component codes (price tiers, stock, parameters, datasheet). |
-| `hendley private [--page N] [--limit N]` | Your private / consigned JLC inventory. |
-| `hendley library [--limit N]` | Browse the assembly component library. |
-| `hendley fusion PARTS.json [--no-enrich]` | Ingest a Fusion parts-export JSON and enrich each part against JLC (stock, price tiers, basic/extended). `--no-enrich` validates the file offline without calling the API. |
-| `hendley stock PARTS.json [--min-stock N] [--json]` | **Inventory check** — look up live stock for every part in a BOM and flag any that are out of stock, not found, or below `--min-stock`. Exits nonzero if any part is out-of-stock or not found, so it can gate a submission (`hendley stock bom.json && submit`). |
-| `hendley pcba [-o DIR] [--min-stock N] [--no-verify] [--fusion-host IP] [--rotations FILE]` (alias: `hendley jlc`) | **Generate the JLCPCB PCBA order files** — read the currently open Fusion design over the HTTP bridge (schematic, then board) and write exactly two files, `bom.csv` + `cpl.csv` (default `~/tmp/hendley_output/`), with `data/cpl-rotations.json` corrections applied, then run the live JLC stock check (exits nonzero on blockers; `--no-verify` skips it, offline). See [Generating JLCPCB order files](#generating-jlcpcb-order-files-hendley-pcba). |
-| `hendley scr SWAPS.json [SWAPS2.json ...] [-o FILE.scr] [--design NAME]` | Generate a Fusion `.scr` migration script from one or more swap files (merged into one combo script). Emits the `CHANGE PACKAGE` + `ATTRIBUTE` commands you run in Fusion. Runs offline — no credentials needed. See [The `.scr` file format](#the-scr-file-format). |
-| `hendley alternates CODE --category SLUG [--package PKG] [-p KEY=VALUE ...] [--top N] [--json]` | **Find an alternate** for a part: DISCOVER candidates from the third-party parametric index `jlcsearch.tscircuit.com`, then VERIFY *every* hit against the live JLC API (stock, price, parameters) and print a trade-off table. It does **not** rank or pick — you (or Claude) weigh stock / price / spec margin / package. `--list-categories` lists the slugs (offline). See [Finding a replacement part](#finding-a-replacement-part). |
-
-`--keys PATH` overrides credential discovery for any command.
-
-**Output format.** `detail`, `private`, `library`, and `fusion` print **JSON** to
-stdout by default — they have **no `--json` flag** (passing one is an error); pipe
-them to `jq`/`python3` to parse. Only **`stock`** and **`alternates`** accept
-`--json`; without it they print a human-readable report. `ping` prints a status
-line; `scr` prints (or writes with `-o`) the `.scr` script. A command's flags are
-exactly what `hendley <cmd> --help` lists — don't assume a flag exists because
-another command has it.
-
-## Python usage
-
-```python
-from hendley import JLCClient
-
-client = JLCClient()
-
-# Full detail by component code
-detail = client.get_component_detail_by_code(["C2040"])
-
-# One page of the assembly component library
-page = client.get_component_library_list(page_size=30)
-
-# Iterate the entire library (follows the lastKey cursor)
-for row in client.iter_component_library():
-    print(row["componentCode"], row["componentModel"])
-
-# Your private / consigned inventory
-private = client.get_private_component_library(current_page=1, page_size=30)
-```
-
-## Configuration
-
-### `.keys` file
-
-Credentials are loaded at runtime from a **git-ignored** `.keys` file at the
-project root (it is parsed by `src/hendley/config.py`). They are never hardcoded
-and never committed. The file is the one issued by JLCPCB and uses this format
-(placeholders shown — substitute your own values):
-
-```
+```text
 JLCAPI:
     AppID:     <your-app-id>
     Accesskey: <your-access-key>
     SecretKey: <your-secret-key>
 ```
 
-Hendley reads only the `AppID`, `Accesskey`, and `SecretKey` fields. The JLCPCB
-`.keys` file as issued also includes an RSA "Tokenization Key" block (for
-encrypting order-placement fields such as shipping addresses); Hendley does not
-implement order placement and **ignores that block entirely**, so it is optional
-and may be omitted.
+Credential lookup order:
 
-### Environment variables
+1. `--keys PATH`
+2. `HENDLEY_KEYS`
+3. `.keys` discovered by walking up from the current directory
 
-| Variable | Effect |
-|----------|--------|
-| `HENDLEY_KEYS` | Path to the `.keys` file (overrides discovery). |
-| `HENDLEY_ENDPOINT` | Override the API host. |
+Optional endpoint override:
 
-Path resolution order for credentials: the `--keys` / explicit argument, then
-`HENDLEY_KEYS`, then a `.keys` file discovered by walking up from the current
-working directory.
+```text
+HENDLEY_ENDPOINT
+```
 
-## Endpoint and permissions
+Do not commit `.keys`, PEM files, private keys, or secrets.
 
-- **API host:** `https://open.jlcpcb.com` (the default).
-  Note: `api.jlcpcb.com` is the developer **portal / console**, not the API
-  host.
-- **Auth scheme `JOP`:** every request carries
-  `Authorization: JOP appid="..",accesskey="..",timestamp="..",nonce="..",signature=".."`,
-  where `signature = Base64(HMAC_SHA256(secretKey, stringToSign))` and
-  `stringToSign = METHOD\nCANONICAL_URI\nTIMESTAMP\nNONCE\nPAYLOAD\n`.
+## Quickstart
 
-Signing has been verified empirically against the live API:
-
-- A **valid** signature returns `HTTP 403 {"code":403,"message":"API
-  insufficient permissions, access denied"}` for this account.
-- A **wrong** signature returns `HTTP 401 {"code":401,"message":"The request
-  signature verify failed"}`.
-
-So signing is proven correct — the account just needs the component API
-permission enabled in the JLC console.
-
-## Reading from Fusion Electronics over HTTP (no MCP connector)
-
-**Hendley talks to Fusion over plain HTTP only — there is no MCP connector or
-client anywhere in this project, and you do not need one.** Hendley reads a live
-Autodesk Fusion design by issuing JSON-RPC `POST`s directly to the local endpoint
-Fusion exposes, with `curl` / `requests`. **All communication is HTTP**: no
-Claude Desktop "Autodesk Fusion" connector, no MCP client library, no `claude mcp
-add` registration. You invoke the **`fusion_mcp_electronics_read`** tool (that is
-simply its name) by `POST`ing an HTTP `tools/call` request — over HTTP, never
-through a connector.
-
-The handshake has a few non-obvious steps (Windows-host IP not `127.0.0.1` from
-WSL, capture the `MCP-Session-Id` HTTP header, send `notifications/initialized`
-before any `tools/call`) — copy the complete, verified HTTP recipe and a worked
-example from [`docs/fusion-notes.md`](docs/fusion-notes.md) → "Talking to Fusion
-over HTTP — the full recipe"; each part's JLC `Cxxxx` code is its `LCSC` attribute.
-
-The only requirement on the **Windows / Fusion side** is that Fusion is running
-with its built-in HTTP endpoint enabled — the **Preferences > General > API >
-Fusion MCP Server** toggle (this Autodesk setting is the *only* thing here named
-"MCP"; it just publishes the HTTP endpoint Hendley then talks to) — and an
-Electronics document open. Nothing else needs to be installed.
-
-### Reaching it from WSL2 (networking note)
-
-If you run Hendley on the same Windows machine as Fusion, `http://127.0.0.1:27182`
-just works. If you run it under **WSL2**, Windows loopback isn't reachable across
-the NAT boundary, so forward the port on the **Windows** side (elevated
-PowerShell).
-
-> ⚠️ **Use the WSL gateway IP as `listenaddress`, NOT `0.0.0.0`.** A `0.0.0.0`
-> listener on `27182` sits in front of the *same* loopback port Fusion's server
-> and the Claude Desktop "Autodesk Fusion" connector use, and hijacks their
-> `127.0.0.1:27182` traffic — Fusion appears to "connect then close
-> unexpectedly" and **Claude Desktop stops connecting**. Bind the WSL-facing
-> gateway address specifically so loopback is never intercepted.
-
-First get the WSL→Windows gateway IP **from inside WSL** (it is also the address
-WSL uses to reach Windows):
+Verify request signing and API access:
 
 ```bash
-ip route | grep default | awk '{print $3}'   # e.g. 172.17.64.1
+hendley ping
 ```
 
-Then, on Windows (elevated), forward that address only — substitute your gateway
-IP for `172.17.64.1`:
+Generate the JLCPCB order files from the open Fusion design (schematic view
+active):
 
-```powershell
-netsh interface portproxy add v4tov4 listenaddress=172.17.64.1 listenport=27182 connectaddress=127.0.0.1 connectport=27182
+```bash
+hendley pcba        # writes bom.csv + cpl.csv to ~/tmp/hendley_output/
 ```
 
-From WSL, reach Fusion at `http://172.17.64.1:27182/mcp`. The gateway IP can
-change across WSL restarts — re-check it with the `ip route` line above and
-re-add the rule if Fusion becomes unreachable.
+Inspect one or more components:
 
-**Health check / troubleshooting.** On Windows, `curl http://127.0.0.1:27182/mcp`
-should return an instant JSON error when Fusion's server is healthy —
-`{"error": "Not Found"}` on older builds, `{"error": "Server does not offer an
-SSE stream at this endpoint"}` on newer ones (observed 2026-07-10). Either body
-means healthy; only a hang or "connection closed unexpectedly" is bad. (In
-PowerShell, `curl` is `Invoke-WebRequest` and paints non-2xx responses as red
-exceptions — read the body, not the color.)
-If it (or Claude Desktop) "closes the connection unexpectedly," a bad `0.0.0.0`
-forward is almost certainly hijacking loopback — delete it and the symptom
-clears:
-
-```powershell
-netsh interface portproxy show all     # look for a 0.0.0.0 ... 27182 entry
-netsh interface portproxy delete v4tov4 listenaddress=0.0.0.0 listenport=27182
+```bash
+hendley detail C2040
+hendley detail C2040 C25879
 ```
 
-Remove the (correct) gateway forward when you're done with:
+Check a Fusion parts export or BOM for stock:
 
-```powershell
-netsh interface portproxy delete v4tov4 listenaddress=172.17.64.1 listenport=27182
+```bash
+hendley stock PARTS.json --min-stock 100
 ```
+
+Find and live-verify alternate candidates:
+
+```bash
+hendley alternates --list-categories
+hendley alternates C315567   --category mosfets   --package "DFN-8(3x3)"   --top 10
+```
+
+Generate a Fusion migration script from reviewed changes:
+
+```bash
+hendley scr swaps.json -o changes.scr
+```
+
+## Commands
+
+| Command | Purpose |
+|---|---|
+| `hendley ping` | Verify JLC credentials, signing, and permissions. |
+| `hendley detail CODE...` | Retrieve component detail, stock, price tiers, parameters, and datasheet data. |
+| `hendley private` | List private or consigned JLC inventory. |
+| `hendley library` | Browse the JLC assembly component library. |
+| `hendley fusion PARTS.json` | Validate and optionally enrich Fusion parts-export data. |
+| `hendley stock PARTS.json` | Check BOM inventory and return nonzero on blocking stock problems. |
+| `hendley pcba` (alias: `hendley jlc`) | Generate the JLCPCB PCBA order files (`bom.csv` + `cpl.csv`) from the live Fusion design, rotation-corrected and stock-checked; exits nonzero on stock blockers. |
+| `hendley alternates CODE ...` | Discover candidates and verify each against live JLC data. |
+| `hendley scr SWAPS.json ...` | Generate Fusion `.scr` migration commands from explicit reviewed swaps. |
+
+Use `hendley <command> --help` for the authoritative option list.
+
+**Output format.** `detail`, `private`, `library`, and `fusion` print **JSON** to
+stdout by default — they have **no `--json` flag** (passing one is an error); pipe
+them to `jq`/`python3` to parse. Only **`stock`** and **`alternates`** accept
+`--json`; without it they print a human-readable report. `ping` prints a status
+line; `scr` prints (or writes with `-o`) the `.scr` script; `pcba` writes its two
+CSVs and prints the stock report. A command's flags are exactly what
+`hendley <cmd> --help` lists — don't assume a flag exists because another
+command has it.
 
 ## Generating JLCPCB order files (`hendley pcba`)
 
@@ -416,9 +271,10 @@ with `Electron.run` — see step 5). `comet` below is just an example design.
 **Before you start**
 
 1. Fusion is running with an **Electronics document open** and its HTTP endpoint
-   enabled via the **Fusion MCP Server** toggle (see [Reading from Fusion Electronics over HTTP](#reading-from-fusion-electronics-over-http-no-mcp-connector)).
+   enabled via the **Fusion MCP Server** toggle (see
+   [Fusion Electronics Integration](#fusion-electronics-integration)).
 2. Under WSL2, the port forward is up (same section,
-   [networking note](#reaching-it-from-wsl2-networking-note)).
+   [networking note](#reaching-fusion-from-wsl2-networking-note)).
 3. Your `.keys` file is in place (or use the `PYTHONPATH=src` fallback above).
 4. **No modal dialog is open in Fusion** — an open dialog (e.g. *Attributes of
    Rn*) silently blocks the bridge, so every read comes back empty.
@@ -450,7 +306,7 @@ with `Electron.run` — see step 5). `comet` below is just an example design.
      (`Electron.run "VALUE R6 330"`), so the whole change is one scripted stream.
      `Electron.run` returns nothing, so Claude verifies by re-reading; changes are
      **unsaved** until you save in Fusion. (Details:
-     [Reading from Fusion Electronics](#reading-from-fusion-electronics-over-http-no-mcp-connector)
+     [Fusion Electronics Integration](#fusion-electronics-integration)
      and `docs/fusion-notes.md` → "The WRITE path".)
 6. **Verify** — ask Claude to re-read the design and confirm each part landed on
    the new package, attributes, and value.
@@ -485,35 +341,74 @@ two steps:
    built on the live numbers, not jlcsearch's.
 
 It deliberately **does not rank or pick** — it gathers and verifies; you (or
-Claude) weigh inventory vs. price vs. spec margin vs. package.
+Claude) weigh inventory vs. price vs. spec margin vs. package. It does not
+perform the full PRD ranking and approval workflow.
+
+## Fusion Electronics Integration
+
+Hendley communicates with Fusion's local Electronics interface over HTTP. No separate MCP client library is required by Hendley.
+
+Fusion must be running with an Electronics document open and its local server enabled — the **Preferences > General > API > Fusion MCP Server** toggle (this Autodesk setting is the *only* thing here named "MCP"; it just publishes the HTTP endpoint Hendley talks to). See [`docs/fusion-notes.md`](docs/fusion-notes.md) for the verified handshake, read operations, and command execution details.
+
+### Reaching Fusion from WSL2 (networking note)
+
+If you run Hendley on the same Windows machine as Fusion, `http://127.0.0.1:27182`
+just works. If you run it under **WSL2**, Windows loopback isn't reachable across
+the NAT boundary, so forward the port on the **Windows** side (elevated
+PowerShell).
+
+> ⚠️ **Use the WSL gateway IP as `listenaddress`, NOT `0.0.0.0`.** A `0.0.0.0`
+> listener on `27182` sits in front of the *same* loopback port Fusion's server
+> and the Claude Desktop "Autodesk Fusion" connector use, and hijacks their
+> `127.0.0.1:27182` traffic — Fusion appears to "connect then close
+> unexpectedly" and **Claude Desktop stops connecting**. Bind the WSL-facing
+> gateway address specifically so loopback is never intercepted.
+
+First get the WSL→Windows gateway IP **from inside WSL** (it is also the address
+WSL uses to reach Windows):
 
 ```bash
-hendley alternates --list-categories                 # the jlcsearch category slugs
-# same-package alternates for a 30 A DFN-8 MOSFET:
-hendley alternates C315567 --category mosfets --package "DFN-8(3x3)" --top 10
-hendley alternates C315567 --category mosfets --package "DFN-8(3x3)" --json   # full data
+ip route | grep default | awk '{print $3}'   # e.g. 172.17.64.1
 ```
 
-**The spoken filter becomes flags.** "Same package, at least 40 A" → Claude picks
-the category and translates the constraint into `--package` / `-p key=value` query
-params. A value/numeric hard filter (e.g. "330 Ω") is best applied by reading the
-**verified `parameters[]`** in the `--json`, not via jlcsearch query params — see
-the matching notes below.
+Then, on Windows (elevated), forward that address only — substitute your gateway
+IP for `172.17.64.1`:
 
-**How jlcsearch matches (verified against its source):**
+```powershell
+netsh interface portproxy add v4tov4 listenaddress=172.17.64.1 listenport=27182 connectaddress=127.0.0.1 connectport=27182
+```
 
-- `package` (and the other per-category string filters) match by **exact,
-  case-sensitive equality — no wildcards**. `DFN-8` ≠ `DFN-8(3x3)`; `%`, `*`, and
-  substrings all return nothing. Use the target's exact `componentSpecification`
-  (from `hendley detail`) as `--package`.
-- Numeric `_min` / `_max` params (e.g. `continuous_drain_current_min`) are
-  **unreliable** — jlcsearch's structured numeric columns are sparsely populated
-  (a `_min` filter silently drops every row whose value is null). Passive value
-  fields (`resistance`, `capacitance`) are dense and safe.
-- The **fuzzy / cross-package escape hatch** is the generic `components` category
-  with a full-text `search`: `hendley alternates C315567 --category components -p
-  search="AON75"` (token + prefix matching; surfaces the same MPN across package
-  spellings; in-stock parts only).
+From WSL, reach Fusion at `http://172.17.64.1:27182/mcp`. The gateway IP can
+change across WSL restarts — re-check it with the `ip route` line above and
+re-add the rule if Fusion becomes unreachable.
+
+**Health check / troubleshooting.** On Windows, `curl http://127.0.0.1:27182/mcp`
+should return an instant JSON error when Fusion's server is healthy —
+`{"error": "Not Found"}` on older builds, `{"error": "Server does not offer an
+SSE stream at this endpoint"}` on newer ones (observed 2026-07-10). Either body
+means healthy; only a hang or "connection closed unexpectedly" is bad. (In
+PowerShell, `curl` is `Invoke-WebRequest` and paints non-2xx responses as red
+exceptions — read the body, not the color.)
+If it (or Claude Desktop) "closes the connection unexpectedly," a bad `0.0.0.0`
+forward is almost certainly hijacking loopback — delete it and the symptom
+clears:
+
+```powershell
+netsh interface portproxy show all     # look for a 0.0.0.0 ... 27182 entry
+netsh interface portproxy delete v4tov4 listenaddress=0.0.0.0 listenport=27182
+```
+
+Remove the (correct) gateway forward when you're done with:
+
+```powershell
+netsh interface portproxy delete v4tov4 listenaddress=172.17.64.1 listenport=27182
+```
+
+### Design writes are explicit
+
+The Fusion Electronics object interface is read-only, but reviewed EAGLE/Fusion commands can be executed through Fusion's command channel.
+
+Hendley can generate a `.scr` file containing package and attribute changes. Execution is an explicit engineering action and is separate from automatic BOM resolution.
 
 ### The `.scr` file format
 
@@ -570,120 +465,73 @@ ATTRIBUTE R1 DESC '1%';
 
 The script covers **package and attributes**. A changed **schematic value** (e.g.
 220 Ω → 330 Ω) is not part of the `.scr` — it's set in Fusion when you apply the
-change (loop step 5). You run the generated script in Fusion as described in the
-loop.
+change (loop step 5).
 
-## Security
+After execution, re-read the design and verify every change. Fusion changes remain unsaved until the engineer saves the design.
 
-- `.keys` holds your AppID, access key, and secret key. It is listed in
-  `.gitignore` and must **never** be committed.
-- Credentials are loaded only at runtime; nothing is hardcoded in the source.
-- `*.pem` and `*.key` files are also git-ignored.
+## Python API
 
-## Project history — how this was built
+```python
+from hendley import JLCClient
 
-Hendley exists because JLCPCB ships an official **Java** OpenAPI SDK but no Python
-one. Rather than wrap the Java SDK, the contract was **reverse-engineered from
-the JLCPCB Java SDK jars** (the Core SDK + Business SDK) and reimplemented as a
-small, dependency-light Python package.
+client = JLCClient()
 
-1. **Recover the contract from the jars.** The decompiled Java SDK was read to
-   recover: the component (parts inventory) endpoints and their request/response
-   value objects; the response envelope (`{ code, message, data }`); and the
-   serialization rules (fields emitted as **camelCase**, null fields **omitted**)
-   that the wire format depends on. The result is captured as the source of
-   truth in [`docs/api-reference.md`](docs/api-reference.md).
-2. **Pin the auth scheme.** JLCPCB's `JOP` authentication
-   (`Authorization: JOP appid=..,accesskey=..,timestamp=..,nonce=..,signature=..`)
-   was reproduced exactly from the SDK's signer: `signature =
-   Base64(HMAC_SHA256(secretKey, METHOD\nURI\nTIMESTAMP\nNONCE\nPAYLOAD\n))`.
-   `tests/test_auth.py` pins the Python implementation to the Java algorithm so
-   it can't drift.
-3. **Reimplement in pure Python.** `auth.py` (signing), `client.py` (signed
-   `POST` plumbing + the read-only component endpoints + envelope unwrap),
-   `config.py` (runtime `.keys` loading), and a `hendley` CLI — core install
-   depends only on `requests`.
-4. **Verify against the live API.** Signing was confirmed empirically: a *valid*
-   signature returns `HTTP 403` (insufficient permissions) while a *wrong*
-   signature returns `HTTP 401` (signature verify failed) — proving the signing
-   is correct and that the remaining gate is account-side permission, not code.
-   It also confirmed the real API host is `https://open.jlcpcb.com`
-   (`api.jlcpcb.com` is the developer portal).
+detail = client.get_component_detail_by_code(["C2040"])
+library_page = client.get_component_library_list(page_size=30)
+private_inventory = client.get_private_component_library(
+    current_page=1,
+    page_size=30,
+)
+```
 
-That JLC reverse-engineering and Python reimplementation was done in Claude Code
-on **horton** (the Linux dev box), session
-`fd5ea0ac-6e74-4f38-8b3e-8435fc6f1512`.
+See the package source and API reference for the current public surface.
 
-5. **Add the Fusion Electronics bridge.** On **hendrix** (the Windows box
-   running Autodesk Fusion), Hendley was extended to read a live electronics
-   design over plain HTTP (see
-   [Reading from Fusion Electronics](#reading-from-fusion-electronics-over-http-no-mcp-connector)).
-   Introspecting a real design answered the key open question — the JLCPCB
-   `Cxxxx` code is stored as each part's **`LCSC`** attribute — which lets the
-   extractor produce `hendley_parts.json` and feed those codes straight into the
-   JLC query layer for stock/price enrichment. Details in
-   [`docs/fusion-notes.md`](docs/fusion-notes.md).
+## Architecture Boundaries
+
+The target resolver keeps these responsibilities separate:
+
+- Fusion and other ECAD integrations capture engineering requirements.
+- Data-source connectors retrieve sourced component facts.
+- The Resolver Core applies deterministic constraints.
+- Provider Strategies express sourcing policy.
+- Ranking orders valid candidates.
+- AI explains and assists with ambiguity.
+- Engineers approve.
+- Provider Adapters generate manufacturing files.
+- Fusion migration tools remain explicit ancillary utilities.
 
 ## Roadmap
 
-1. **Fusion Electronics integration.** Hendley will read designs **directly**
-   via the Autodesk Fusion API (currently read-only for electronics) — *not* by
-   exporting a BOM. A Fusion add-in / script will enumerate the electronic
-   design's components and their MPN / LCSC part attributes, then feed those
-   part numbers into Hendley's JLC query layer to report availability, stock,
-   price tiers, and basic/extended (assembly) status — so you know what is
-   available before submitting a PCBA order. A stub module is planned at
-   `src/hendley/fusion.py`.
+Near-term development should proceed from the PRD and architecture rather than expanding the CLI opportunistically.
 
-2. **PCBA order automation.** The JLC SDK also exposes PCB order endpoints
-   (`uploadGerber`, calculate price, create order), where address and other
-   sensitive fields must be RSA-tokenized with the `.keys` RSA key. These
-   endpoints are mapped in [`docs/api-reference.md`](docs/api-reference.md) but
-   not yet wrapped — when they are, this is where the RSA tokenization key (and
-   a `cryptography` dependency) would come back in.
+Priority areas:
 
-## Future enhancement: streamlining JLCPCB board submission
+1. Canonical Requirements BOM schema
+2. Live Fusion-to-Requirements-BOM ingestion
+3. Deterministic passive-component constraints
+4. JLCPCB/LCSC Provider Strategy
+5. ranking and explanation
+6. engineer approval and decision persistence
+7. JLCPCB Manufacturing BOM Adapter
+8. PCBWay strategy and adapter to validate provider independence
 
-> **Partially addressed.** `hendley pcba` now generates the BOM + CPL directly
-> from the live design (rotation-corrected, stock-checked) — see
+PCBA order placement and website-loop automation are useful future ideas but are outside the Version 1 resolver scope.
+
+> **Order files are already covered.** `hendley pcba` generates the BOM + CPL
+> directly from the live design (rotation-corrected, stock-checked) — see
 > [Generating JLCPCB order files](#generating-jlcpcb-order-files-hendley-pcba).
-> The remaining piece — driving JLC's own upload/validation through the order
-> API — is earmarked, not yet scoped.
+> Driving JLC's own upload/validation through the order API remains out of scope.
 
-Submitting a PCBA order through the JLCPCB **website** is one of the slowest,
-most tedious parts of the whole workflow. The order form validates your uploads
-*after* you submit them, so it becomes a back-and-forth loop:
+## Security
 
-- **BOM errors.** If the Bill of Materials has a problem — an out-of-stock part,
-  an unrecognized or mismatched component, a column the parser doesn't like — you
-  have to fix the BOM and **re-upload it**. In practice this happens *repeatedly*:
-  one fix surfaces the next issue, and each round is a full upload-and-revalidate
-  cycle.
-- **CPL / placement errors.** Likewise, if the Component Placement List (CPL,
-  the pick-and-place file) has a problem — a missing or off placement, a rotation
-  or origin mismatch — you have to correct it and **upload a new CPL file**, then
-  wait for revalidation again.
-
-This upload → validate → fix → re-upload churn, alternating between BOM and CPL,
-eats a lot of time and is the main bottleneck in getting an order placed.
-
-**What to investigate.** Whether the JLCPCB **API** (the order/PCBA endpoints
-already documented in [`docs/api-reference.md`](docs/api-reference.md) but not yet
-wrapped — gerber/BOM/CPL upload, price calculation, order creation) lets us move
-this validation *off* the website and *into* Hendley, so problems are caught and
-fixed **before** the tedious manual round-trips. The two highest-value targets
-are exactly the two error classes above:
-
-- **Inventory / BOM pre-validation** — check every part's stock and
-  Basic/Extended status against the JLC API up front (building on Hendley's
-  existing component lookups and the part-substitution work) so out-of-stock or
-  problem parts are resolved *before* submission, not discovered mid-upload.
-- **Placement / CPL pre-validation** — sanity-check the CPL against the design
-  (designators, rotations, coordinates) before it ever reaches the website.
-
-Goal: turn order submission from a slow, error-prone website loop into a
-prepared, pre-validated package — ideally driven (or submitted) through the API.
+- Never commit `.keys`, private keys, PEM files, or provider credentials.
+- External AI use must be explicit and configurable.
+- Do not log secrets.
+- Use the minimum provider permissions required.
+- Treat BOM and design data as potentially proprietary.
 
 ## License
 
-Proprietary.
+The repository currently states that it is **Proprietary**.
+
+The product vision calls for an open and community-extensible architecture, but the repository must not be described as open source until an explicit license change is made.
