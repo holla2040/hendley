@@ -442,12 +442,36 @@ def make_handler(app: HendleyApp):
     return Handler
 
 
+def _open_browser_quietly(url: str) -> bool:
+    """webbrowser.open with the launcher's noise suppressed.
+
+    On WSL/headless boxes xdg-open walks its whole browser list printing
+    'not found' for each to OUR stderr (children inherit the fds at spawn) —
+    point fd 1/2 at devnull for the duration so the terminal stays clean.
+    """
+    import os
+
+    devnull = os.open(os.devnull, os.O_WRONLY)
+    saved_out, saved_err = os.dup(1), os.dup(2)
+    try:
+        os.dup2(devnull, 1)
+        os.dup2(devnull, 2)
+        return webbrowser.open(url)
+    except Exception:
+        return False
+    finally:
+        os.dup2(saved_out, 1)
+        os.dup2(saved_err, 2)
+        for fd in (saved_out, saved_err, devnull):
+            os.close(fd)
+
+
 def run_app(app: HendleyApp, port: int = 8341, open_browser: bool = True) -> None:
     server = ThreadingHTTPServer(("127.0.0.1", port), make_handler(app))
     url = f"http://127.0.0.1:{server.server_port}/"
     print(f"Hendley app: {url}  (Ctrl-C to stop)")
-    if open_browser:
-        webbrowser.open(url)
+    if open_browser and not _open_browser_quietly(url):
+        print(f"(no local browser found — open {url} yourself)")
     try:
         server.serve_forever()
     except KeyboardInterrupt:
