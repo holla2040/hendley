@@ -55,7 +55,12 @@ from pathlib import Path
 
 from ..domain.model import SpecKey
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
+
+# Interpretation provenance, weakest → strongest. A stronger source
+# overwrites a weaker one; never the reverse (a user's confirmation is
+# authoritative and is never re-asked or silently replaced by an LLM).
+INTERPRETATION_SOURCES = ("deterministic", "llm", "user")
 
 CHOICE_STATES = ("active", "removed")
 AUDIT_EVENTS = ("recorded", "promoted", "reranked", "removed", "superseded")
@@ -111,6 +116,19 @@ _SCHEMA_STATEMENTS = (
   detail        TEXT
 )""",
     """CREATE INDEX IF NOT EXISTS ix_audit_house ON part_audit(house_part_id, id)""",
+    """CREATE TABLE IF NOT EXISTS interpretations (
+  id          INTEGER PRIMARY KEY,
+  scope       TEXT NOT NULL,
+  kind_hint   TEXT NOT NULL DEFAULT '',
+  raw_value   TEXT NOT NULL DEFAULT '',
+  footprint   TEXT NOT NULL DEFAULT '',
+  result      TEXT NOT NULL,
+  source      TEXT NOT NULL,
+  confidence  REAL,
+  at          TEXT NOT NULL
+)""",
+    """CREATE UNIQUE INDEX IF NOT EXISTS ux_interpretation
+  ON interpretations(scope, kind_hint, raw_value, footprint)""",
     """CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)""",
 )
 
@@ -180,6 +198,9 @@ def open_db(path: str | Path | None = None) -> sqlite3.Connection:
             version = 2
         if version == 2:
             _run_in_transaction(conn, _migrate_v2_to_v3_body)
+            version = 3
+        if version == 3:
+            _run_in_transaction(conn, _migrate_v3_to_v4_body)
     else:
         for stmt in _SCHEMA_STATEMENTS:
             conn.execute(stmt)
@@ -308,6 +329,14 @@ def _migrate_v2_to_v3_body(conn: sqlite3.Connection) -> None:
     conn.execute(
         "UPDATE part_audit SET provider='jlcpcb' WHERE provider_ref IS NOT NULL")
     conn.execute("UPDATE meta SET value='3' WHERE key='schema_version'")
+
+
+def _migrate_v3_to_v4_body(conn: sqlite3.Connection) -> None:
+    """v3 → v4: the interpretation cache (purely additive)."""
+    for stmt in _SCHEMA_STATEMENTS:
+        if "interpretations" in stmt or "ux_interpretation" in stmt:
+            conn.execute(stmt)
+    conn.execute("UPDATE meta SET value='4' WHERE key='schema_version'")
 
 
 def _now() -> str:
@@ -735,6 +764,62 @@ def update_verified(
     return cur.rowcount
 
 
+def get_interpretation(
+    conn: sqlite3.Connection, scope: str, kind_hint: str = "",
+    raw_value: str = "", footprint: str = "",
+) -> dict | None:
+    """The cached judgment for an ad-hoc string, or None (never re-judge)."""
+    row = conn.execute(
+        "SELECT * FROM interpretations WHERE scope=? AND kind_hint=? "
+        "AND raw_value=? AND footprint=?",
+        (scope, kind_hint, raw_value, footprint),
+    ).fetchone()
+    if row is None:
+        return None
+    return {
+        "result": json.loads(row["result"]),
+        "source": row["source"],
+        "confidence": row["confidence"],
+        "at": row["at"],
+    }
+
+
+def put_interpretation(
+    conn: sqlite3.Connection, scope: str, result: dict, source: str,
+    kind_hint: str = "", raw_value: str = "", footprint: str = "",
+    confidence: float | None = None,
+) -> bool:
+    """Cache a judgment. Provenance is ordered: a weaker source never
+    overwrites a stronger one (user > llm > deterministic). Returns whether
+    the row was written."""
+    if source not in INTERPRETATION_SOURCES:
+        raise ValueError(f"unknown interpretation source {source!r}")
+    with conn:
+        existing = conn.execute(
+            "SELECT source FROM interpretations WHERE scope=? AND kind_hint=? "
+            "AND raw_value=? AND footprint=?",
+            (scope, kind_hint, raw_value, footprint),
+        ).fetchone()
+        if existing is not None:
+            if (INTERPRETATION_SOURCES.index(source)
+                    < INTERPRETATION_SOURCES.index(existing["source"])):
+                return False
+            conn.execute(
+                "UPDATE interpretations SET result=?, source=?, confidence=?, at=? "
+                "WHERE scope=? AND kind_hint=? AND raw_value=? AND footprint=?",
+                (json.dumps(result, ensure_ascii=False), source, confidence, _now(),
+                 scope, kind_hint, raw_value, footprint),
+            )
+        else:
+            conn.execute(
+                "INSERT INTO interpretations (scope, kind_hint, raw_value, footprint, "
+                "result, source, confidence, at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (scope, kind_hint, raw_value, footprint,
+                 json.dumps(result, ensure_ascii=False), source, confidence, _now()),
+            )
+    return True
+
+
 class PartsDb:
     """The SQLite house-parts store behind the KnowledgeStore contract.
 
@@ -780,3 +865,15 @@ class PartsDb:
                         manufacturer: str | None = None) -> int:
         return update_verified(self.conn, ref, stock, price, when,
                                provider=provider, mpn=mpn, manufacturer=manufacturer)
+
+    def get_interpretation(self, scope: str, kind_hint: str = "",
+                           raw_value: str = "", footprint: str = "") -> dict | None:
+        return get_interpretation(self.conn, scope, kind_hint, raw_value, footprint)
+
+    def put_interpretation(self, scope: str, result: dict, source: str,
+                           kind_hint: str = "", raw_value: str = "",
+                           footprint: str = "",
+                           confidence: float | None = None) -> bool:
+        return put_interpretation(self.conn, scope, result, source,
+                                  kind_hint=kind_hint, raw_value=raw_value,
+                                  footprint=footprint, confidence=confidence)

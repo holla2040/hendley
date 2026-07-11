@@ -26,7 +26,7 @@ def cand(code, stock=1000, price=0.002, package="0603", verified=True, **kw):
 # ---------------------------------------------------------------------------
 
 def test_constraints_reject_unverified_and_wrong_package():
-    valid, rejected = filter_candidates(SPEC, [
+    valid, rejected, unconfirmed = filter_candidates(SPEC, [
         cand("C1"),
         cand("C2", verified=False),
         cand("C3", package="0402"),
@@ -35,12 +35,43 @@ def test_constraints_reject_unverified_and_wrong_package():
     reasons = {c["code"]: c["rejectedBecause"] for c in rejected}
     assert "not live-verified" in reasons["C2"][0]
     assert "'0402' != required '0603'" in reasons["C3"][0]
+    assert unconfirmed == []
 
 
-def test_constraints_keep_unknown_package_with_caveat():
-    valid, rejected = filter_candidates(SPEC, [cand("C1", package=None)])
-    assert rejected == []
-    assert "package unknown" in valid[0]["caveats"][0]
+def test_constraints_unknown_package_is_unconfirmed_not_ranked():
+    valid, rejected, unconfirmed = filter_candidates(SPEC, [cand("C1", package=None)])
+    assert valid == [] and rejected == []
+    assert "no package string" in unconfirmed[0]["fitUnknownBecause"][0]
+
+
+ELECTRO = SpecKey("capacitor", "47u", "C-E-5", "50V")
+ENVELOPE = {"mount": "tht", "maxDiaMm": 10, "maxLenMm": 13}
+
+
+def test_fit_envelope_pass_reject_unconfirmed():
+    valid, rejected, unconfirmed = filter_candidates(ELECTRO, [
+        cand("C_FITS", package="D8xL10mm"),
+        cand("C_FAT", package="SMD,D12.5xL14mm"),
+        cand("C_CHIP", package="0805"),
+        cand("C_MYSTERY", package="RADIAL-TYPE-B"),
+    ], envelope=ENVELOPE)
+    assert [c["code"] for c in valid] == ["C_FITS"]
+    assert "within" in valid[0]["fit"]
+    reasons = {c["code"]: c["rejectedBecause"][0] for c in rejected}
+    assert "12.5mm > max 10mm" in reasons["C_FAT"]
+    assert "cannot land on the C-E-5 footprint" in reasons["C_CHIP"]
+    assert [c["code"] for c in unconfirmed] == ["C_MYSTERY"]
+    assert "no parseable dimensions" in unconfirmed[0]["fitUnknownBecause"][0]
+
+
+def test_fit_without_envelope_everything_nonmatching_is_unconfirmed():
+    valid, rejected, unconfirmed = filter_candidates(ELECTRO, [
+        cand("C_SAME", package="C-E-5"),      # literally the same footprint name
+        cand("C_DIMS", package="D8xL10mm"),   # dims but nothing to check against
+    ], envelope=None)
+    assert [c["code"] for c in valid] == ["C_SAME"]
+    assert [c["code"] for c in unconfirmed] == ["C_DIMS"]
+    assert "no physical envelope" in unconfirmed[0]["fitUnknownBecause"][0]
 
 
 # ---------------------------------------------------------------------------
@@ -170,10 +201,14 @@ def test_queue_discovers_verifies_filters_and_ranks(tmp_path):
     assert top["model"] == "MPN-C_NEW1"  # live identity, not the stale index row
     # discovery queried the mapped category with the exact package AND value
     assert src.discover_queries == [
-        {"category": "resistors", "params": {"package": "0603",
-                                             "resistance": 22000}}]
+        {"category": "resistors", "params": {"resistance": 22000,
+                                             "package": "0603"}}]
     # the decisive parameters ride along for the reviewer
     assert "keyParams" in top
+    # the proposed AVL is the top three, the rest stay visible but unblessed
+    assert entry["proposal"] == entry["candidates"][:3]
+    assert entry["alsoFound"] == entry["candidates"][3:]
+    assert entry["fitUnconfirmed"] == []
 
 
 def test_queue_unmapped_kind_ships_empty_with_note(tmp_path):

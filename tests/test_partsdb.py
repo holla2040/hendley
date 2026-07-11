@@ -38,7 +38,7 @@ def test_open_db_creates_dir_and_schema(tmp_path):
     conn = open_db(path)
     assert path.exists()
     version = conn.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone()[0]
-    assert version == str(SCHEMA_VERSION) == "3"
+    assert version == str(SCHEMA_VERSION) == "4"
     conn.close()
 
 
@@ -280,10 +280,10 @@ def v2_db_path(tmp_path):
     return path
 
 
-def test_migration_v1_chains_to_v3(v1_db_path):
+def test_migration_v1_chains_to_v4(v1_db_path):
     conn = open_db(v1_db_path)
     version = conn.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone()[0]
-    assert version == "3"
+    assert version == "4"
 
     # current=1 rows became the sole rank-1 active choice per spec
     hit = lookup(conn, "resistor", "22k", "0603")
@@ -311,10 +311,10 @@ def test_migration_v1_chains_to_v3(v1_db_path):
     conn.close()
 
 
-def test_migration_v2_to_v3(v2_db_path):
+def test_migration_v2_chains_to_v4(v2_db_path):
     conn = open_db(v2_db_path)
     version = conn.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone()[0]
-    assert version == "3"
+    assert version == "4"
 
     hit = lookup(conn, "resistor", "22k", "0603")
     assert codes(hit) == ["C4190", "C31850"]  # rank order preserved
@@ -376,4 +376,59 @@ def test_failed_migration_rolls_back_to_pristine_v2(v2_db_path, monkeypatch):
     monkeypatch.setattr(partsdb, "_migrate_v2_to_v3_body", real_body)
     conn = open_db(v2_db_path)
     assert codes(lookup(conn, "resistor", "22k", "0603")) == ["C4190", "C31850"]
+    conn.close()
+
+
+# ---------------------------------------------------------------------------
+# interpretation cache (v4)
+# ---------------------------------------------------------------------------
+
+def test_interpretation_cache_roundtrip(db):
+    from hendley.knowledge.partsdb import get_interpretation, put_interpretation
+
+    assert get_interpretation(db, "part", "C", "47u/50V", "C-E-5") is None
+    result = {"spec": {"kind": "capacitor", "value": "47u", "package": "C-E-5",
+                       "qualifier": "50V"},
+              "envelope": {"mount": "tht", "maxDiaMm": 10}}
+    assert put_interpretation(db, "part", result, "llm", kind_hint="C",
+                              raw_value="47u/50V", footprint="C-E-5",
+                              confidence=0.9)
+    hit = get_interpretation(db, "part", "C", "47u/50V", "C-E-5")
+    assert hit["result"] == result and hit["source"] == "llm"
+    assert hit["confidence"] == 0.9 and hit["at"]
+
+
+def test_interpretation_user_beats_llm_never_reverse(db):
+    from hendley.knowledge.partsdb import get_interpretation, put_interpretation
+
+    key = dict(kind_hint="C", raw_value="47u/50V", footprint="C-E-5")
+    put_interpretation(db, "part", {"spec": None, "note": "llm guess"}, "llm", **key)
+    # user overrides llm
+    assert put_interpretation(db, "part", {"spec": None, "note": "user says"},
+                              "user", **key)
+    assert get_interpretation(db, "part", **key)["source"] == "user"
+    # llm can NEVER overwrite the user's answer
+    assert not put_interpretation(db, "part", {"spec": None, "note": "llm again"},
+                                  "llm", **key)
+    hit = get_interpretation(db, "part", **key)
+    assert hit["source"] == "user" and hit["result"]["note"] == "user says"
+
+
+def test_interpretation_bad_source_rejected(db):
+    from hendley.knowledge.partsdb import put_interpretation
+
+    with pytest.raises(ValueError, match="source"):
+        put_interpretation(db, "part", {}, "guess")
+
+
+def test_migration_v3_to_v4_adds_cache(tmp_path, v2_db_path):
+    # a DB opened pre-v4 chains up and gains the interpretations table
+    conn = open_db(v2_db_path)
+    from hendley.knowledge.partsdb import get_interpretation, put_interpretation
+
+    put_interpretation(conn, "footprint", {"envelope": {"maxDiaMm": 10}},
+                       "user", footprint="C-E-5")
+    assert get_interpretation(conn, "footprint",
+                              footprint="C-E-5")["source"] == "user"
+    assert v2_db_path.with_name("v2.db.v2.bak").exists()
     conn.close()

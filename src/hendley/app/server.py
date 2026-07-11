@@ -60,17 +60,35 @@ def _default_bridge(host: str | None):
     return FusionBridge(host=host)
 
 
+def _default_interpreter():
+    from ..ai.claude_cli import ClaudeCLIInterpreter
+
+    return ClaudeCLIInterpreter()
+
+
+CONFIDENCE_THRESHOLD = 0.8
+
+
+def _kind_hint(designator: str) -> str:
+    import re
+
+    m = re.match(r"([A-Za-z]+)", designator or "")
+    return (m.group(1) if m else "").upper()
+
+
 class HendleyApp:
     """The API surface — every method is a thin wrapper over the library."""
 
     def __init__(self, db_path=None, outdir: str | Path = DEFAULT_OUTDIR,
                  fusion_host: str | None = None,
-                 datasource_factory=None, bridge_factory=None):
+                 datasource_factory=None, bridge_factory=None,
+                 interpreter_factory=None):
         self.db_path = db_path
         self.outdir = Path(outdir).expanduser()
         self.fusion_host = fusion_host
         self._datasource_factory = datasource_factory or _default_datasource
         self._bridge_factory = bridge_factory or _default_bridge
+        self._interpreter_factory = interpreter_factory or _default_interpreter
 
     def _store(self) -> PartsDb:
         return PartsDb(self.db_path)
@@ -177,13 +195,88 @@ class HendleyApp:
         except Exception as exc:  # bridge errors are operational, not bugs
             raise ApiError(f"Fusion read failed: {exc}", status=502)
         requirements = requirements_from_design(design, parts, n, placements)
+        uninterpreted = self._interpret_lines(requirements)
         return {
             "requirements": requirements.to_dict(),
+            "uninterpreted": uninterpreted,
             "placements": [
                 {"designator": p.designator, "x": p.x, "y": p.y, "angle": p.angle,
                  "mirror": p.mirror, "populate": p.populate, "footprint": p.footprint}
                 for p in placements],
         }
+
+    def _interpret_lines(self, requirements) -> list[dict]:
+        """Judge every mode-less line: cache first, then the LLM, else the
+        engineer (returned as confirm-card material). Each unique string is
+        judged once, ever; user answers are authoritative."""
+        from ..ai.interpreter import Interpretation
+        from ..domain.model import SpecKey
+
+        store = self._store()
+        interpreter = None
+        interpreter_dead = False
+        out: list[dict] = []
+        for i, line in enumerate(requirements.lines):
+            if line.dnp or line.mode is not None:
+                continue
+            hint = _kind_hint(line.designators[0])
+            raw_value = line.comment or ""
+            footprint = line.footprint or ""
+            cached = store.get_interpretation("part", hint, raw_value, footprint)
+            if cached and (cached["result"] or {}).get("spec"):
+                line.spec = SpecKey.from_dict(cached["result"]["spec"])
+                continue
+            guess = None
+            if not interpreter_dead:
+                if interpreter is None:
+                    interpreter = self._interpreter_factory()
+                ctx = {"designator": line.designators[0], "value": raw_value,
+                       "footprint": footprint}
+                interp = interpreter.interpret_part(ctx)
+                if interp is None:
+                    interpreter_dead = True  # binary missing/broken: stop retrying
+                elif interp.spec and interp.confidence >= CONFIDENCE_THRESHOLD:
+                    line.spec = interp.spec
+                    store.put_interpretation(
+                        "part", interp.to_dict(), "llm", kind_hint=hint,
+                        raw_value=raw_value, footprint=footprint,
+                        confidence=interp.confidence)
+                    if interp.envelope:
+                        store.put_interpretation(
+                            "footprint", {"envelope": interp.envelope}, "llm",
+                            footprint=interp.spec.package,
+                            confidence=interp.confidence)
+                    continue
+                else:
+                    guess = interp
+            out.append({
+                "lineIndex": i,
+                "designators": line.designators,
+                "kindHint": hint,
+                "value": raw_value,
+                "footprint": footprint,
+                "guess": (guess or Interpretation()).to_dict(),
+            })
+        return out
+
+    def api_confirm_spec(self, body: dict) -> dict:
+        """The engineer's one-time answer for an ad-hoc string — authoritative,
+        cached forever, never asked again."""
+        spec = self._spec(body.get("spec") or {})
+        result = {"spec": spec.to_dict()}
+        envelope = body.get("envelope") or {}
+        if envelope:
+            result["envelope"] = envelope
+        store = self._store()
+        store.put_interpretation(
+            "part", result, "user",
+            kind_hint=str(body.get("kindHint") or ""),
+            raw_value=str(body.get("value") or ""),
+            footprint=str(body.get("footprint") or ""))
+        if envelope:
+            store.put_interpretation("footprint", {"envelope": envelope}, "user",
+                                     footprint=spec.package)
+        return result
 
     def api_resolve(self, body: dict) -> dict:
         from ..resolver.orchestration.queue import build_approval_queue
@@ -289,6 +382,7 @@ POST_ROUTES = {
     "/api/remove": "api_remove",
     "/api/refresh": "api_refresh",
     "/api/intake": "api_intake",
+    "/api/confirm-spec": "api_confirm_spec",
     "/api/resolve": "api_resolve",
     "/api/approve": "api_approve",
     "/api/emit": "api_emit",

@@ -73,10 +73,13 @@ def _key_params(parameters: list | None) -> dict:
 
 def _verified_candidates(datasource: DataSource, category: str, spec: SpecKey,
                          exclude: set[str]) -> list[dict]:
-    """Discover by category+package+value, then live-verify every hit (one batch)."""
-    rows = datasource.discover({"category": category,
-                                "params": {"package": spec.package,
-                                           **_value_params(spec)}})
+    """Discover by category+value (+package when comparable), verify in one batch."""
+    from ..constraints.engine import is_chip_package
+
+    params = dict(_value_params(spec))
+    if is_chip_package(spec.package):
+        params["package"] = spec.package  # library-local names never match jlcsearch
+    rows = datasource.discover({"category": category, "params": params})
     codes = [r["code"] for r in rows if r.get("code") and r["code"] not in exclude]
     if not codes:
         return []
@@ -132,14 +135,21 @@ def build_approval_queue(
 
         candidates: list[dict] = []
         rejected: list[dict] = []
+        unconfirmed: list[dict] = []
         discovery: dict = {"category": None, "automatic": False}
         if spec is not None:
             category = KIND_CATEGORIES.get(spec.kind)
             discovery["category"] = category
             if category:
                 discovery["automatic"] = True
+                envelope = None
+                cached = store.get_interpretation("footprint",
+                                                  footprint=spec.package)
+                if cached:
+                    envelope = (cached["result"] or {}).get("envelope")
                 raw = _verified_candidates(datasource, category, spec, avl_refs)
-                valid, rejected = filter_candidates(spec, raw)
+                valid, rejected, unconfirmed = filter_candidates(
+                    spec, raw, envelope=envelope)
                 candidates = rank_candidates(
                     valid, required_qty=required, strategy=strategy,
                     store=store, spec=spec)
@@ -161,6 +171,12 @@ def build_approval_queue(
             "requiredQty": required,
             "avlChoices": esc.get("choices", []),
             "discovery": discovery,
+            # The proposed AVL: rank 1 + two alternates, exactly what one
+            # Approve records. The rest stay visible, promotable only
+            # deliberately — and unknown fit NEVER ranks (it sits apart).
+            "proposal": candidates[:3],
+            "alsoFound": candidates[3:],
+            "fitUnconfirmed": unconfirmed,
             "candidates": candidates,
             "rejectedCandidates": rejected,
         })

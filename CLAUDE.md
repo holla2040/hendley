@@ -37,9 +37,17 @@ concrete `providers/*` or `datasources/jlc` — only the base protocols.
   `Check` + the `CHECKS` severity table (error blocks upload / warning /
   info). Core layers (`domain`, `knowledge`, `resolver`, `requirements`)
   never import concrete providers or `datasources/jlc`.
-- `src/hendley/requirements/normalizer.py` — mechanical Fusion→RequirementsBom
-  mapping (designator grouping, DNP flag, LCSC/MPN pass-through); spec
-  canonicalization stays judgment (agent/app/engineer).
+- `src/hendley/requirements/` — `normalizer.py` (Fusion→RequirementsBom:
+  designator grouping, DNP flag, LCSC/MPN pass-through, and auto-spec for
+  generic R/C/L via `specs.py` — deterministic ONLY for the trivially
+  unambiguous; do NOT grow its regexes: ambiguity belongs to the AI tier).
+- `src/hendley/ai/` — the interpretation tier (ADR-0005): `Interpreter`
+  protocol + `claude_cli.py` (`claude -p`, rides the subscription,
+  `HENDLEY_CLAUDE_BIN` override). Judges ad-hoc values (`47u/50V`) and
+  legacy footprint names (`C-E-5` → physical envelope). Every judgment is
+  cached in the DB (`interpretations`, provenance user > llm >
+  deterministic — user answers are never overwritten or re-asked); failures
+  degrade to one-time confirm cards in the app, never break the flow.
 - `src/hendley/knowledge/partsdb.py` — the house-parts DB (SQLite v3 at
   `~/.hendley/parts.db`, `HENDLEY_DB` to override): House Parts (opaque id +
   spec-tuple index), ranked Part Choices (deliberate rank, `active|removed`),

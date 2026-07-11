@@ -104,9 +104,10 @@ code { font-family:ui-monospace, monospace; font-size:.88em; }
     <button class="act" onclick="intake()">Read open Fusion design</button>
     <button class="act quiet" onclick="runResolve()">Resolve</button>
   </div>
-  <details><summary>Requirements BOM (editable JSON — intake fills it, or paste your own)</summary>
+  <details><summary>Requirements BOM (JSON, for inspection — the tool fills it)</summary>
     <textarea id="q-req" rows="10" placeholder='{"productionQuantity": 1, "lines": [...]}'></textarea>
   </details>
+  <div id="confirms"></div>
   <div id="resolution"></div>
   <div id="queue"></div>
 </section>
@@ -128,7 +129,8 @@ code { font-family:ui-monospace, monospace; font-size:.88em; }
 "use strict";
 const $ = id => document.getElementById(id);
 const S = { requirements: null, placements: null, resolution: null, queue: null,
-            picks: {} };  // picks: entryIndex -> [{code, mpn}] in rank order
+            uninterpreted: [],   // intake lines awaiting a one-time spec confirm
+            proposals: {} };     // entryIndex -> ordered candidate rows (the AVL-to-be)
 
 function msg(text, cls) { const m = $("msg"); m.textContent = text;
   m.className = cls || "dim"; }
@@ -231,15 +233,61 @@ function refreshStock() { run("live refresh", async () => {
 
 /* ---- Resolve (7b) ------------------------------------------------------ */
 
-function intake() { run("reading Fusion", async () => {
+function intake() { run("reading Fusion (interpreting new parts may take a minute)",
+                        async () => {
   const n = parseInt($("q-n").value || "1", 10);
   const data = await api("/api/intake", {productionQuantity: n});
   S.requirements = data.requirements; S.placements = data.placements;
-  $("q-req").value = JSON.stringify(data.requirements, null, 2);
-  $("q-req").closest("details").open = true;
+  S.uninterpreted = data.uninterpreted || [];
+  $("q-req").value = JSON.stringify(S.requirements, null, 2);
+  renderConfirms();
+  const un = S.uninterpreted.length;
   msg(`read '${data.requirements.design || "design"}': ` +
-      `${data.requirements.lines.length} line(s), ${data.placements.length} placement(s)`,
-      "ok");
+      `${data.requirements.lines.length} line(s)` +
+      (un ? ` — ${un} part(s) need a one-time spec confirm below` : " — hit Resolve"),
+      un ? "warn" : "ok");
+}); }
+
+function renderConfirms() {
+  const u = S.uninterpreted;
+  if (!u.length) { $("confirms").innerHTML = ""; return; }
+  $("confirms").innerHTML = `<h2>New parts — confirm the spec once</h2>
+    <p class="dim">These strings weren't confidently interpretable. Your answer
+    is cached forever — this question never repeats for the same part text.</p>` +
+    u.map((x, i) => {
+      const g = (x.guess && x.guess.spec) || {};
+      return `<div class="card"><h3>${esc(x.designators.join(","))} —
+        “${esc(x.value)}” on ${esc(x.footprint || "?")}</h3>
+        ${x.guess && x.guess.rationale ?
+          `<div class="dim">guess: ${esc(x.guess.rationale)}</div>` : ""}
+        <div class="row">
+          <label>kind <input id="cf-kind-${i}" value="${esc(g.kind || "")}"></label>
+          <label>value <input id="cf-value-${i}" value="${esc(g.value || "")}"></label>
+          <label>package <input id="cf-package-${i}"
+            value="${esc(g.package || x.footprint || "")}"></label>
+          <label>qualifier <input id="cf-qual-${i}"
+            value="${esc(g.qualifier || "")}"></label>
+          <button class="act" onclick="confirmSpec(${i})">Confirm</button>
+        </div></div>`;
+    }).join("");
+}
+
+function confirmSpec(i) { run("confirming", async () => {
+  const x = S.uninterpreted[i];
+  const spec = { kind: $(`cf-kind-${i}`).value.trim(),
+                 value: $(`cf-value-${i}`).value.trim(),
+                 package: $(`cf-package-${i}`).value.trim(),
+                 qualifier: $(`cf-qual-${i}`).value.trim() };
+  const envelope = (x.guess && x.guess.envelope) || undefined;
+  const data = await api("/api/confirm-spec", {
+    kindHint: x.kindHint, value: x.value, footprint: x.footprint,
+    spec, envelope });
+  S.requirements.lines[x.lineIndex].spec = data.spec;
+  $("q-req").value = JSON.stringify(S.requirements, null, 2);
+  S.uninterpreted.splice(i, 1);
+  renderConfirms();
+  msg(S.uninterpreted.length ? "confirmed — next one" :
+      "all confirmed — hit Resolve", "ok");
 }); }
 
 function runResolve() { run("resolving", async () => {
@@ -250,7 +298,9 @@ function runResolve() { run("resolving", async () => {
   const data = await api("/api/resolve", {
     requirements: S.requirements, placements: S.placements,
     provider: $("q-provider").value });
-  S.resolution = data.resolution; S.queue = data.queue || null; S.picks = {};
+  S.resolution = data.resolution; S.queue = data.queue || null;
+  S.proposals = {};
+  if (S.queue) S.queue.entries.forEach((e, i) => S.proposals[i] = [...e.proposal]);
   renderResolution(); renderQueue();
   const esc_ = data.resolution.escalations.length;
   msg(esc_ ? `${esc_} escalation(s) — clear the approval queue below` : "all clean",
@@ -281,69 +331,87 @@ function renderResolution() {
 function renderQueue() {
   const q = S.queue;
   if (!q || !q.entries.length) { $("queue").innerHTML = ""; return; }
-  const total = Object.values(S.picks).reduce((n, a) => n + a.length, 0);
   $("queue").innerHTML = `<h2>Approval queue — ${q.entries.length} decision(s)</h2>
-    <p class="dim">Click parts in the order you want them tried: first click =
-    rank 1 (used for this order), later clicks = approved backups. Click again
-    to unpick.</p>` +
+    <p class="dim">Each part comes with a proposed AVL: rank 1 + two alternates,
+    reasons shown. Reorder or swap if you disagree, then Approve — the list as
+    you leave it becomes the approved parts list for this spec, everywhere,
+    from now on.</p>` +
     q.entries.map((e, i) => queueCard(e, i)).join("") +
     `<div class="row"><button class="act" onclick="approveAll()">
-     Record approvals &amp; re-resolve</button>
-     <span class="dim">${total} pick(s)</span></div>`;
+     Approve all &amp; re-resolve</button></div>`;
 }
 
-function pickRank(i, code) {
-  const at = (S.picks[i] || []).findIndex(p => p.code === code);
-  return at < 0 ? null : at + 1;
+function candRow(c, controls) {
+  const params = Object.values(c.keyParams || {}).map(esc).join(" · ");
+  return `<td>${controls}</td>
+    <td><code>${esc(c.code)}</code></td><td>${esc(c.model || "")}</td>
+    <td>${params}</td>
+    <td>${c.liveStock ?? "—"}</td><td>${c.unitPrice1 ?? "—"}</td>
+    <td>${esc(c.libraryType || "")}</td>
+    <td class="why">${(c.why || c.fitUnknownBecause || []).map(esc).join("<br>")}</td>`;
 }
+
+const CAND_HEAD = `<tr><th></th><th>code</th><th>mpn</th><th>specs</th>
+  <th>stock</th><th>unit $</th><th>class</th><th>why</th></tr>`;
 
 function queueCard(e, i) {
   const spec = e.spec ? `${e.spec.kind} ${e.spec.value} ${e.spec.package}` : (e.ref || e.mpn || "?");
-  const avl = e.avlChoices.length ? `<div class="dim">AVL: ` + e.avlChoices.map(c =>
+  const avl = e.avlChoices.length ? `<div class="dim">current AVL: ` + e.avlChoices.map(c =>
     `rank-${c.rank ?? "—"} ${esc(c.ref || c.mpn || "?")} (stock ${c.liveStock})`)
     .join(" · ") + `</div>` : "";
-  const cands = e.candidates.length ? `<table><tr><th>pick</th><th>code</th><th>mpn</th>
-    <th>specs</th><th>stock</th><th>unit $</th><th>class</th><th>score</th><th>why</th></tr>` +
-    e.candidates.map(c => {
-      const rank = pickRank(i, c.code);
-      const params = Object.values(c.keyParams || {}).map(esc).join(" · ");
-      return `<tr>
-      <td><button class="act small${rank ? "" : " quiet"}" onclick='togglePick(${i},
-        ${JSON.stringify(c.code)}, ${JSON.stringify(c.model || "")})'>${
-        rank ? "rank " + rank : "pick"}</button></td>
-      <td><code>${esc(c.code)}</code></td><td>${esc(c.model || "")}</td>
-      <td>${params}</td>
-      <td>${c.liveStock ?? "—"}</td><td>${c.unitPrice1 ?? "—"}</td>
-      <td>${esc(c.libraryType || "")}</td><td>${c.score}</td>
-      <td class="why">${(c.why || []).map(esc).join("<br>")}</td></tr>`;
-    }).join("")
-    + `</table>` :
-    `<p class="dim">${esc(e.discovery.note || "no candidates found")}</p>`;
+  const prop = S.proposals[i] || [];
+  const proposal = prop.length ? `<table>${CAND_HEAD}` +
+    prop.map((c, r) => `<tr>${candRow(c,
+      `<b>rank ${r + 1}</b>
+       ${r > 0 ? `<button class="act quiet small" onclick="moveUp(${i},${r})">↑</button>` : ""}
+       <button class="act quiet small" onclick="dropRow(${i},${r})">✕</button>`
+    )}</tr>`).join("") + `</table>` :
+    `<p class="dim">${esc(e.discovery.note || "no fit-confirmed candidates — " +
+      "promote one from below, or search manually")}</p>`;
+  const extra = (title, rows, cls) => rows.length ?
+    `<details><summary>${title} (${rows.length})</summary><table>${CAND_HEAD}` +
+    rows.map(c => `<tr class="${cls}">${candRow(c,
+      `<button class="act quiet small" onclick='promote(${i},
+        ${JSON.stringify(c.code)})'>add</button>`)}</tr>`).join("") +
+    `</table></details>` : "";
   return `<div class="card"><h3>${esc(e.designators.join(","))} — ${esc(spec)}
     <span class="badge err">${esc(e.reason)}</span>
-    <span class="dim">need ${e.requiredQty}</span></h3>${avl}${cands}</div>`;
+    <span class="dim">need ${e.requiredQty}</span></h3>${avl}
+    <div><b>Proposed AVL</b> — approve as-is or reorder:</div>${proposal}
+    ${extra("also found (fit OK, ranked lower)", e.alsoFound, "")}
+    ${extra("⚠ fit unconfirmed — check dimensions before promoting",
+            e.fitUnconfirmed, "dim")}</div>`;
 }
 
-function togglePick(i, code, mpn) {
-  const arr = (S.picks[i] = S.picks[i] || []);
-  const at = arr.findIndex(p => p.code === code);
-  if (at >= 0) arr.splice(at, 1); else arr.push({code, mpn});
+function moveUp(i, r) {
+  const p = S.proposals[i];
+  [p[r - 1], p[r]] = [p[r], p[r - 1]];
+  renderQueue();
+}
+
+function dropRow(i, r) { S.proposals[i].splice(r, 1); renderQueue(); }
+
+function promote(i, code) {
+  const e = S.queue.entries[i];
+  const all = [...e.candidates, ...e.alsoFound, ...e.fitUnconfirmed];
+  const c = all.find(x => x.code === code);
+  if (c && !S.proposals[i].some(x => x.code === code)) S.proposals[i].push(c);
   renderQueue();
 }
 
 function approveAll() { run("recording approvals", async () => {
   const approvals = [];
-  for (const [i, arr] of Object.entries(S.picks)) {
+  for (const [i, rows] of Object.entries(S.proposals)) {
     const e = S.queue.entries[i];
-    arr.forEach((p, idx) => approvals.push({
-      spec: e.spec, lcsc: p.code, mpn: p.mpn || undefined, rank: idx + 1,
+    rows.forEach((c, idx) => approvals.push({
+      spec: e.spec, lcsc: c.code, mpn: c.model || undefined, rank: idx + 1,
       design: S.resolution.design || undefined,
-      note: `approval queue pick (${e.reason}), rank ${idx + 1}`,
+      note: `approved AVL rank ${idx + 1} (queue: ${e.reason})`,
     }));
   }
-  if (!approvals.length) throw new Error("nothing picked");
+  if (!approvals.length) throw new Error("no proposal rows to approve");
   await api("/api/approve", {approvals});
-  msg(`recorded ${approvals.length} pick(s) — re-resolving`, "ok");
+  msg(`recorded ${approvals.length} choice(s) — re-resolving`, "ok");
   await runResolve(); loadParts();
 }); }
 

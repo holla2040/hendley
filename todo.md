@@ -4,21 +4,14 @@
 `docs/adr/` yet. The formally open items also live in
 `docs/architecture.md` §14 — this file is the scratchpad in front of that.)
 
-## Approval queue must be value-aware (no manual typing)
+## ~~Approval queue must be value-aware (no manual typing)~~ — DONE
 
-Found live with R10 (82k 0402, 2026-07-11): an escalated resistor's queue
-entry discovered candidates by **package only**, so the list was
-mixed-value junk — and the workaround was typing the part into the record
-form by hand. Wrong workflow; the queue should have been one click.
-
-- Include the value in discovery for kinds where jlcsearch has a dense
-  param (`resistance`, `capacitance`) — the spec's canonical value needs
-  converting to the param's unit (e.g. `82k` → `82000`).
-- Show the decisive parameters (resistance/tolerance/package) in the
-  queue's candidate table so a pick is judgeable at a glance.
-- Goal: escalation → queue → radio button → Record approvals. Manual
-  `db record` / the form is for deliberate curation only, never the happy
-  path.
+Resolved 2026-07-11: discovery filters by value (ohms/farads), decisive
+parameters shown, and the queue now proposes a reorderable 3-row AVL
+(rank 1 + 2 alternates) recorded in one Approve. Ad-hoc value strings and
+legacy footprint names are interpreted by the LLM tier (`claude -p`),
+cached with provenance, with one-time confirm cards as fallback and fit as
+a hard constraint — see `docs/adr/0005-llm-interpretation.md`.
 
 ## Shared House Parts database (not local)
 

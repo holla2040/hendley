@@ -79,6 +79,10 @@ class FakeBridge:
         return {}
 
 
+def _no_interpreter():
+    raise AssertionError("interpreter must not be consulted in this test")
+
+
 @pytest.fixture
 def client(tmp_path):
     source = FakeSource(
@@ -87,7 +91,8 @@ def client(tmp_path):
                      "jlcsearch_stock": 5, "price1": 0.001}])
     app = HendleyApp(db_path=tmp_path / "parts.db", outdir=tmp_path / "out",
                      datasource_factory=lambda: source,
-                     bridge_factory=lambda host: FakeBridge())
+                     bridge_factory=lambda host: FakeBridge(),
+                     interpreter_factory=_no_interpreter)
     server = ThreadingHTTPServer(("127.0.0.1", 0), make_handler(app))
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -220,3 +225,123 @@ def test_unknown_routes_and_bad_json(client):
     resolved = client("/api/resolve", {"requirements": {"productionQuantity": 0,
                                                         "lines": []}}, expect=400)
     assert "requirements" in resolved["error"]
+
+
+# ---------------------------------------------------------------------------
+# interpretation: cache → LLM → confirm card (the C7 story)
+# ---------------------------------------------------------------------------
+
+class MysteryBridge(FakeBridge):
+    """FakeBridge plus C7: '47u/50V' on the C-E-5 electrolytic footprint."""
+
+    def read_all(self, entity_type, obj=None, page=1000):
+        if entity_type == "electronics.Part":
+            return super().read_all(entity_type, obj) + [
+                {"object_id": 12, "name": "C7", "value": "47u/50V",
+                 "device_object_id": 102}]
+        if entity_type == "electronics.Device":
+            return super().read_all(entity_type, obj) + [
+                {"object_id": 102, "package_object_id": 470}]
+        if entity_type == "electronics.Attribute":
+            [flt] = obj["filters"]
+            if flt["value"] == 12:
+                return []
+        if entity_type == "electronics.Element":
+            return super().read_all(entity_type, obj) + [
+                {"object_id": 32, "name": "C7", "x": 9.0, "y": 9.0, "angle": 0,
+                 "mirror": 0, "populate": 1, "package_object_id": 52}]
+        if entity_type == "electronics.Package":
+            return super().read_all(entity_type, obj) + [
+                {"object_id": 52, "name": "C-E-5"}]
+        return super().read_all(entity_type, obj)
+
+
+class CountingInterpreter:
+    name = "fake-llm"
+
+    def __init__(self, confidence=0.9):
+        self.calls = 0
+        self.confidence = confidence
+
+    def interpret_part(self, ctx):
+        from hendley.ai.interpreter import Interpretation
+        from hendley.domain.model import SpecKey
+
+        self.calls += 1
+        assert ctx["value"] == "47u/50V" and ctx["footprint"] == "C-E-5"
+        return Interpretation(
+            spec=SpecKey("capacitor", "47u", "C-E-5", "50V"),
+            envelope={"mount": "tht", "maxDiaMm": 10, "leadSpacingMm": 5},
+            confidence=self.confidence,
+            rationale="electrolytic, 5mm lead spacing")
+
+
+def _mystery_app(tmp_path, interp):
+    app = HendleyApp(db_path=tmp_path / "parts.db", outdir=tmp_path / "out",
+                     datasource_factory=lambda: FakeSource({}),
+                     bridge_factory=lambda host: MysteryBridge(),
+                     interpreter_factory=lambda: interp)
+    server = ThreadingHTTPServer(("127.0.0.1", 0), make_handler(app))
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    base = f"http://127.0.0.1:{server.server_port}"
+
+    def call(path, body=None, expect=200):
+        req = urllib.request.Request(
+            base + path,
+            data=None if body is None else json.dumps(body).encode(),
+            headers={"Content-Type": "application/json"} if body is not None else {})
+        try:
+            with urllib.request.urlopen(req) as res:
+                assert res.status == expect
+                return json.loads(res.read())
+        except urllib.error.HTTPError as err:
+            assert err.code == expect
+            return json.loads(err.read())
+    return call, server
+
+
+def test_llm_interprets_and_caches_once(tmp_path):
+    interp = CountingInterpreter(confidence=0.9)
+    call, server = _mystery_app(tmp_path, interp)
+    try:
+        data = call("/api/intake", {"productionQuantity": 5})
+        assert data["uninterpreted"] == []
+        c7 = next(ln for ln in data["requirements"]["lines"]
+                  if "C7" in ln["designators"])
+        assert c7["spec"] == {"kind": "capacitor", "value": "47u",
+                              "package": "C-E-5", "qualifier": "50V"}
+        assert interp.calls == 1
+        # second intake: cache hit, the LLM is never asked again
+        call("/api/intake", {"productionQuantity": 5})
+        assert interp.calls == 1
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_low_confidence_becomes_confirm_card_then_user_answer_sticks(tmp_path):
+    interp = CountingInterpreter(confidence=0.4)  # honest doubt
+    call, server = _mystery_app(tmp_path, interp)
+    try:
+        data = call("/api/intake", {"productionQuantity": 5})
+        [card] = data["uninterpreted"]
+        assert card["designators"] == ["C7"] and card["value"] == "47u/50V"
+        assert card["guess"]["spec"]["kind"] == "capacitor"  # prefill offered
+        # the engineer confirms (correcting the qualifier)
+        confirmed = call("/api/confirm-spec", {
+            "kindHint": card["kindHint"], "value": card["value"],
+            "footprint": card["footprint"],
+            "spec": {"kind": "capacitor", "value": "47u", "package": "C-E-5",
+                     "qualifier": "50V low-ESR"},
+            "envelope": card["guess"]["envelope"]})
+        assert confirmed["spec"]["qualifier"] == "50V low-ESR"
+        # from now on the cache answers; the LLM is not consulted again
+        before = interp.calls
+        data = call("/api/intake", {"productionQuantity": 5})
+        assert data["uninterpreted"] == [] and interp.calls == before
+        c7 = next(ln for ln in data["requirements"]["lines"]
+                  if "C7" in ln["designators"])
+        assert c7["spec"]["qualifier"] == "50V low-ESR"
+    finally:
+        server.shutdown()
+        server.server_close()
