@@ -230,6 +230,22 @@ def test_explore_filters_to_the_agent_judged_package(tmp_path):
     assert judge.calls == 1
 
 
+def test_explore_explicit_package_skips_the_judgment(tmp_path):
+    # a spec line's package is already agent-normalized — no interpreter call
+    def no_interpreter():
+        raise AssertionError("interpreter must not be consulted")
+
+    app = HendleyApp(db_path=tmp_path / "parts.db",
+                     datasource_factory=lambda: _PackageSource(
+                         {"C_0603": "0603", "C_0805": "0805"}),
+                     interpreter_factory=no_interpreter,
+                     draft_path=tmp_path / "draft.json",
+                     cache_path=tmp_path / "cache.json")
+    got = app.api_explore({"search": "100n", "package": "0603"})
+    assert got["package"] == "0603"
+    assert len(got["candidates"]) == 2   # all returned; the page splits
+
+
 def test_explore_low_confidence_judgment_means_no_filter(tmp_path):
     judge = _FootprintJudge(confidence=0.4)
     app = HendleyApp(db_path=tmp_path / "parts.db",

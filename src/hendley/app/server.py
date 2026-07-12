@@ -400,8 +400,12 @@ class HendleyApp:
         search = str(body.get("search") or "").strip()
         if not search:
             raise ApiError("'search' is required")
+        # an explicit package (a spec's agent-normalized one) wins; otherwise
+        # judge the footprint (pinned parts)
+        package = str(body.get("package") or "").strip() or None
         footprint = str(body.get("footprint") or "").strip()
-        package = self._judged_package(footprint) if footprint else None
+        if package is None and footprint:
+            package = self._judged_package(footprint)
         # everything verified returns; the page splits by package/coverage so
         # nothing filtered is ever unreachable
         return {"search": search,

@@ -148,7 +148,9 @@ details.unconf > summary:hover { color:var(--pad); }
 input[type=radio], input[type=checkbox] { accent-color:var(--pad);
   width:16px; height:16px; cursor:pointer; }
 td.pick { padding-right:4px; }
-.update-row { display:flex; justify-content:flex-end; margin:10px 0 0; }
+.update-row { display:flex; justify-content:flex-end; align-items:center;
+              gap:8px; margin:10px 0 0; }
+.update-left { margin-right:auto; margin-left:0; }
 a { color:var(--pad); }
 .form { display:flex; gap:10px; align-items:end; margin-top:6px; }
 .form label { display:flex; flex-direction:column; gap:4px; font:11px var(--mono);
@@ -741,7 +743,8 @@ function pinnedBody(i) {
 }
 
 function exploreResultsHtml(i, l) {
-  const key = lineKey(S.requirements.lines[i]);
+  const rl = S.requirements.lines[i];
+  const key = lineKey(rl);
   const r = S.exploreResults[key];
   if (!r) return "";
   const need = l.requiredQty;
@@ -751,6 +754,7 @@ function exploreResultsHtml(i, l) {
   const exploreRow = (c, radio) => partRow({
     radio: radio, checked: effRadio(i) === c.code, code: c.code, mpn: c.model,
     maker: c.manufacturer, pkg: c.package, cls: c.libraryType,
+    check: rl.spec ? {show: true, on: effCheck(i, c.code)} : undefined,
     stock: c.liveStock, stockCls: covers(c) ? "ok-num" : "short-num",
     need: need, unit: c.unitPrice1, why: ""});
 
@@ -829,9 +833,26 @@ function specBody(i) {
           stock: stock, stockCls: canPick ? "" : "short-num",
           need: need, unit: c.lastPrice, why: ""});
       }).join("");
-    return updateBtnHtml(i) +
+    // the search stays reachable after picks are saved: search more
+    // alternates any time, results committed by the same Update button
+    const lk = lineKey(rl);
+    const searchBtn = S.exploring[lk] ? "" :
+      '<button class="btn mini update-left" id="green-explore">' +
+      "search alternates</button>";
+    let explore = "";
+    if (S.exploring[lk]) {
+      const seed = S.searches[lk] ||
+        [rl.spec.qualifier, rl.spec.value].filter(Boolean).join(" ");
+      explore = '<div class="sect"><div class="form">' +
+        '<label>search in-stock parts <input id="sf-explore" value="' +
+        esc(seed) + '"></label>' +
+        '<button class="btn solid" id="explore-search" data-line="' + i +
+        '">Search</button></div></div>' + exploreResultsHtml(i, l);
+    }
+    return updateBtnHtml(i, searchBtn) +
       '<div class="sect"><div class="tablewrap"><table>' +
-      PART_TABLE_HEAD + rows + "</table></div>" + checksHtml(l) + "</div>";
+      PART_TABLE_HEAD + rows + "</table></div>" + checksHtml(l) + "</div>" +
+      explore;
   }
   // red: approved-but-short rows first (no radio), then verified alternates;
   // maker/price for the short rows come from the AVL cache once fetched
@@ -922,9 +943,10 @@ function specBody(i) {
 
 /* the acknowledgement: staged selections write to the database (or the
    order draft) only when this button is pressed */
-function updateBtnHtml(i) {
+function updateBtnHtml(i, left) {
   const dirty = stagedDirty(i);
-  return '<div class="update-row"><button class="btn solid" id="update-btn" ' +
+  return '<div class="update-row">' + (left || "") +
+    '<button class="btn solid" id="update-btn" ' +
     'data-line="' + i + '"' +
     (dirty ? "" : ' aria-disabled="true" title="no changes to save"') +
     ">Update</button></div>";
@@ -1068,6 +1090,11 @@ function wireMain() {
     const input = $("sf-explore");
     if (input) input.onkeydown = ev => { if (ev.key === "Enter") fire(); };
   }
+  const ge = $("green-explore");
+  if (ge) ge.onclick = () => {
+    S.exploring[lineKey(S.requirements.lines[S.selected])] = true;
+    render();
+  };
   if (S.selected != null) ensureAvl(S.selected);
 }
 
@@ -1092,11 +1119,16 @@ async function doExploreSearch(i) { await run(
   "searching (judging a new footprint can take a few seconds)", async () => {
   const t = $("sf-explore").value.trim();
   if (!t) throw new Error("enter search terms first");
-  const key = lineKey(S.requirements.lines[i]);
+  const rl = S.requirements.lines[i];
+  const key = lineKey(rl);
   S.searches[key] = t;
   saveDraft();
   const d = await api("/api/explore", {
-    search: t, footprint: S.resolution.lines[i].footprint || undefined});
+    search: t,
+    // a spec line's package is already agent-normalized — no judgment call
+    package: rl.spec ? rl.spec.package : undefined,
+    footprint: rl.spec ? undefined
+      : (S.resolution.lines[i].footprint || undefined)});
   S.exploreResults[key] = d;
   render();
   const n = (d.candidates || []).length;

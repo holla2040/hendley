@@ -499,6 +499,21 @@ def _find_active_choice(
     ).fetchone()
 
 
+def _conflicting_ref(conn: sqlite3.Connection, choice_id: int,
+                     refs: dict[str, str]) -> bool:
+    """True when the choice already carries a DIFFERENT ref for any provider
+    being recorded — same MPN, different catalog part."""
+    for provider, ref in refs.items():
+        row = conn.execute(
+            "SELECT provider_ref FROM choice_provider_ids "
+            "WHERE choice_id=? AND provider=?",
+            (choice_id, provider),
+        ).fetchone()
+        if row is not None and row["provider_ref"] != ref:
+            return True
+    return False
+
+
 def _require_active_choice(
     conn: sqlite3.Connection, house_part_id: int, ref: str
 ) -> sqlite3.Row:
@@ -583,11 +598,21 @@ def record(
         else:
             house_id = house["id"]
 
+        # Identity: a provider ref decides first. An MPN match alone is NOT
+        # the same part when the matched row carries a CONFLICTING ref for a
+        # provider we're recording — different manufacturers publish the
+        # same MPN (e.g. 1N4148WS), and collapsing them overwrites one
+        # catalog part with another. A ref-less MPN row still matches, so a
+        # later-arriving ref backfills rather than duplicates.
         existing = None
-        for ident in ([mpn] if mpn else []) + list(refs.values()):
-            existing = _find_active_choice(conn, house_id, ident)
-            if existing is not None:
-                break
+        for ident in list(refs.values()) + ([mpn] if mpn else []):
+            cand = _find_active_choice(conn, house_id, ident)
+            if cand is None:
+                continue
+            if refs and _conflicting_ref(conn, cand["id"], refs):
+                continue
+            existing = cand
+            break
         n_active = len(_active_choices(conn, house_id))
 
         audit_provider, audit_ref = (

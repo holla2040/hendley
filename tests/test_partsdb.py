@@ -432,3 +432,33 @@ def test_migration_v3_to_v4_adds_cache(tmp_path, v2_db_path):
                               footprint="C-E-5")["source"] == "user"
     assert v2_db_path.with_name("v2.db.v2.bak").exists()
     conn.close()
+
+
+def test_same_mpn_different_codes_are_distinct_choices(db):
+    """Different manufacturers publish the SAME MPN (e.g. 1N4148WS): a bare
+    MPN match must never collapse two catalog parts onto one row — that
+    overwrote the first pick's LCSC code (the checkbox-Update bug)."""
+    record(db, "diode", "1N4148WS", "SOD-323", lcsc="C5249630",
+           mpn="1N4148WS", rank=1)
+    record(db, "diode", "1N4148WS", "SOD-323", lcsc="C437156",
+           mpn="1N4148WS", rank=999)
+    record(db, "diode", "1N4148WS", "SOD-323", lcsc="C909968",
+           mpn="1N4148WS", rank=999)
+    hit = lookup(db, "diode", "1N4148WS", "SOD-323")
+    assert codes(hit) == ["C5249630", "C437156", "C909968"]
+    assert [c["rank"] for c in hit["choices"]] == [1, 2, 3]
+
+    # re-recording the SAME code is still a move, never a duplicate
+    record(db, "diode", "1N4148WS", "SOD-323", lcsc="C909968",
+           mpn="1N4148WS", rank=1)
+    hit = lookup(db, "diode", "1N4148WS", "SOD-323")
+    assert codes(hit) == ["C909968", "C5249630", "C437156"]
+
+
+def test_mpn_only_row_still_backfills_a_late_ref(db):
+    record(db, "diode", "1N4148WS", "SOD-323", mpn="1N4148WS", rank=1)
+    record(db, "diode", "1N4148WS", "SOD-323", lcsc="C5249630",
+           mpn="1N4148WS", rank=1)
+    hit = lookup(db, "diode", "1N4148WS", "SOD-323")
+    assert codes(hit) == ["C5249630"]   # one row, ref backfilled
+    assert len(hit["choices"]) == 1
