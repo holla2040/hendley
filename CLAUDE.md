@@ -33,14 +33,17 @@ concrete `providers/*` or `datasources/jlc` — only the base protocols.
   components colored by stock state (green covers / red short / amber needs a
   spec search / dashed DNP); click a component → detail panel (one table:
   the radio picks what mounts — order-only when overriding an approved
-  part, AVL rank 1 on a new spec's first pick — and a **backup checkbox
+  part, AVL rank 1 on a new spec's first pick — and an **alt checkbox
   column** grows/prunes the spec's ranked AVL; radio+checkbox changes STAGE
-  and commit only via the panel's **Update** button, both undoable in
-  place); searches are human-fired (ADR-0006: seeded from the spec, sent
-  verbatim; auto-discovery only where deterministic) and results split into
-  package-confirmed / other-packages / can't-cover buckets;
-  schematic-pinned parts get "explore alternates" (`/api/explore`,
-  order-only picks); Placement section edits `data/cpl-rotations.json`;
+  and commit only via **Update** on the title line, both undoable in
+  place; opening a panel live-verifies its whole list, `????` when live
+  access is down — never stale-as-current); searches are human-fired
+  (ADR-0006: seeded from the spec, sent verbatim; auto-discovery only where
+  deterministic) and results split into package-confirmed /
+  other-packages / can't-cover buckets; **Search Alternates** (beside
+  Update) reopens the search on saved parts and serves schematic-pinned
+  parts (`/api/explore`, order-only picks); Placement section edits
+  `data/cpl-rotations.json`;
   Export BOM/CPL in the title bar stays disabled until all rows are green
   (Chromium: standard folder picker for the copies). Page load repopulates
   from the last read (`~/.hendley/design-cache.json`) with all corrections
@@ -73,7 +76,10 @@ concrete `providers/*` or `datasources/jlc` — only the base protocols.
   spec-tuple index), ranked Part Choices (deliberate rank, `active|removed`),
   `choice_provider_ids` (provider-neutral identity: mpn/manufacturer preferred,
   LCSC code is the `jlcpcb` ref; per-provider advisory stock/price cache —
-  NEVER order against it), append-only audit trail. Migrations chain
+  NEVER order against it), append-only audit trail. **Choice identity: the
+  provider ref decides first; a bare-MPN match is rejected when the row
+  carries a conflicting ref** — different manufacturers publish the same MPN
+  (e.g. 1N4148WS), and collapsing them once overwrote a recorded pick. Migrations chain
   v1→v2→v3 on open, one transaction each, file backup (`.v<N>.bak`) first.
   `PartsDb` class = the KnowledgeStore contract.
 - `src/hendley/resolver/` — provider-independent core:

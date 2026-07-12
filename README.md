@@ -248,23 +248,29 @@ same library the CLI uses:
   (linked to its product page), stock/need, unit and order cost, JLC
   Basic/Extended class — with the per-board parts cost on the title line.
 - **Click a component** for its detail panel: one table, radio column on the
-  left. **The checked radio is what mounts for this order.** Your part leads
-  the table (no radio when it can't cover the order); live-verified
+  left. **The selected radio is what mounts for this order.** Your part
+  leads the table (no radio when it can't cover the order); live-verified
   alternates follow with manufacturer, package, class, and a `why` column
   carrying only judgments the other columns don't (prior approvals,
-  shortfall warnings). Sort by stock or price from the headers.
+  shortfall warnings). Sort by stock, price, or class from the headers.
+  Opening a panel **live-verifies its whole list in one batched call** —
+  every number is current as of that click; when live access is down the
+  cells say `????` rather than dressing cached values as current.
 - **Pick semantics**: the *first* pick for a spec with nothing approved is
   the choosing — recorded permanently as the AVL rank 1 ("picked in the
   app", with a **stop using this part** undo). A pick that *overrides* an
   existing approved part is **this order only** ("undo — use the automatic
   pick"); the preferred part returns when its stock does.
-- **Backups grow the list**: a **backup checkbox column** marks alternates
-  for the spec's ranked list (ranks 2, 3, … — the next design with the same
+- **Alternates grow the list**: the **alt checkbox column** marks parts for
+  the spec's ranked list (ranks 2, 3, … — the next design with the same
   part gets the preferred pick *and* its alternates straight from the
   database, no search, and silent substitution covers a short rank 1).
-  Saved backups render pre-checked; unchecking prunes the list, audited.
+  Saved alternates render pre-checked; unchecking prunes the list, audited.
   **Nothing saves on click** — radio and checkbox selections stage until
-  the panel's **Update** button commits them in one act.
+  the **Update** button (on the part-title line, beside **Search
+  Alternates**) commits them in one act. Search Alternates reopens the
+  seeded search on any saved part, so the list can grow later without
+  undoing anything.
 - **Searches are yours**: discovery auto-runs only where the query is
   deterministic (R/C value params, chip packages). Everything else shows a
   search box seeded from the spec — *you* fire it, verbatim, and results
@@ -272,8 +278,8 @@ same library the CLI uses:
   footprint to its catalog package — `C-0603` → `0603` — cached forever),
   with "N other packages" and "M can't cover the order" expandable below.
 - **Schematic-pinned parts** (an `LCSC` attribute) are verified as-is, with
-  an **explore alternates** button for order-only substitutes; an MPN-only
-  attribute is called out honestly (JLC can't verify by MPN).
+  the same **Search Alternates** button for order-only substitutes; an
+  MPN-only attribute is called out honestly (JLC can't verify by MPN).
 - **Placement (CPL)** in each panel edits `data/cpl-rotations.json` — set a
   rotation correction once (keyed by footprint/LCSC, never designator) and
   every later export applies it.
@@ -437,7 +443,7 @@ It deliberately **does not rank or pick** — it gathers and verifies; you (or
 Claude) weigh inventory vs. price vs. spec margin vs. package. It does not
 perform the full PRD ranking and approval workflow.
 
-The app's red-panel search and the **explore alternates** button are the
+The app's red-panel search and the **Search Alternates** button are the
 interactive form of the same two steps — discovery plus one batched live
 verify — with the same division of labor: the search string is yours,
 fired verbatim; judgment (normalizing footprint names, weighing candidates)

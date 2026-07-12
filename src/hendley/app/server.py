@@ -8,7 +8,9 @@ Endpoints (all JSON):
 
 - ``GET  /``                      — the app page
 - ``GET  /api/parts[?kind=]``     — House Parts with ranked choices
-- ``GET  /api/part?kind&value&package[&qualifier]`` — one part + audit history
+- ``GET  /api/part?kind&value&package[&qualifier][&verify=1]`` — one part +
+  audit history; ``verify=1`` live-verifies every choice first (the panel
+  shows NOW; choices flag ``stockUnknown`` when live access is down)
 - ``POST /api/record``            — approve a Part Choice (deliberate rank)
 - ``POST /api/rerank``            — move a choice on its AVL
 - ``POST /api/remove``            — remove a choice (state change)
