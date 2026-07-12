@@ -258,6 +258,13 @@ same library the CLI uses:
   app", with a **stop using this part** undo). A pick that *overrides* an
   existing approved part is **this order only** ("undo — use the automatic
   pick"); the preferred part returns when its stock does.
+- **Backups grow the list**: a **backup checkbox column** marks alternates
+  for the spec's ranked list (ranks 2, 3, … — the next design with the same
+  part gets the preferred pick *and* its alternates straight from the
+  database, no search, and silent substitution covers a short rank 1).
+  Saved backups render pre-checked; unchecking prunes the list, audited.
+  **Nothing saves on click** — radio and checkbox selections stage until
+  the panel's **Update** button commits them in one act.
 - **Searches are yours**: discovery auto-runs only where the query is
   deterministic (R/C value params, chip packages). Everything else shows a
   search box seeded from the spec — *you* fire it, verbatim, and results

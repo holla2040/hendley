@@ -135,9 +135,37 @@ class HendleyApp:
         return {"parts": self._store().list_parts(kind=params.get("kind") or None)}
 
     def api_part(self, params: dict) -> dict:
+        """One part + audit history. ``verify=1`` live-verifies every choice
+        first (one batched call) — the panel shows current stock, not the
+        advisory cache; degrades to the cache when live access is down."""
         spec = self._spec(params)
         store = self._store()
-        return {"housePart": store.lookup(spec), "history": store.history(spec)}
+        house = store.lookup(spec)
+        if house and params.get("verify"):
+            from ..resolver.orchestration.resolve import _tier_price_at
+
+            codes = sorted({c["providerRefs"].get("jlcpcb")
+                            for c in house["choices"]
+                            if c["providerRefs"].get("jlcpcb")})
+            if codes:
+                try:
+                    facts = self._datasource_factory().verify(codes)
+                except ApiError:
+                    # live access is down: cached numbers would masquerade
+                    # as current — the honest answer is "unknown"
+                    house = dict(house)
+                    house["choices"] = [
+                        {**c, "lastStock": None, "lastPrice": None,
+                         "stockUnknown": True} for c in house["choices"]]
+                else:
+                    for code in codes:
+                        fact = facts.get(code)
+                        if fact is not None and fact.found:
+                            store.update_verified(
+                                code, fact.stock, _tier_price_at(fact, 1),
+                                mpn=fact.mpn, manufacturer=fact.manufacturer)
+                    house = store.lookup(spec)
+        return {"housePart": house, "history": store.history(spec)}
 
     def api_record(self, body: dict) -> dict:
         spec = self._spec(body.get("spec") or body)

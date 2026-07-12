@@ -242,6 +242,39 @@ def test_explore_low_confidence_judgment_means_no_filter(tmp_path):
     assert got["package"] is None and len(got["candidates"]) == 2
 
 
+def test_part_verify_refreshes_live_stock(tmp_path):
+    from test_app import FakeSource
+
+    app = HendleyApp(db_path=tmp_path / "parts.db",
+                     datasource_factory=lambda: FakeSource({"C1": 777}),
+                     draft_path=tmp_path / "draft.json",
+                     cache_path=tmp_path / "cache.json")
+    spec = {"kind": "resistor", "value": "1k", "package": "0603",
+            "qualifier": ""}
+    app.api_record({"spec": spec, "lcsc": "C1"})
+    cached = app.api_part(dict(spec))["housePart"]
+    assert cached["choices"][0]["lastStock"] is None   # advisory cache empty
+    live = app.api_part({**spec, "verify": "1"})["housePart"]
+    assert live["choices"][0]["lastStock"] == 777      # verified NOW
+
+
+def test_part_verify_down_says_unknown_not_stale(tmp_path):
+    def no_live():
+        raise ApiError("live JLC access needs credentials", status=503)
+
+    app = HendleyApp(db_path=tmp_path / "parts.db",
+                     datasource_factory=no_live,
+                     draft_path=tmp_path / "draft.json",
+                     cache_path=tmp_path / "cache.json")
+    spec = {"kind": "resistor", "value": "1k", "package": "0603",
+            "qualifier": ""}
+    app.api_record({"spec": spec, "lcsc": "C1"})
+    got = app.api_part({**spec, "verify": "1"})["housePart"]
+    [c] = got["choices"]
+    assert c["stockUnknown"] is True
+    assert c["lastStock"] is None and c["lastPrice"] is None
+
+
 def test_clean_emit_clears_the_design_draft(app):
     app.api_draft_put({"design": "demo", "draft": {"productionQuantity": 5}})
     app._clear_draft("demo")   # the hook api_emit runs on a clean export

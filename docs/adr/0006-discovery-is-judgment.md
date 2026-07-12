@@ -1,7 +1,7 @@
 # ADR-0006 — Discovery is judgment: agent-normalized names, human-fired searches, single-radio picks
 
 **Status:** Accepted (settled in discussion with Craig, 2026-07-13; supersedes
-ADR-0005 §5)
+ADR-0005 §5). §5 amended 2026-07-13: backup checkboxes + staged Update commit.
 **Date:** 2026-07-13
 
 ## Context
@@ -49,14 +49,26 @@ parse it — that's why we introduced Claude for this."*
    *can't cover the order* (expandable, never pickable). An empty result
    names what each stage dropped.
 5. **Picks are single-radio, not list surgery** (supersedes ADR-0005 §5's
-   propose-3 / approve-the-list): the checked radio is what mounts.
+   propose-3 / approve-the-list): the selected radio is what mounts.
    The **first** pick for a spec with nothing approved records permanently
-   as AVL rank 1 (choosing *is* the approval; unpicked search rows are never
-   recorded). A pick that **overrides** an existing approved part — or a
-   schematic-pinned part — is order-only: an in-memory pin, re-resolved and
-   draft-persisted, never written to the parts DB. Both are undoable in
-   place ("stop using this part" = audited removal; "undo — use the
-   automatic pick / the schematic part" = clear the pin).
+   as AVL rank 1 (choosing *is* the approval). A pick that **overrides** an
+   existing approved part — or a schematic-pinned part — is order-only: an
+   in-memory pin, re-resolved and draft-persisted, never written to the
+   parts DB. Both are undoable in place ("stop using this part" = audited
+   removal; "undo — use the automatic pick / the schematic part" = clear
+   the pin).
+
+   *Amended 2026-07-13 — ranked backups and the staged commit.* A
+   **backup checkbox column** rides the same tables: checking a row marks
+   it for the spec's approved list (appended after the existing ranks, in
+   table order — this is the deliberate act that grows the AVL, so
+   substitution and instant alternates work on the next design); rows
+   already on the list render pre-checked, and unchecking marks an audited
+   removal. **Nothing writes on click**: radio and checkbox changes stage
+   in memory, and one **Update** button commits the whole diff — the
+   acknowledgement is explicit, an accidental click writes nothing, and
+   navigating away discards the stage. Unpicked *and unchecked* search
+   rows are still never recorded.
 
 ## Consequences
 

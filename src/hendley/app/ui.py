@@ -145,9 +145,10 @@ details.unconf > summary { cursor:pointer; color:var(--tin);
 details.unconf > summary:hover { color:var(--pad); }
 .note { color:var(--tin); font-size:12.5px; margin:10px 0 0; }
 .alert { color:var(--err); font-size:13px; margin:10px 0; }
-input[type=radio] { accent-color:var(--pad); width:16px; height:16px;
-                    cursor:pointer; }
+input[type=radio], input[type=checkbox] { accent-color:var(--pad);
+  width:16px; height:16px; cursor:pointer; }
 td.pick { padding-right:4px; }
+.update-row { display:flex; justify-content:flex-end; margin:10px 0 0; }
 a { color:var(--pad); }
 .form { display:flex; gap:10px; align-items:end; margin-top:6px; }
 .form label { display:flex; flex-direction:column; gap:4px; font:11px var(--mono);
@@ -221,6 +222,8 @@ const S = {
   searches: {},        // lineKey -> the engineer's search terms (draft-persisted)
   exploring: {},       // lineKey -> the pinned part's explore panel is open
   exploreResults: {},  // lineKey -> live-verified explore candidates (session)
+  staged: {},          // lineKey -> {radio, checks:{code:bool}} — UNSAVED
+                       // selections; nothing writes until Update is pressed
   altSort: {key: null, dir: -1},  // alternates sort: "stock" | "price"
   showUnconfirmed: false,  // the collapsed package-not-confirmed block
   selected: null,      // lineIndex of the open detail panel
@@ -282,6 +285,7 @@ async function hydrate(data, readAt) {
   S.searches = {};
   S.exploring = {};
   S.exploreResults = {};
+  S.staged = {};
   if (d.draft) {
     if (d.draft.productionQuantity) $("qty").value = d.draft.productionQuantity;
     const valid = new Set(S.requirements.lines.map(lineKey));
@@ -350,6 +354,7 @@ async function resolveNow() {
   S.resolution = data.resolution;
   S.queue = data.queue || null;
   S.altSort = {key: null, dir: -1};
+  S.staged = {};   // committed state changed — staged diffs are stale
   render();
   saveDraft();
 }
@@ -390,6 +395,38 @@ function lineState(i) {
 function isOverridden(i) {
   const rl = S.requirements.lines[i];
   return !!S.overrides[lineKey(rl)];
+}
+
+/* ---- staged selections (radio + backup checkboxes, saved on Update) -------- */
+
+function stagedFor(i) {
+  const key = lineKey(S.requirements.lines[i]);
+  return S.staged[key] || (S.staged[key] = {radio: undefined, checks: {}});
+}
+function committedRadio(i) { return S.resolution.lines[i].ref || null; }
+function committedChecks(i) {
+  // codes on the spec's approved list, minus the mounted part (rank 1
+  // isn't a "backup")
+  const rl = S.requirements.lines[i];
+  const house = rl.spec ? S.avlCache[JSON.stringify(rl.spec)] : null;
+  const mounted = committedRadio(i);
+  return new Set(((house && house.choices) || [])
+    .map(c => c.lcscCode).filter(c => c && c !== mounted));
+}
+function effRadio(i) {
+  const st = stagedFor(i);
+  return st.radio !== undefined ? st.radio : committedRadio(i);
+}
+function effCheck(i, code) {
+  const st = stagedFor(i);
+  return code in st.checks ? st.checks[code] : committedChecks(i).has(code);
+}
+function stagedDirty(i) {
+  const st = S.staged[lineKey(S.requirements.lines[i])];
+  if (!st) return false;
+  if (st.radio !== undefined && st.radio !== committedRadio(i)) return true;
+  const com = committedChecks(i);
+  return Object.entries(st.checks).some(([c, on]) => on !== com.has(c));
 }
 
 /* ---- render ----------------------------------------------------------------- */
@@ -442,6 +479,12 @@ function select(i) {
   S.selected = (S.selected === i) ? null : i;
   S.altSort = {key: null, dir: -1};
   S.showUnconfirmed = false;
+  S.staged = {};   // navigating away discards unsaved selections
+  if (S.selected != null) {
+    // every open re-verifies the whole list — the panel shows NOW
+    const rl = S.requirements.lines[S.selected];
+    if (rl && rl.spec) delete S.avlCache[JSON.stringify(rl.spec)];
+  }
   render();
 }
 
@@ -544,34 +587,41 @@ function exportCardHtml() {
 /* ---- detail panel ------------------------------------------------------------ */
 
 const PART_TABLE_HEAD =
-  '<tr><th></th><th>lcsc</th><th>manufacturer</th><th>mpn</th>' +
+  '<tr><th></th><th>alt</th><th>lcsc</th><th>manufacturer</th><th>mpn</th>' +
   '<th>package</th>' +
   '<th class="num">live stock</th><th class="num">need</th>' +
   '<th class="num">unit $</th><th class="num">order $</th>' +
   '<th>class</th><th>why</th></tr>';
 
-/* the alternates table: live stock and unit $ headers sort the candidates */
+/* the alternates table: stock, price, and class headers sort the candidates */
 function sortableHead() {
-  const h = (label, key) => {
+  const h = (label, key, num) => {
     const active = S.altSort.key === key;
     const arrow = active ? (S.altSort.dir === 1 ? " ▲" : " ▼") : "";
-    return '<th class="num"><button class="th-sort" data-sortkey="' + key +
+    return '<th' + (num ? ' class="num"' : "") +
+      '><button class="th-sort" data-sortkey="' + key +
       '">' + label + arrow + "</button></th>";
   };
-  return '<tr><th></th><th>lcsc</th><th>manufacturer</th><th>mpn</th>' +
-    '<th>package</th>' +
-    h("live stock", "stock") + '<th class="num">need</th>' +
-    h("unit $", "price") + '<th class="num">order $</th>' +
-    '<th>class</th><th>why</th></tr>';
+  return '<tr><th></th><th>alt</th><th>lcsc</th><th>manufacturer</th>' +
+    '<th>mpn</th><th>package</th>' +
+    h("live stock", "stock", true) + '<th class="num">need</th>' +
+    h("unit $", "price", true) + '<th class="num">order $</th>' +
+    h("class", "class", false) + '<th>why</th></tr>';
 }
 
 function partRow(o) {
-  // o: {radio, checked, disabled, code, mpn, maker, stock, stockCls, need,
-  //     unit, why, pickArg}
+  // o: {radio, checked, code, mpn, maker, pkg, cls, stock, stockCls, need,
+  //     unit, why, action, check:{show,on}} — radio/checkbox changes STAGE;
+  //     nothing writes until the panel's Update button
   const radio = o.radio
     ? '<input type="radio" name="pick" ' + (o.checked ? "checked " : "") +
-      'data-pick="' + esc(o.pickArg) + '" aria-label="use ' + esc(o.code) +
+      'data-stage="' + esc(o.code) + '" aria-label="use ' + esc(o.code) +
       ' for this order">'
+    : "";
+  const check = o.check && o.check.show
+    ? '<input type="checkbox" data-check="' + esc(o.code) + '"' +
+      (o.check.on ? " checked" : "") + ' aria-label="alt ' + esc(o.code) +
+      '">'
     : "";
   const lcsc = o.code
     ? '<a href="https://www.lcsc.com/product-detail/' +
@@ -580,14 +630,17 @@ function partRow(o) {
     : '<code>—</code>';
   return '<tr' + (o.checked ? ' class="picked"' : "") + '>' +
     '<td class="pick">' + radio + '</td>' +
+    '<td class="pick">' + check + '</td>' +
     '<td>' + lcsc + '</td>' +
     '<td>' + esc(o.maker || "—") + '</td>' +
     '<td class="mono">' + esc(o.mpn || "") + '</td>' +
     '<td class="mono">' + esc(o.pkg || "—") + '</td>' +
-    '<td class="num ' + (o.stockCls || "") + '">' + fmt(o.stock) + '</td>' +
+    '<td class="num ' + (o.stockCls || "") + '">' +
+    (o.unknown ? "????" : fmt(o.stock)) + '</td>' +
     '<td class="num">' + fmt(o.need) + '</td>' +
-    '<td class="num">' + esc(unitStr(o.unit)) + '</td>' +
-    '<td class="num">' + esc(money(o.unit, o.need)) + '</td>' +
+    '<td class="num">' + (o.unknown ? "????" : esc(unitStr(o.unit))) + '</td>' +
+    '<td class="num">' + (o.unknown ? "????" : esc(money(o.unit, o.need))) +
+    '</td>' +
     '<td' + (o.cls ? "" : ' class="dimtd"') + '>' +
     esc(o.cls ? offerLabel(o.cls) : "—") + '</td>' +
     '<td class="why">' + (o.why || "") +
@@ -679,7 +732,9 @@ function pinnedBody(i) {
       '<label>search in-stock parts <input id="sf-explore" value="' +
       esc(seed) + '"></label>' +
       '<button class="btn solid" id="explore-search" data-line="' + i +
-      '">Search</button></div></div>' + exploreResultsHtml(i, l);
+      '">Search</button></div></div>' +
+      (S.exploreResults[key] ? updateBtnHtml(i) : "") +
+      exploreResultsHtml(i, l);
   }
   return '<div class="sect"><div class="tablewrap"><table>' + PART_TABLE_HEAD +
     row + "</table></div>" + extra + checksHtml(l) + "</div>" + exploreHtml;
@@ -694,11 +749,10 @@ function exploreResultsHtml(i, l) {
   const pkgOk = c => !r.package || (c.package || "") === r.package;
   const covers = c => (c.liveStock || 0) >= need;
   const exploreRow = (c, radio) => partRow({
-    radio: radio, checked: false, code: c.code, mpn: c.model,
+    radio: radio, checked: effRadio(i) === c.code, code: c.code, mpn: c.model,
     maker: c.manufacturer, pkg: c.package, cls: c.libraryType,
     stock: c.liveStock, stockCls: covers(c) ? "ok-num" : "short-num",
-    need: need, unit: c.unitPrice1,
-    pickArg: "over:" + c.code, why: ""});
+    need: need, unit: c.unitPrice1, why: ""});
 
   const main = all.filter(c => pkgOk(c) && covers(c));
   const otherPkg = all.filter(c => !pkgOk(c));           // pickable: aliases exist
@@ -747,13 +801,13 @@ function specBody(i) {
     const mine = choices.find(c => c.lcscCode === l.ref) || {};
     const over = isOverridden(i);
     let rows = partRow({
-      radio: true, checked: true, code: l.ref, mpn: l.mpn,
+      radio: true, checked: effRadio(i) === l.ref, code: l.ref, mpn: l.mpn,
       maker: l.manufacturer,
       pkg: (l.spec && l.spec.package) || (rl.spec && rl.spec.package) ||
            l.footprint,
       cls: l.offerClass,
       stock: l.liveStock, stockCls: "ok-num",
-      need: need, unit: l.unitPrice, pickArg: "over:" + l.ref,
+      need: need, unit: l.unitPrice,
       why: over ? "your pick — this order only"
         : l.substitution ? "substituted — preferred part is short"
         : esc(mine.note || (mine.rank ? "your approved part" : "")),
@@ -765,17 +819,18 @@ function specBody(i) {
       .filter(c => c.lcscCode && c.lcscCode !== l.ref)
       .map(c => {
         const stock = c.lastStock;
-        const canPick = (stock || 0) >= need;
+        const canPick = !c.stockUnknown && (stock || 0) >= need;
         return partRow({
-          radio: canPick, checked: false, code: c.lcscCode, mpn: c.mpn,
+          radio: canPick, checked: effRadio(i) === c.lcscCode,
+          code: c.lcscCode, mpn: c.mpn,
           maker: c.manufacturer, pkg: rl.spec ? rl.spec.package : null,
+          check: {show: true, on: effCheck(i, c.lcscCode)},
+          unknown: c.stockUnknown,
           stock: stock, stockCls: canPick ? "" : "short-num",
-          need: need, unit: c.lastPrice, pickArg: "over:" + c.lcscCode,
-          why: "approved rank " + c.rank +
-            (c.lastVerifiedAt
-              ? " · checked " + esc(c.lastVerifiedAt.slice(0, 10)) : "")});
+          need: need, unit: c.lastPrice, why: ""});
       }).join("");
-    return '<div class="sect"><div class="tablewrap"><table>' +
+    return updateBtnHtml(i) +
+      '<div class="sect"><div class="tablewrap"><table>' +
       PART_TABLE_HEAD + rows + "</table></div>" + checksHtml(l) + "</div>";
   }
   // red: approved-but-short rows first (no radio), then verified alternates;
@@ -788,8 +843,9 @@ function specBody(i) {
     return partRow({
       radio: false, code: c.ref, mpn: c.mpn || x.mpn, maker: x.manufacturer,
       pkg: rl.spec ? rl.spec.package : null,
+      check: {show: !!c.ref, on: effCheck(i, c.ref)},
       stock: c.liveStock, stockCls: "short-num", need: need,
-      unit: x.lastPrice, why: "your part"});
+      unit: x.stockUnknown ? null : x.lastPrice, why: "your part"});
   });
   const firstPick = e.reason === "no-part-choices";
   const disc = (q && q.discovery) || {};
@@ -801,30 +857,33 @@ function specBody(i) {
   const unconf = (q ? (q.fitUnconfirmed || []) : []).filter(coversNeed);
   if (S.altSort.key) {
     const dir = S.altSort.dir;
-    const val = c => S.altSort.key === "stock" ? c.liveStock : c.unitPrice1;
+    const val = c => S.altSort.key === "stock" ? c.liveStock
+      : S.altSort.key === "price" ? c.unitPrice1
+      : (c.libraryType ? offerLabel(c.libraryType) : null);
     const cmp = (a, b) => {
       const av = val(a), bv = val(b);
       if (av == null && bv == null) return 0;
       if (av == null) return 1;   // unknowns sort last either direction
       if (bv == null) return -1;
+      if (typeof av === "string") return av.localeCompare(bv) * dir;
       return (av - bv) * dir;
     };
     confirmed.sort(cmp); unconf.sort(cmp);
   }
   const candRows = confirmed.map(c => partRow({
-    radio: true, checked: false, code: c.code, mpn: c.model,
+    radio: true, checked: effRadio(i) === c.code, code: c.code, mpn: c.model,
     maker: c.manufacturer, pkg: c.package, cls: c.libraryType,
+    check: {show: true, on: effCheck(i, c.code)},
     stock: c.liveStock,
     stockCls: (c.liveStock || 0) >= need ? "ok-num" : "",
     need: need, unit: c.unitPrice1,
-    pickArg: (firstPick ? "first:" : "over:") + c.code,
     why: candWhy(c)}));
   const unconfRows = unconf.map(c => partRow({
-    radio: true, checked: false, code: c.code, mpn: c.model,
+    radio: true, checked: effRadio(i) === c.code, code: c.code, mpn: c.model,
     maker: c.manufacturer, pkg: c.package, cls: c.libraryType,
+    check: {show: true, on: effCheck(i, c.code)},
     stock: c.liveStock, stockCls: "",
     need: need, unit: c.unitPrice1,
-    pickArg: (firstPick ? "first:" : "over:") + c.code,
     why: "⚠ " + esc((c.fitUnknownBecause || []).join(" · "))}));
   const unconfBlock = unconf.length
     ? '<details class="unconf"' + (S.showUnconfirmed ? " open" : "") + '>' +
@@ -841,7 +900,8 @@ function specBody(i) {
         ? '<p class="alert">searched “' + esc(disc.search) + '” — nothing ' +
           "in stock matched; adjust the terms and search again</p>"
         : "";
-      return yourPart + miss + "</div>" + searchRowHtml(i, l);
+      return updateBtnHtml(i) + yourPart + miss + "</div>" +
+        searchRowHtml(i, l);
     }
     const noteText = disc.note ? disc.note
       : disc.automatic
@@ -850,13 +910,24 @@ function specBody(i) {
           "” exactly — package matching has no wildcards; " +
           "correct the term and search again"
         : "no search ran — check the terms and search again";
-    return yourPart + '<p class="alert">' + esc(noteText) + "</p></div>" +
+    return updateBtnHtml(i) + yourPart +
+      '<p class="alert">' + esc(noteText) + "</p></div>" +
       specFormHtml(i, l.spec || {}, disc.automatic ? "package" : "kind");
   }
-  return (searchable ? searchRowHtml(i, l) : "") +
+  return (searchable ? searchRowHtml(i, l) : "") + updateBtnHtml(i) +
     '<div class="sect"><div class="tablewrap"><table>' + sortableHead() +
     avlRows.join("") + candRows.join("") + "</table></div>" +
     unconfBlock + checksHtml(l) + "</div>";
+}
+
+/* the acknowledgement: staged selections write to the database (or the
+   order draft) only when this button is pressed */
+function updateBtnHtml(i) {
+  const dirty = stagedDirty(i);
+  return '<div class="update-row"><button class="btn solid" id="update-btn" ' +
+    'data-line="' + i + '"' +
+    (dirty ? "" : ' aria-disabled="true" title="no changes to save"') +
+    ">Update</button></div>";
 }
 
 function offerLabel(v) {
@@ -939,12 +1010,24 @@ function wireMain() {
     else if (el.classList.contains("linkrow"))
       el.onclick = () => select(parseInt(el.dataset.line, 10));
   });
-  document.querySelectorAll('#main input[type=radio][data-pick]').forEach(r => {
+  // radios and backup checkboxes STAGE; the Update button commits
+  document.querySelectorAll('#main input[type=radio][data-stage]').forEach(r => {
     r.onchange = () => {
-      const [kind, code] = r.dataset.pick.split(":");
-      pick(S.selected, code, kind === "first");
+      stagedFor(S.selected).radio = r.dataset.stage;
+      render();
     };
   });
+  document.querySelectorAll('#main input[type=checkbox][data-check]').forEach(cb => {
+    cb.onchange = () => {
+      stagedFor(S.selected).checks[cb.dataset.check] = cb.checked;
+      render();
+    };
+  });
+  const upd = $("update-btn");
+  if (upd) upd.onclick = () => {
+    if (upd.getAttribute("aria-disabled") === "true") return;
+    applyStaged(parseInt(upd.dataset.line, 10));
+  };
   const search = $("spec-search");
   if (search) search.onclick = () => doSearch(parseInt(search.dataset.line, 10));
   const terms = $("terms-search");
@@ -965,7 +1048,7 @@ function wireMain() {
     btn.onclick = () => {
       const key = btn.dataset.sortkey;
       if (S.altSort.key === key) S.altSort.dir = -S.altSort.dir;
-      else S.altSort = {key: key, dir: key === "price" ? 1 : -1};
+      else S.altSort = {key: key, dir: key === "stock" ? -1 : 1};
       render();
     };
   });
@@ -995,7 +1078,12 @@ async function ensureAvl(i) {
   if (!rl || !rl.spec) return;
   const key = JSON.stringify(rl.spec);
   if (key in S.avlCache) return;
-  try { S.avlCache[key] = (await api("/api/part?" + specQS(rl.spec))).housePart; }
+  try {
+    // verify=1: the panel shows CURRENT stock for every choice, not the
+    // advisory cache
+    S.avlCache[key] = (await api(
+      "/api/part?" + specQS(rl.spec) + "&verify=1")).housePart;
+  }
   catch (e) { S.avlCache[key] = null; return; }
   if (S.selected === i) render();
 }
@@ -1035,26 +1123,74 @@ async function stopUsing(i) { await run("removing part", async () => {
   msg("removed " + l.ref + " — pick again below", "ok");
 }); }
 
-async function pick(i, code, firstPick) { await run("applying pick", async () => {
+function modelFor(i, code) {
+  const q = queueFor(i);
+  const key = lineKey(S.requirements.lines[i]);
+  const pool = [].concat(
+    q ? q.candidates || [] : [], q ? q.fitUnconfirmed || [] : [],
+    (S.exploreResults[key] || {}).candidates || []);
+  const c = pool.find(x => x.code === code);
+  return c ? c.model : null;
+}
+
+/* commit the staged diff in one act: first pick -> rank 1; checked backups
+   append to the approved list in table order; unchecked members are removed
+   (audited); an overriding radio pins this order only */
+async function applyStaged(i) { await run("saving", async () => {
   const rl = S.requirements.lines[i];
-  if (firstPick) {
-    // first pick for a spec with nothing approved: THE choosing — permanent
-    const q = queueFor(i);
-    const all = q ? [].concat(q.candidates || [], q.fitUnconfirmed || []) : [];
-    const cand = all.find(c => c.code === code);
-    await api("/api/approve", {approvals: [{
-      spec: rl.spec, lcsc: code,
-      mpn: (cand && cand.model) || undefined, rank: 1,
-      design: S.design || undefined, note: "picked in the app"}]});
-    if (rl.spec) delete S.avlCache[JSON.stringify(rl.spec)];
-  } else {
-    // overriding an existing approved part: this order only
-    S.overrides[lineKey(rl)] = {code: code};
+  const key = lineKey(rl);
+  const st = S.staged[key];
+  if (!st || !stagedDirty(i)) return;
+  const e = escFor(i);
+  const firstPick = !!(rl.spec && e && e.reason === "no-part-choices");
+  const com = committedChecks(i);
+  const approvals = [];
+  let overrideSet = false;
+  if (st.radio !== undefined && st.radio && st.radio !== committedRadio(i)) {
+    if (firstPick) {
+      approvals.push({spec: rl.spec, lcsc: st.radio,
+        mpn: modelFor(i, st.radio) || undefined, rank: 1,
+        design: S.design || undefined, note: "picked in the app"});
+    } else {
+      S.overrides[key] = {code: st.radio};
+      overrideSet = true;
+    }
   }
+  const removals = [];
+  if (rl.spec) {
+    // newly checked codes append in the current table order
+    const q = queueFor(i);
+    const ordered = [].concat(
+      q ? (q.candidates || []).map(c => c.code) : [],
+      q ? (q.fitUnconfirmed || []).map(c => c.code) : [],
+      Object.keys(st.checks));
+    const seen = new Set();
+    for (const code of ordered) {
+      if (seen.has(code)) continue;
+      seen.add(code);
+      if (!(code in st.checks) || st.checks[code] === com.has(code)) continue;
+      if (st.checks[code]) {
+        if (firstPick && code === st.radio) continue;  // rank 1 covers it
+        approvals.push({spec: rl.spec, lcsc: code,
+          mpn: modelFor(i, code) || undefined, rank: 999,  // clamps to end
+          design: S.design || undefined,
+          note: "approved alt in the app"});
+      } else {
+        removals.push(code);
+      }
+    }
+  }
+  if (approvals.length) await api("/api/approve", {approvals: approvals});
+  for (const code of removals)
+    await api("/api/remove", {spec: rl.spec, ref: code,
+                              note: "alt removed in the app"});
+  if (rl.spec) delete S.avlCache[JSON.stringify(rl.spec)];
   await resolveNow();
-  msg("using " + code +
-      (firstPick ? " — recorded as your part for this spec"
-                 : " for this order"), "ok");
+  const done = [];
+  if (approvals.length) done.push(approvals.length + " approved");
+  if (removals.length) done.push(removals.length + " removed");
+  if (overrideSet) done.push("pick applies to this order only");
+  msg("saved — " + (done.join(" · ") || "updated"), "ok");
 }); }
 
 async function doSearch(i) { await run("searching", async () => {

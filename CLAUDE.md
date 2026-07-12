@@ -31,9 +31,11 @@ concrete `providers/*` or `datasources/jlc` — only the base protocols.
   JSON API 1:1 over library calls; `ui.py` = the single embedded page). One
   page (2026-07 redesign): left rail = Refresh + board qty + the design's
   components colored by stock state (green covers / red short / amber needs a
-  spec search / dashed DNP); click a component → detail panel (one radio
-  table picks what mounts; a pick overriding an approved part is order-only,
-  the first pick for a new spec records AVL rank 1 — both undoable in
+  spec search / dashed DNP); click a component → detail panel (one table:
+  the radio picks what mounts — order-only when overriding an approved
+  part, AVL rank 1 on a new spec's first pick — and a **backup checkbox
+  column** grows/prunes the spec's ranked AVL; radio+checkbox changes STAGE
+  and commit only via the panel's **Update** button, both undoable in
   place); searches are human-fired (ADR-0006: seeded from the spec, sent
   verbatim; auto-discovery only where deterministic) and results split into
   package-confirmed / other-packages / can't-cover buckets;
