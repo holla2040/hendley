@@ -126,6 +126,7 @@ def resolve(
             "liveStock": None,
             "unitPrice": None,
             "offerType": None,
+            "offerClass": None,
             "checks": [],
         }
 
@@ -173,6 +174,7 @@ def _fill_selected(row: dict, facts: dict[str, PartFact], ref: str,
     row["liveStock"] = fact.stock if fact else None
     row["unitPrice"] = _tier_price_at(fact, max(required, 1))
     row["offerType"] = strategy.offer_type
+    row["offerClass"] = fact.offer_class if fact else None
     if fact and fact.mpn and not row["mpn"]:
         row["mpn"] = fact.mpn
 

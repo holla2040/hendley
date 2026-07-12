@@ -39,9 +39,14 @@ Rules:
   "4.7k", "220", "1M"; capacitance like "100n", "47u"; inductance like
   "22u". Extra ratings (voltage, tolerance, dielectric) belong in
   qualifier, NOT in value.
-- package: if the footprint contains a standard chip size (0201/0402/0603/
-  0805/1206/1210/2010/2512), the package is that size. Otherwise the
-  package is the library footprint name VERBATIM (it keys the database).
+- package: normalize the library footprint name to the industry package it
+  denotes, in catalog spelling:
+  - a standard chip size (0201/0402/0603/0805/1206/1210/2010/2512) → that
+    size ("R-0402" → "0402").
+  - an embedded standard package name → the catalog form as distributors
+    list it (e.g. "D-SOD323" → "SOD-323").
+  - ONLY when no standard package is recognizable, keep the library
+    footprint name VERBATIM (e.g. "C-E-5" — it keys the database).
 - qualifier: the extra requirements as a short string (e.g. "50V",
   "1%", "X7R 25V"), or "" if none.
 - envelope: your best reading of the footprint's physical reality:

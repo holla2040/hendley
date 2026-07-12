@@ -137,6 +137,13 @@ tr.linkrow:hover td { background:rgba(217,164,65,.06); }
   font:600 11px var(--mono); letter-spacing:.1em; text-transform:uppercase;
   color:var(--tin); white-space:nowrap; }
 .th-sort:hover { color:var(--pad); }
+.stop-link { background:none; border:none; padding:0; cursor:pointer;
+  font:12px var(--sans); color:var(--tin); text-decoration:underline; }
+.stop-link:hover { color:var(--err); }
+details.unconf { margin-top:12px; }
+details.unconf > summary { cursor:pointer; color:var(--tin);
+  font:12px var(--mono); }
+details.unconf > summary:hover { color:var(--pad); }
 .note { color:var(--tin); font-size:12.5px; margin:10px 0 0; }
 .alert { color:var(--err); font-size:13px; margin:10px 0; }
 input[type=radio] { accent-color:var(--pad); width:16px; height:16px;
@@ -212,7 +219,9 @@ const S = {
   overrides: {},       // lineKey -> {code}: order-only pins, draft-persisted
   rotations: [],
   avlCache: {},        // spec JSON -> housePart (this session)
+  searches: {},        // lineKey -> the engineer's search terms (draft-persisted)
   altSort: {key: null, dir: -1},  // alternates sort: "stock" | "price"
+  showUnconfirmed: false,  // the collapsed package-not-confirmed block
   selected: null,      // lineIndex of the open detail panel
   design: "",
   exportResult: null,
@@ -269,11 +278,14 @@ async function hydrate(data, readAt) {
   $("read-note").textContent = "read " + readAt.toLocaleString();
   const d = await api("/api/draft?design=" + encodeURIComponent(S.design));
   S.overrides = {};
+  S.searches = {};
   if (d.draft) {
     if (d.draft.productionQuantity) $("qty").value = d.draft.productionQuantity;
     const valid = new Set(S.requirements.lines.map(lineKey));
     for (const [k, v] of Object.entries(d.draft.overrides || {}))
       if (valid.has(k)) S.overrides[k] = v;   // stale picks drop silently
+    for (const [k, v] of Object.entries(d.draft.searches || {}))
+      if (valid.has(k)) S.searches[k] = v;
   }
   try { S.rotations = (await api("/api/rotations")).corrections; }
   catch (e) { S.rotations = []; }
@@ -324,9 +336,14 @@ function effectiveRequirements() {
 }
 
 async function resolveNow() {
+  const searches = {};
+  S.requirements.lines.forEach((ln, idx) => {
+    const t = S.searches[lineKey(ln)];
+    if (t) searches[idx] = t;
+  });
   const data = await api("/api/resolve", {
     requirements: effectiveRequirements(),
-    placements: S.placements, provider: provider()});
+    placements: S.placements, provider: provider(), searches: searches});
   S.resolution = data.resolution;
   S.queue = data.queue || null;
   S.altSort = {key: null, dir: -1};
@@ -339,6 +356,7 @@ function saveDraft() {
   api("/api/draft", {design: S.design, draft: {
     productionQuantity: qty(),
     overrides: S.overrides,
+    searches: S.searches,
     savedAt: new Date().toISOString(),
   }}).catch(() => {});   // draft is a convenience — never break the flow
 }
@@ -420,6 +438,7 @@ function renderRail() {
 function select(i) {
   S.selected = (S.selected === i) ? null : i;
   S.altSort = {key: null, dir: -1};
+  S.showUnconfirmed = false;
   render();
 }
 
@@ -441,9 +460,14 @@ function renderMain() {
   wireMain();
 }
 
+/* checks the red panel already communicates by its own layout — the table
+   IS the explanation; the export gate still enforces them */
+const PANEL_SILENT_CHECKS = ["no-part-choices", "avl-exhausted"];
+
 function checksHtml(l) {
   return (l.checks || [])
-    .filter(c => c.severity !== "info")
+    .filter(c => c.severity !== "info" &&
+                 !PANEL_SILENT_CHECKS.includes(c.check))
     .map(c => '<div class="' +
       (c.severity === "error" ? "alert" : "why") + '">' +
       esc(c.check) + ": " + esc(c.message) + "</div>").join("");
@@ -477,7 +501,8 @@ function overviewHtml() {
       '<td>' + lcsc + '</td>' + stock +
       '<td class="num">' + esc(unitStr(l.unitPrice)) + '</td>' +
       '<td class="num">' + esc(l.dnp ? "—" : money(l.unitPrice, l.requiredQty)) +
-      '</td></tr>';
+      '</td><td' + (l.offerClass ? "" : ' class="dimtd"') + '>' +
+      esc(l.dnp ? "—" : offerLabel(l.offerClass)) + '</td></tr>';
   }).join("");
   const priced = r.lines.filter(l => !l.dnp);
   const total = priced.reduce((t, l) =>
@@ -493,7 +518,7 @@ function overviewHtml() {
     '<div class="sect tight"><div class="tablewrap"><table>' +
     '<tr><th>#</th><th>designators</th><th>part</th><th>lcsc</th>' +
     '<th class="num">stock / need</th><th class="num">unit $</th>' +
-    '<th class="num">order $</th></tr>' + rows +
+    '<th class="num">order $</th><th>class</th></tr>' + rows +
     '</table></div></div>';
 }
 
@@ -517,6 +542,7 @@ function exportCardHtml() {
 
 const PART_TABLE_HEAD =
   '<tr><th></th><th>lcsc</th><th>manufacturer</th><th>mpn</th>' +
+  '<th>package</th>' +
   '<th class="num">live stock</th><th class="num">need</th>' +
   '<th class="num">unit $</th><th class="num">order $</th><th>why</th></tr>';
 
@@ -529,6 +555,7 @@ function sortableHead() {
       '">' + label + arrow + "</button></th>";
   };
   return '<tr><th></th><th>lcsc</th><th>manufacturer</th><th>mpn</th>' +
+    '<th>package</th>' +
     h("live stock", "stock") + '<th class="num">need</th>' +
     h("unit $", "price") + '<th class="num">order $</th><th>why</th></tr>';
 }
@@ -541,16 +568,25 @@ function partRow(o) {
       'data-pick="' + esc(o.pickArg) + '" aria-label="use ' + esc(o.code) +
       ' for this order">'
     : "";
+  const lcsc = o.code
+    ? '<a href="https://www.lcsc.com/product-detail/' +
+      encodeURIComponent(o.code) + '.html" target="_blank" rel="noopener">' +
+      '<code>' + esc(o.code) + '</code></a>'
+    : '<code>—</code>';
   return '<tr' + (o.checked ? ' class="picked"' : "") + '>' +
     '<td class="pick">' + radio + '</td>' +
-    '<td><code>' + esc(o.code || "—") + '</code></td>' +
+    '<td>' + lcsc + '</td>' +
     '<td>' + esc(o.maker || "—") + '</td>' +
     '<td class="mono">' + esc(o.mpn || "") + '</td>' +
+    '<td class="mono">' + esc(o.pkg || "—") + '</td>' +
     '<td class="num ' + (o.stockCls || "") + '">' + fmt(o.stock) + '</td>' +
     '<td class="num">' + fmt(o.need) + '</td>' +
     '<td class="num">' + esc(unitStr(o.unit)) + '</td>' +
     '<td class="num">' + esc(money(o.unit, o.need)) + '</td>' +
-    '<td class="why">' + (o.why || "") + '</td></tr>';
+    '<td class="why">' + (o.why || "") +
+    (o.action ? ' <button class="stop-link" data-act="' + o.action.act +
+      '">' + o.action.label + "</button>" : "") +
+    '</td></tr>';
 }
 
 function detailHtml(i) {
@@ -601,6 +637,7 @@ function pinnedBody(i) {
     (S.requirements.lines[i].providerRefs || {}).jlcpcb || "";
   const row = partRow({
     radio: false, checked: !e, code: code, mpn: l.mpn, maker: l.manufacturer,
+    pkg: l.footprint,
     stock: l.liveStock, stockCls: e ? "short-num" : "ok-num",
     need: l.requiredQty, unit: l.unitPrice, why: "named by the schematic"});
   let extra = "";
@@ -624,18 +661,44 @@ function specBody(i) {
   const e = escFor(i);
   const q = queueFor(i);
   const need = l.requiredQty;
-  let rows = "";
   if (!e) {
-    // green: current pick row now; the full approved list fills in async
-    rows = partRow({
-      radio: true, checked: true, disabled: false, code: l.ref, mpn: l.mpn,
-      maker: l.manufacturer, stock: l.liveStock, stockCls: "ok-num",
+    // green: the mounted pick + the rest of the approved list, with the
+    // provenance of the pick and its undo in plain words
+    const key = rl.spec ? JSON.stringify(rl.spec) : null;
+    const house = (key && S.avlCache[key]) || null;
+    const choices = (house && house.choices) || [];
+    const mine = choices.find(c => c.lcscCode === l.ref) || {};
+    const over = isOverridden(i);
+    let rows = partRow({
+      radio: true, checked: true, code: l.ref, mpn: l.mpn,
+      maker: l.manufacturer,
+      pkg: (l.spec && l.spec.package) || (rl.spec && rl.spec.package) ||
+           l.footprint,
+      stock: l.liveStock, stockCls: "ok-num",
       need: need, unit: l.unitPrice, pickArg: "over:" + l.ref,
-      why: isOverridden(i) ? "your pick — this order only"
-        : l.substitution ? "substituted — preferred part is short" : ""});
-    return '<div class="sect"><div class="tablewrap"><table id="part-table">' +
-      PART_TABLE_HEAD + rows + "</table></div>" + checksHtml(l) + "</div>" +
-      '<div id="avl-slot"></div>';
+      why: over ? "your pick — this order only"
+        : l.substitution ? "substituted — preferred part is short"
+        : esc(mine.note || (mine.rank ? "your approved part" : "")),
+      action: over
+        ? {act: "clearover", label: "undo — use the automatic pick"}
+        : (mine.rank ? {act: "stopusing", label: "stop using this part"}
+                     : null)});
+    rows += choices
+      .filter(c => c.lcscCode && c.lcscCode !== l.ref)
+      .map(c => {
+        const stock = c.lastStock;
+        const canPick = (stock || 0) >= need;
+        return partRow({
+          radio: canPick, checked: false, code: c.lcscCode, mpn: c.mpn,
+          maker: c.manufacturer, pkg: rl.spec ? rl.spec.package : null,
+          stock: stock, stockCls: canPick ? "" : "short-num",
+          need: need, unit: c.lastPrice, pickArg: "over:" + c.lcscCode,
+          why: "approved rank " + c.rank +
+            (c.lastVerifiedAt
+              ? " · checked " + esc(c.lastVerifiedAt.slice(0, 10)) : "")});
+      }).join("");
+    return '<div class="sect"><div class="tablewrap"><table>' +
+      PART_TABLE_HEAD + rows + "</table></div>" + checksHtml(l) + "</div>";
   }
   // red: approved-but-short rows first (no radio), then verified alternates;
   // maker/price for the short rows come from the AVL cache once fetched
@@ -646,54 +709,112 @@ function specBody(i) {
     const x = avlInfo(c.ref);
     return partRow({
       radio: false, code: c.ref, mpn: c.mpn || x.mpn, maker: x.manufacturer,
+      pkg: rl.spec ? rl.spec.package : null,
       stock: c.liveStock, stockCls: "short-num", need: need,
       unit: x.lastPrice, why: "your part"});
   });
   const firstPick = e.reason === "no-part-choices";
-  const candList = (q ? [].concat(q.proposal || [], q.alsoFound || []) : [])
-    .map(c => ({c: c, fitOk: true}))
-    .concat((q ? (q.fitUnconfirmed || []) : []).map(c => ({c: c, fitOk: false})));
+  const disc = (q && q.discovery) || {};
+  const searchable = disc.needsSearch || disc.search != null;
+  // only parts that can actually cover this order are offered
+  const coversNeed = c => (c.liveStock || 0) >= need;
+  const confirmed = (q ? [].concat(q.proposal || [], q.alsoFound || []) : [])
+    .filter(coversNeed);
+  const unconf = (q ? (q.fitUnconfirmed || []) : []).filter(coversNeed);
   if (S.altSort.key) {
     const dir = S.altSort.dir;
-    const val = x => S.altSort.key === "stock" ? x.c.liveStock : x.c.unitPrice1;
-    candList.sort((a, b) => {
+    const val = c => S.altSort.key === "stock" ? c.liveStock : c.unitPrice1;
+    const cmp = (a, b) => {
       const av = val(a), bv = val(b);
       if (av == null && bv == null) return 0;
       if (av == null) return 1;   // unknowns sort last either direction
       if (bv == null) return -1;
       return (av - bv) * dir;
-    });
+    };
+    confirmed.sort(cmp); unconf.sort(cmp);
   }
-  const candRows = candList.map(x => partRow({
-    radio: true, checked: false, code: x.c.code, mpn: x.c.model,
-    maker: x.c.manufacturer,
-    stock: x.c.liveStock,
-    stockCls: x.fitOk && (x.c.liveStock || 0) >= need ? "ok-num" : "",
-    need: need, unit: x.c.unitPrice1,
-    pickArg: (firstPick ? "first:" : "over:") + x.c.code,
-    why: x.fitOk ? esc((x.c.why || []).join(" · "))
-      : "⚠ fit unconfirmed — check dimensions" +
-        (x.c.fitUnknownBecause
-          ? " · " + esc(x.c.fitUnknownBecause.join(" · ")) : "")}));
-  if (!candList.length) {
-    // empty search: editable terms, suspect field flagged
-    const auto = q && q.discovery && q.discovery.automatic;
-    const noteText = q && q.discovery && q.discovery.note
-      ? q.discovery.note
-      : auto
+  const candRows = confirmed.map(c => partRow({
+    radio: true, checked: false, code: c.code, mpn: c.model,
+    maker: c.manufacturer, pkg: c.package,
+    stock: c.liveStock,
+    stockCls: (c.liveStock || 0) >= need ? "ok-num" : "",
+    need: need, unit: c.unitPrice1,
+    pickArg: (firstPick ? "first:" : "over:") + c.code,
+    why: candWhy(c)}));
+  const unconfRows = unconf.map(c => partRow({
+    radio: true, checked: false, code: c.code, mpn: c.model,
+    maker: c.manufacturer, pkg: c.package,
+    stock: c.liveStock, stockCls: "",
+    need: need, unit: c.unitPrice1,
+    pickArg: (firstPick ? "first:" : "over:") + c.code,
+    why: "⚠ " + esc((c.fitUnknownBecause || []).join(" · "))}));
+  const unconfBlock = unconf.length
+    ? '<details class="unconf"' + (S.showUnconfirmed ? " open" : "") + '>' +
+      "<summary>" + unconf.length + " more — package not confirmed</summary>" +
+      '<div class="tablewrap"><table>' + PART_TABLE_HEAD + unconfRows.join("") +
+      "</table></div></details>"
+    : "";
+  const yourPart = '<div class="sect"><div class="tablewrap"><table>' +
+    PART_TABLE_HEAD + avlRows.join("") + "</table></div>";
+  if (!confirmed.length && !unconf.length) {
+    if (searchable) {
+      // no candidates until the engineer fires a search — nothing invented
+      const miss = disc.search != null
+        ? '<p class="alert">searched “' + esc(disc.search) + '” — nothing ' +
+          "in stock matched; adjust the terms and search again</p>"
+        : "";
+      return yourPart + miss + "</div>" + searchRowHtml(i, l);
+    }
+    const noteText = disc.note ? disc.note
+      : disc.automatic
         ? "no in-stock part matches package “" +
           (l.spec ? l.spec.package : "") +
           "” exactly — package matching has no wildcards; " +
           "correct the term and search again"
         : "no search ran — check the terms and search again";
-    return '<div class="sect"><div class="tablewrap"><table>' +
-      PART_TABLE_HEAD + avlRows.join("") + "</table></div>" +
-      '<p class="alert">' + esc(noteText) + "</p></div>" +
-      specFormHtml(i, l.spec || {}, auto ? "package" : "kind");
+    return yourPart + '<p class="alert">' + esc(noteText) + "</p></div>" +
+      specFormHtml(i, l.spec || {}, disc.automatic ? "package" : "kind");
   }
-  return '<div class="sect"><div class="tablewrap"><table>' + sortableHead() +
+  return (searchable ? searchRowHtml(i, l) : "") +
+    '<div class="sect"><div class="tablewrap"><table>' + sortableHead() +
     avlRows.join("") + candRows.join("") + "</table></div>" +
-    checksHtml(l) + "</div>";
+    unconfBlock + checksHtml(l) + "</div>";
+}
+
+function offerLabel(v) {
+  if (!v) return "—";
+  const t = String(v).toLowerCase();
+  return t === "expand" || t === "extended" ? "Extended"
+    : t === "base" || t === "basic" ? "Basic" : String(v);
+}
+
+/* the why column carries only judgments the columns don't already show —
+   stock and price restatements are dropped by their score factor */
+function candWhy(c) {
+  const bits = [];
+  for (const x of (c.scoreContributions || [])) {
+    if (x.factor === "stock-margin" || x.factor === "price") continue;
+    if (x.factor === "offer-class") {
+      if (c.libraryType) bits.push("JLC " + offerLabel(c.libraryType));
+      continue;
+    }
+    bits.push(x.why);
+  }
+  return bits.map(esc).join(" · ");
+}
+
+/* the engineer's search: seeded from the spec, edited and FIRED by a human —
+   no query composed or run behind their back */
+function searchRowHtml(i, l) {
+  const key = lineKey(S.requirements.lines[i]);
+  const spec = l.spec || {};
+  const seed = S.searches[key] ||
+    [spec.qualifier, spec.value].filter(Boolean).join(" ");
+  return '<div class="sect"><div class="form">' +
+    '<label>search in-stock parts <input id="sf-terms" value="' + esc(seed) +
+    '"></label>' +
+    '<button class="btn solid" id="terms-search" data-line="' + i +
+    '">Search</button></div></div>';
 }
 
 function specFormHtml(i, spec, suspect) {
@@ -751,11 +872,20 @@ function wireMain() {
   });
   const search = $("spec-search");
   if (search) search.onclick = () => doSearch(parseInt(search.dataset.line, 10));
+  const terms = $("terms-search");
+  if (terms) {
+    const fire = () => doTermsSearch(parseInt(terms.dataset.line, 10));
+    terms.onclick = fire;
+    const input = $("sf-terms");
+    if (input) input.onkeydown = ev => { if (ev.key === "Enter") fire(); };
+  }
   const rot = $("rot-select");
   if (rot) rot.onchange = () =>
     setRotation(parseInt(rot.dataset.line, 10), rot.dataset.footprint, rot.value);
   const card = $("export-card");
   if (card) card.onclick = () => { S.exportResult = null; render(); };
+  const un = document.querySelector("#main details.unconf");
+  if (un) un.ontoggle = () => { S.showUnconfirmed = un.open; };
   document.querySelectorAll("#main .th-sort").forEach(btn => {
     btn.onclick = () => {
       const key = btn.dataset.sortkey;
@@ -764,12 +894,17 @@ function wireMain() {
       render();
     };
   });
-  if (S.selected != null && escFor(S.selected)) ensureAvl(S.selected);
-  if (S.selected == null || !escFor(S.selected)) fillAvl(S.selected);
+  document.querySelectorAll("#main .stop-link").forEach(btn => {
+    btn.onclick = () => {
+      if (btn.dataset.act === "clearover") clearOverride(S.selected);
+      else stopUsing(S.selected);
+    };
+  });
+  if (S.selected != null) ensureAvl(S.selected);
 }
 
-/* red panel: fetch the approved list once so the short rows show
-   manufacturer / mpn / price, then re-render with the cache warm */
+/* any spec line's panel: fetch the approved list once (provenance, makers,
+   backups), then re-render with the cache warm */
 async function ensureAvl(i) {
   const rl = S.requirements.lines[i];
   if (!rl || !rl.spec) return;
@@ -780,49 +915,23 @@ async function ensureAvl(i) {
   if (S.selected === i) render();
 }
 
-/* green spec line: fill in the rest of the approved list (backups pickable) */
-async function fillAvl(i) {
-  if (i == null) return;
-  const slot = $("avl-slot");
-  const l = S.resolution.lines[i];
+/* undo an order-only pick: the resolver's own choice comes back */
+async function clearOverride(i) { await run("undoing pick", async () => {
+  delete S.overrides[lineKey(S.requirements.lines[i])];
+  await resolveNow();
+  msg("back to the automatic pick", "ok");
+}); }
+
+/* undo a recorded pick: audited removal, the spec goes back to needing one */
+async function stopUsing(i) { await run("removing part", async () => {
   const rl = S.requirements.lines[i];
-  const spec = rl.spec;   // the original spec, even when overridden
-  if (!slot || !spec) return;
-  const key = JSON.stringify(spec);
-  try {
-    if (!(key in S.avlCache)) {
-      const d = await api("/api/part?" + specQS(spec));
-      S.avlCache[key] = d.housePart;
-    }
-  } catch (e) { return; }
-  const house = S.avlCache[key];
-  if (!house || !house.choices || house.choices.length < 1) return;
-  const need = l.requiredQty;
-  const table = $("part-table");
-  if (!table) return;
-  const rows = house.choices
-    .filter(c => c.lcscCode && c.lcscCode !== l.ref)
-    .map(c => {
-      const stock = c.lastStock;
-      const canPick = (stock || 0) >= need;
-      return partRow({
-        radio: canPick, checked: false, code: c.lcscCode, mpn: c.mpn,
-        maker: c.manufacturer, stock: stock,
-        stockCls: canPick ? "" : "short-num", need: need, unit: c.lastPrice,
-        pickArg: "over:" + c.lcscCode,
-        why: "approved rank " + c.rank +
-          (c.lastVerifiedAt ? " · checked " + esc(c.lastVerifiedAt.slice(0, 10))
-                            : "")});
-    }).join("");
-  if (rows) {
-    table.insertAdjacentHTML("beforeend", rows);
-    document.querySelectorAll('#part-table input[type=radio][data-pick]')
-      .forEach(r => { r.onchange = () => {
-        const [kind, code] = r.dataset.pick.split(":");
-        pick(S.selected, code, kind === "first");
-      }; });
-  }
-}
+  const l = S.resolution.lines[i];
+  await api("/api/remove", {spec: rl.spec, ref: l.ref,
+                            note: "removed in the app (undo pick)"});
+  if (rl.spec) delete S.avlCache[JSON.stringify(rl.spec)];
+  await resolveNow();
+  msg("removed " + l.ref + " — pick again below", "ok");
+}); }
 
 async function pick(i, code, firstPick) { await run("applying pick", async () => {
   const rl = S.requirements.lines[i];
@@ -835,6 +944,7 @@ async function pick(i, code, firstPick) { await run("applying pick", async () =>
       spec: rl.spec, lcsc: code,
       mpn: (cand && cand.model) || undefined, rank: 1,
       design: S.design || undefined, note: "picked in the app"}]});
+    if (rl.spec) delete S.avlCache[JSON.stringify(rl.spec)];
   } else {
     // overriding an existing approved part: this order only
     S.overrides[lineKey(rl)] = {code: code};
@@ -872,6 +982,19 @@ async function doSearch(i) { await run("searching", async () => {
                   : 0;
   msg(found ? found + " part(s) found — pick one"
             : "nothing found — adjust a term and search again",
+      found ? "ok" : "warn");
+}); }
+
+async function doTermsSearch(i) { await run("searching", async () => {
+  const t = $("sf-terms").value.trim();
+  if (!t) throw new Error("enter search terms first");
+  S.searches[lineKey(S.requirements.lines[i])] = t;
+  await resolveNow();
+  const q = queueFor(i);
+  const found = q
+    ? (q.candidates || []).length + (q.fitUnconfirmed || []).length : 0;
+  msg(found ? found + " part(s) found — pick one"
+            : "nothing found — adjust the terms and search again",
       found ? "ok" : "warn");
 }); }
 

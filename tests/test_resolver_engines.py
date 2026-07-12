@@ -223,7 +223,8 @@ def test_queue_unmapped_kind_ships_empty_with_note(tmp_path):
                                  datasource=src, strategy=JLCPCBStrategy())
     [entry] = queue["entries"]
     assert entry["candidates"] == [] and not entry["discovery"]["automatic"]
-    assert "pick a" in entry["discovery"]["note"]
+    assert entry["discovery"]["needsSearch"]
+    assert "fire the search yourself" in entry["discovery"]["note"]
     assert src.discover_queries == []  # no guessing at categories
 
 

@@ -72,17 +72,34 @@ def _key_params(parameters: list | None) -> dict:
 
 
 def _verified_candidates(datasource: DataSource, category: str, spec: SpecKey,
-                         exclude: set[str]) -> list[dict]:
-    """Discover by category+value (+package when comparable), verify in one batch."""
+                         exclude: set[str],
+                         search: str | None = None) -> tuple[list[dict], str | None]:
+    """Discover, then verify in one batch. Returns (rows, searchUsed|None).
+
+    Discovery runs automatically ONLY where the query is deterministic: a
+    dense value param (R/C) or a chip package. A spec with neither (e.g. a
+    zener in a library footprint) would query the ENTIRE category unfiltered
+    and return arbitrary top-of-index parts — for those, discovery runs only
+    with a human-supplied ``search`` string, fired verbatim at the full-text
+    index. Composing that string is judgment; it is never done here.
+    """
     from ..constraints.engine import is_chip_package
 
     params = dict(_value_params(spec))
     if is_chip_package(spec.package):
         params["package"] = spec.package  # library-local names never match jlcsearch
-    rows = datasource.discover({"category": category, "params": params})
+    used = None
+    if params and category:
+        rows = datasource.discover({"category": category, "params": params})
+    elif search:
+        used = search
+        rows = datasource.discover({"category": "components",
+                                    "params": {"search": search}})
+    else:
+        return [], None
     codes = [r["code"] for r in rows if r.get("code") and r["code"] not in exclude]
     if not codes:
-        return []
+        return [], used
     facts = datasource.verify(codes)
     out = []
     for r in rows:
@@ -107,7 +124,7 @@ def _verified_candidates(datasource: DataSource, category: str, spec: SpecKey,
             "parameters": d.get("parameters") if verified else None,
             "keyParams": _key_params(d.get("parameters")) if verified else {},
         })
-    return out
+    return out, used
 
 
 def _price1(detail: dict) -> float | None:
@@ -125,8 +142,19 @@ def build_approval_queue(
     *,
     datasource: DataSource,
     strategy: ProviderStrategy,
+    searches: dict[int, str] | None = None,
 ) -> dict:
-    """Turn a resolution's escalations into the single reviewable queue."""
+    """Turn a resolution's escalations into the single reviewable queue.
+
+    ``searches`` maps lineIndex → the engineer's search terms, fired
+    verbatim for specs whose discovery isn't deterministic (no dense value
+    param, no chip package). Without terms, such entries carry
+    ``discovery.needsSearch`` and an empty candidate list — a candidate
+    list the engineer didn't ask for is never invented.
+    """
+    from ..constraints.engine import is_chip_package
+
+    searches = searches or {}
     entries = []
     for esc in resolution.get("escalations", []):
         line = requirements.lines[esc["lineIndex"]]
@@ -141,23 +169,29 @@ def build_approval_queue(
         if spec is not None:
             category = KIND_CATEGORIES.get(spec.kind)
             discovery["category"] = category
-            if category:
-                discovery["automatic"] = True
+            deterministic = bool(_value_params(spec)) or is_chip_package(spec.package)
+            search = searches.get(esc["lineIndex"])
+            if (deterministic and category) or search:
+                discovery["automatic"] = deterministic and category is not None
                 envelope = None
                 cached = store.get_interpretation("footprint",
                                                   footprint=spec.package)
                 if cached:
                     envelope = (cached["result"] or {}).get("envelope")
-                raw = _verified_candidates(datasource, category, spec, avl_refs)
+                raw, used = _verified_candidates(
+                    datasource, category, spec, avl_refs, search=search)
+                if used:
+                    discovery["search"] = used
                 valid, rejected, unconfirmed = filter_candidates(
                     spec, raw, envelope=envelope)
                 candidates = rank_candidates(
                     valid, required_qty=required, strategy=strategy,
                     store=store, spec=spec)
             else:
+                discovery["needsSearch"] = True
                 discovery["note"] = (
-                    f"no automatic category for kind {spec.kind!r} — pick a "
-                    "jlcsearch category (or a fuzzy search) and discover manually")
+                    "this spec has no deterministic query — enter search "
+                    "terms and fire the search yourself")
         else:
             discovery["note"] = ("no spec on this line — an exact-part decision, "
                                  "not a discovery problem")

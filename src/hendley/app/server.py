@@ -347,9 +347,15 @@ class HendleyApp:
             result["placements"] = body["placements"]
         out = {"resolution": result}
         if result["escalations"] and datasource is not None:
+            searches = {}
+            for k, v in (body.get("searches") or {}).items():
+                try:
+                    searches[int(k)] = str(v)
+                except (TypeError, ValueError):
+                    continue
             out["queue"] = build_approval_queue(
                 store, requirements, result,
-                datasource=datasource, strategy=strategy)
+                datasource=datasource, strategy=strategy, searches=searches)
         return out
 
     def api_approve(self, body: dict) -> dict:
