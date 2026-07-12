@@ -14,6 +14,32 @@ from ..base import PartFact
 from .client import JLCClient
 
 
+def _brand_from_manual_url(detail: dict) -> str | None:
+    """The LCSC brand slug embedded in the datasheet filename — the official
+    API's only manufacturer signal (no dedicated field exists).
+
+    Filename shape: ``<digits>_<brand>-<MPN>_<Ccode>.pdf``. The MPN
+    (``componentModel``) and code anchor the parse; any mismatch returns
+    None — a manufacturer is never fabricated. The slug is lowercase
+    ("yageo", not "YAGEO"); user-recorded names always take precedence
+    downstream (update_verified backfills NULLs only).
+    """
+    url = detail.get("dataManualUrl") or ""
+    code = detail.get("componentCode") or ""
+    mpn = detail.get("componentModel") or ""
+    if not (url and code and mpn):
+        return None
+    name = url.rsplit("/", 1)[-1]
+    suffix = f"_{code}.pdf"
+    if not name.endswith(suffix):
+        return None
+    stem = name[: -len(suffix)]
+    ts, _, rest = stem.partition("_")
+    if not ts.isdigit() or not rest.endswith(f"-{mpn}"):
+        return None
+    return rest[: -len(mpn) - 1] or None
+
+
 class JLCDataSource:
     """Live JLC catalog facts + jlcsearch discovery."""
 
@@ -47,6 +73,7 @@ class JLCDataSource:
                     found=True,
                     stock=d.get("stockCount"),
                     mpn=d.get("componentModel"),
+                    manufacturer=_brand_from_manual_url(d),
                     description=d.get("describe"),
                     offer_class=d.get("libraryType"),
                     price_tiers=list(d.get("priceRanges") or []),

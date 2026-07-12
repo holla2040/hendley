@@ -95,6 +95,7 @@ def _verified_candidates(datasource: DataSource, category: str, spec: SpecKey,
         out.append({
             "code": code,
             "model": (d.get("componentModel") if verified else None) or r.get("mfr"),
+            "manufacturer": fact.manufacturer if verified else None,
             "package": (d.get("componentSpecification") if verified else None)
                        or r.get("package"),
             "verified": verified,

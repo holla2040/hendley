@@ -133,6 +133,10 @@ tr.linkrow:hover td { background:rgba(217,164,65,.06); }
 .ok-num { color:var(--ok); }
 .dimtd { color:var(--tin); }
 .why { color:var(--tin); font-size:12px; line-height:1.45; }
+.th-sort { background:none; border:none; padding:0; cursor:pointer;
+  font:600 11px var(--mono); letter-spacing:.1em; text-transform:uppercase;
+  color:var(--tin); white-space:nowrap; }
+.th-sort:hover { color:var(--pad); }
 .note { color:var(--tin); font-size:12.5px; margin:10px 0 0; }
 .alert { color:var(--err); font-size:13px; margin:10px 0; }
 input[type=radio] { accent-color:var(--pad); width:16px; height:16px;
@@ -208,6 +212,7 @@ const S = {
   overrides: {},       // lineKey -> {code}: order-only pins, draft-persisted
   rotations: [],
   avlCache: {},        // spec JSON -> housePart (this session)
+  altSort: {key: null, dir: -1},  // alternates sort: "stock" | "price"
   selected: null,      // lineIndex of the open detail panel
   design: "",
   exportResult: null,
@@ -324,6 +329,7 @@ async function resolveNow() {
     placements: S.placements, provider: provider()});
   S.resolution = data.resolution;
   S.queue = data.queue || null;
+  S.altSort = {key: null, dir: -1};
   render();
   saveDraft();
 }
@@ -413,6 +419,7 @@ function renderRail() {
 
 function select(i) {
   S.selected = (S.selected === i) ? null : i;
+  S.altSort = {key: null, dir: -1};
   render();
 }
 
@@ -509,9 +516,22 @@ function exportCardHtml() {
 /* ---- detail panel ------------------------------------------------------------ */
 
 const PART_TABLE_HEAD =
-  '<tr><th></th><th>lcsc</th><th>mpn</th><th>maker</th>' +
+  '<tr><th></th><th>lcsc</th><th>manufacturer</th><th>mpn</th>' +
   '<th class="num">live stock</th><th class="num">need</th>' +
   '<th class="num">unit $</th><th class="num">order $</th><th>why</th></tr>';
+
+/* the alternates table: live stock and unit $ headers sort the candidates */
+function sortableHead() {
+  const h = (label, key) => {
+    const active = S.altSort.key === key;
+    const arrow = active ? (S.altSort.dir === 1 ? " ▲" : " ▼") : "";
+    return '<th class="num"><button class="th-sort" data-sortkey="' + key +
+      '">' + label + arrow + "</button></th>";
+  };
+  return '<tr><th></th><th>lcsc</th><th>manufacturer</th><th>mpn</th>' +
+    h("live stock", "stock") + '<th class="num">need</th>' +
+    h("unit $", "price") + '<th class="num">order $</th><th>why</th></tr>';
+}
 
 function partRow(o) {
   // o: {radio, checked, disabled, code, mpn, maker, stock, stockCls, need,
@@ -524,8 +544,8 @@ function partRow(o) {
   return '<tr' + (o.checked ? ' class="picked"' : "") + '>' +
     '<td class="pick">' + radio + '</td>' +
     '<td><code>' + esc(o.code || "—") + '</code></td>' +
-    '<td class="mono">' + esc(o.mpn || "") + '</td>' +
     '<td>' + esc(o.maker || "—") + '</td>' +
+    '<td class="mono">' + esc(o.mpn || "") + '</td>' +
     '<td class="num ' + (o.stockCls || "") + '">' + fmt(o.stock) + '</td>' +
     '<td class="num">' + fmt(o.need) + '</td>' +
     '<td class="num">' + esc(unitStr(o.unit)) + '</td>' +
@@ -600,6 +620,7 @@ function pinnedBody(i) {
 /* a spec line: the single list — your part(s) first, then search results */
 function specBody(i) {
   const l = S.resolution.lines[i];
+  const rl = S.requirements.lines[i];
   const e = escFor(i);
   const q = queueFor(i);
   const need = l.requiredQty;
@@ -616,28 +637,45 @@ function specBody(i) {
       PART_TABLE_HEAD + rows + "</table></div>" + checksHtml(l) + "</div>" +
       '<div id="avl-slot"></div>';
   }
-  // red: approved-but-short rows first (no radio), then verified alternates
-  const avlRows = (e.choices || []).map(c => partRow({
-    radio: false, code: c.ref, mpn: c.mpn, maker: null,
-    stock: c.liveStock, stockCls: "short-num", need: need, unit: null,
-    why: "your part"}));
+  // red: approved-but-short rows first (no radio), then verified alternates;
+  // maker/price for the short rows come from the AVL cache once fetched
+  const house = rl.spec ? S.avlCache[JSON.stringify(rl.spec)] : null;
+  const avlInfo = code =>
+    ((house && house.choices) || []).find(c => c.lcscCode === code) || {};
+  const avlRows = (e.choices || []).map(c => {
+    const x = avlInfo(c.ref);
+    return partRow({
+      radio: false, code: c.ref, mpn: c.mpn || x.mpn, maker: x.manufacturer,
+      stock: c.liveStock, stockCls: "short-num", need: need,
+      unit: x.lastPrice, why: "your part"});
+  });
   const firstPick = e.reason === "no-part-choices";
-  const candidates = q
-    ? [].concat(q.proposal || [], q.alsoFound || []) : [];
-  const unconfirmed = q ? (q.fitUnconfirmed || []) : [];
-  const candRows = candidates.map(c => partRow({
-    radio: true, checked: false, code: c.code, mpn: c.model, maker: null,
-    stock: c.liveStock, stockCls: (c.liveStock || 0) >= need ? "ok-num" : "",
-    need: need, unit: c.unitPrice1,
-    pickArg: (firstPick ? "first:" : "over:") + c.code,
-    why: esc((c.why || []).join(" · "))}))
-    .concat(unconfirmed.map(c => partRow({
-      radio: true, checked: false, code: c.code, mpn: c.model, maker: null,
-      stock: c.liveStock, stockCls: "", need: need, unit: c.unitPrice1,
-      pickArg: (firstPick ? "first:" : "over:") + c.code,
-      why: "⚠ fit unconfirmed — check dimensions" +
-        (c.fitUnknownBecause ? " · " + esc(c.fitUnknownBecause.join(" · ")) : "")})));
-  if (!candRows.length) {
+  const candList = (q ? [].concat(q.proposal || [], q.alsoFound || []) : [])
+    .map(c => ({c: c, fitOk: true}))
+    .concat((q ? (q.fitUnconfirmed || []) : []).map(c => ({c: c, fitOk: false})));
+  if (S.altSort.key) {
+    const dir = S.altSort.dir;
+    const val = x => S.altSort.key === "stock" ? x.c.liveStock : x.c.unitPrice1;
+    candList.sort((a, b) => {
+      const av = val(a), bv = val(b);
+      if (av == null && bv == null) return 0;
+      if (av == null) return 1;   // unknowns sort last either direction
+      if (bv == null) return -1;
+      return (av - bv) * dir;
+    });
+  }
+  const candRows = candList.map(x => partRow({
+    radio: true, checked: false, code: x.c.code, mpn: x.c.model,
+    maker: x.c.manufacturer,
+    stock: x.c.liveStock,
+    stockCls: x.fitOk && (x.c.liveStock || 0) >= need ? "ok-num" : "",
+    need: need, unit: x.c.unitPrice1,
+    pickArg: (firstPick ? "first:" : "over:") + x.c.code,
+    why: x.fitOk ? esc((x.c.why || []).join(" · "))
+      : "⚠ fit unconfirmed — check dimensions" +
+        (x.c.fitUnknownBecause
+          ? " · " + esc(x.c.fitUnknownBecause.join(" · ")) : "")}));
+  if (!candList.length) {
     // empty search: editable terms, suspect field flagged
     const auto = q && q.discovery && q.discovery.automatic;
     const noteText = q && q.discovery && q.discovery.note
@@ -653,7 +691,7 @@ function specBody(i) {
       '<p class="alert">' + esc(noteText) + "</p></div>" +
       specFormHtml(i, l.spec || {}, auto ? "package" : "kind");
   }
-  return '<div class="sect"><div class="tablewrap"><table>' + PART_TABLE_HEAD +
+  return '<div class="sect"><div class="tablewrap"><table>' + sortableHead() +
     avlRows.join("") + candRows.join("") + "</table></div>" +
     checksHtml(l) + "</div>";
 }
@@ -718,7 +756,28 @@ function wireMain() {
     setRotation(parseInt(rot.dataset.line, 10), rot.dataset.footprint, rot.value);
   const card = $("export-card");
   if (card) card.onclick = () => { S.exportResult = null; render(); };
+  document.querySelectorAll("#main .th-sort").forEach(btn => {
+    btn.onclick = () => {
+      const key = btn.dataset.sortkey;
+      if (S.altSort.key === key) S.altSort.dir = -S.altSort.dir;
+      else S.altSort = {key: key, dir: key === "price" ? 1 : -1};
+      render();
+    };
+  });
+  if (S.selected != null && escFor(S.selected)) ensureAvl(S.selected);
   if (S.selected == null || !escFor(S.selected)) fillAvl(S.selected);
+}
+
+/* red panel: fetch the approved list once so the short rows show
+   manufacturer / mpn / price, then re-render with the cache warm */
+async function ensureAvl(i) {
+  const rl = S.requirements.lines[i];
+  if (!rl || !rl.spec) return;
+  const key = JSON.stringify(rl.spec);
+  if (key in S.avlCache) return;
+  try { S.avlCache[key] = (await api("/api/part?" + specQS(rl.spec))).housePart; }
+  catch (e) { S.avlCache[key] = null; return; }
+  if (S.selected === i) render();
 }
 
 /* green spec line: fill in the rest of the approved list (backups pickable) */

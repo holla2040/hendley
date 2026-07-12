@@ -29,6 +29,7 @@ class FakeSource:
             if r in self.stocks:
                 out[r] = PartFact(
                     ref=r, found=True, stock=self.stocks[r], mpn=f"MPN-{r}",
+                    manufacturer=f"MFR-{r}",
                     price_tiers=[{"startQuantity": 1, "unitPrice": 0.002}],
                     raw={"componentCode": r, "stockCount": self.stocks[r],
                          "componentModel": f"MPN-{r}",
@@ -183,6 +184,7 @@ def test_full_resolution_flow_intake_to_emit(client, tmp_path):
     [entry] = queue["entries"]
     assert entry["reason"] == "avl-exhausted"
     assert [c["code"] for c in entry["candidates"]] == ["C_NEW"]
+    assert entry["candidates"][0]["manufacturer"] == "MFR-C_NEW"
 
     # approve the ranked candidate → re-resolve clean
     client("/api/approve", {"approvals": [{
