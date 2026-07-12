@@ -156,6 +156,92 @@ def test_intake_cache_repopulates_with_later_corrections(tmp_path):
     assert interp.calls == calls
 
 
+def test_explore_returns_only_verified_candidates(tmp_path):
+    from test_app import FakeSource
+
+    src = FakeSource(stocks={"C1": 500},
+                     discovered=[{"code": "C1"}, {"code": "C_GONE"}])
+    app = HendleyApp(db_path=tmp_path / "parts.db",
+                     datasource_factory=lambda: src,
+                     draft_path=tmp_path / "draft.json",
+                     cache_path=tmp_path / "cache.json")
+    got = app.api_explore({"search": "zener 10V"})
+    assert got["search"] == "zener 10V"
+    assert [c["code"] for c in got["candidates"]] == ["C1"]  # C_GONE unverified
+    assert got["candidates"][0]["manufacturer"] == "MFR-C1"
+    with pytest.raises(ApiError, match="search"):
+        app.api_explore({})
+
+
+class _PackageSource:
+    """Verified candidates with per-code packages, for the explore filter."""
+
+    name = "pkg"
+
+    def __init__(self, packages: dict):
+        self.packages = packages
+
+    def discover(self, query):
+        return [{"code": c} for c in self.packages]
+
+    def verify(self, refs):
+        from hendley.datasources.base import PartFact
+
+        return {r: PartFact(
+            ref=r, found=True, stock=1000, mpn=f"MPN-{r}",
+            price_tiers=[{"startQuantity": 1, "unitPrice": 0.01}],
+            raw={"componentCode": r, "componentModel": f"MPN-{r}",
+                 "componentSpecification": self.packages[r],
+                 "stockCount": 1000, "libraryType": "Basic",
+                 "priceRanges": [{"startQuantity": 1, "unitPrice": 0.01}],
+                 "parameters": []},
+            provenance=self.name) for r in refs}
+
+
+class _FootprintJudge:
+    def __init__(self, package="0603", confidence=0.9):
+        self.calls = 0
+        self.package = package
+        self.confidence = confidence
+
+    def interpret_footprint(self, footprint):
+        self.calls += 1
+        return {"package": self.package, "envelope": {"mount": "smd"},
+                "confidence": self.confidence, "rationale": "chip size"}
+
+
+def test_explore_filters_to_the_agent_judged_package(tmp_path):
+    judge = _FootprintJudge()
+    app = HendleyApp(db_path=tmp_path / "parts.db",
+                     datasource_factory=lambda: _PackageSource(
+                         {"C_0603": "0603", "C_0805": "0805"}),
+                     interpreter_factory=lambda: judge,
+                     draft_path=tmp_path / "draft.json",
+                     cache_path=tmp_path / "cache.json")
+    got = app.api_explore({"search": "4.7u", "footprint": "C-0603"})
+    assert got["package"] == "0603"
+    # ALL verified candidates return — the page does the package split,
+    # so nothing filtered is ever unreachable
+    assert [c["code"] for c in got["candidates"]] == ["C_0603", "C_0805"]
+    assert judge.calls == 1
+
+    # judged once, ever — the cache answers from now on
+    app.api_explore({"search": "4.7u", "footprint": "C-0603"})
+    assert judge.calls == 1
+
+
+def test_explore_low_confidence_judgment_means_no_filter(tmp_path):
+    judge = _FootprintJudge(confidence=0.4)
+    app = HendleyApp(db_path=tmp_path / "parts.db",
+                     datasource_factory=lambda: _PackageSource(
+                         {"C_0603": "0603", "C_0805": "0805"}),
+                     interpreter_factory=lambda: judge,
+                     draft_path=tmp_path / "draft.json",
+                     cache_path=tmp_path / "cache.json")
+    got = app.api_explore({"search": "4.7u", "footprint": "C-WEIRD"})
+    assert got["package"] is None and len(got["candidates"]) == 2
+
+
 def test_clean_emit_clears_the_design_draft(app):
     app.api_draft_put({"design": "demo", "draft": {"productionQuantity": 5}})
     app._clear_draft("demo")   # the hook api_emit runs on a clean export

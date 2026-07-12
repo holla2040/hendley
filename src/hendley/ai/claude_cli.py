@@ -65,6 +65,30 @@ Answer with ONLY this JSON object, no prose, no code fences:
   "confidence": 0.0, "rationale": "..."}}
 """
 
+FOOTPRINT_PROMPT = """\
+You are the footprint-normalization step of an electronics BOM tool.
+A schematic library carries this footprint name, verbatim:
+{footprint}
+
+Map it to the industry package it denotes, in catalog spelling:
+- a standard chip size (0201/0402/0603/0805/1206/1210/2010/2512) → that
+  size ("C-0603" → "0603").
+- an embedded standard package name → the catalog form as distributors
+  list it (e.g. "D-SOD323" → "SOD-323").
+- if no standard package is recognizable, package is "" — the library
+  name keys the database instead; never guess.
+Also your best reading of the footprint's physical envelope: mount "smd"
+or "tht"; maxDiaMm / maxLenMm / leadSpacingMm when the name implies them;
+omit fields you cannot infer.
+confidence: 0..1 for the WHOLE reading; below 0.8 the tool ignores it —
+be honest.
+
+Answer with ONLY this JSON object, no prose, no code fences:
+{{"package": "...", "envelope": {{"mount": "smd|tht", "maxDiaMm": 0,
+  "maxLenMm": 0, "leadSpacingMm": 0}},
+  "confidence": 0.0, "rationale": "..."}}
+"""
+
 
 class ClaudeCLIInterpreter:
     """Interpretation through ``claude -p`` with strict-JSON output."""
@@ -77,6 +101,34 @@ class ClaudeCLIInterpreter:
 
     def interpret_part(self, ctx: dict) -> Interpretation | None:
         prompt = PROMPT.format(context=json.dumps(ctx, indent=2, ensure_ascii=False))
+        obj = self._ask(prompt)
+        if obj is None:
+            return None
+        return self._parse(obj)
+
+    def interpret_footprint(self, footprint: str) -> dict | None:
+        """Judge one library footprint name → its catalog package (+envelope).
+
+        Returns ``{"package", "envelope", "confidence", "rationale"}`` or
+        None on any failure. An empty ``package`` is a valid, honest answer
+        (nothing standard recognizable)."""
+        obj = self._ask(FOOTPRINT_PROMPT.format(footprint=footprint))
+        if obj is None or "package" not in obj:
+            return None
+        env = obj.get("envelope") or {}
+        try:
+            confidence = max(0.0, min(1.0, float(obj.get("confidence") or 0.0)))
+        except (TypeError, ValueError):
+            return None
+        return {
+            "package": str(obj.get("package") or "").strip(),
+            "envelope": {k: v for k, v in env.items() if v not in (None, 0, "")},
+            "confidence": confidence,
+            "rationale": str(obj.get("rationale") or ""),
+        }
+
+    def _ask(self, prompt: str) -> dict | None:
+        """Run ``claude -p`` and return the extracted JSON object, or None."""
         try:
             proc = subprocess.run(
                 [self.binary, "-p", prompt, "--output-format", "json"],
@@ -86,19 +138,16 @@ class ClaudeCLIInterpreter:
             return None
         if proc.returncode != 0:
             return None
-        return self._parse(proc.stdout)
-
-    def _parse(self, stdout: str) -> Interpretation | None:
         try:
-            envelope = json.loads(stdout)
+            envelope = json.loads(proc.stdout)
             text = envelope.get("result") if isinstance(envelope, dict) else None
         except json.JSONDecodeError:
-            text = stdout
+            text = proc.stdout
         if not text:
             return None
-        obj = _extract_json_object(text)
-        if obj is None:
-            return None
+        return _extract_json_object(text)
+
+    def _parse(self, obj: dict) -> Interpretation | None:
         try:
             spec = SpecKey(
                 kind=str(obj["kind"]).strip().lower(),

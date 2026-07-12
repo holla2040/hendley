@@ -358,6 +358,49 @@ class HendleyApp:
                 datasource=datasource, strategy=strategy, searches=searches)
         return out
 
+    def api_explore(self, body: dict) -> dict:
+        """Engineer-fired free search, live-verified — alternates for a
+        schematic-pinned part. The terms come from the user verbatim; when a
+        footprint is supplied, results are filtered to the package the AGENT
+        judged it to be (cached forever) — Python only compares."""
+        from ..resolver.orchestration.queue import explore
+
+        search = str(body.get("search") or "").strip()
+        if not search:
+            raise ApiError("'search' is required")
+        footprint = str(body.get("footprint") or "").strip()
+        package = self._judged_package(footprint) if footprint else None
+        # everything verified returns; the page splits by package/coverage so
+        # nothing filtered is ever unreachable
+        return {"search": search,
+                "candidates": explore(self._datasource_factory(), search),
+                "package": package}
+
+    def _judged_package(self, footprint: str) -> str | None:
+        """The catalog package for a library footprint name — cache first,
+        else one agent judgment, cached forever. '' (nothing standard) is a
+        valid cached answer; None means no judgment available."""
+        store = self._store()
+        cached = store.get_interpretation("footprint", footprint=footprint)
+        result = (cached or {}).get("result") or {}
+        if "package" in result:
+            return result.get("package") or None
+        interpreter = self._interpreter_factory()
+        judge = getattr(interpreter, "interpret_footprint", None)
+        if judge is None:
+            return None
+        j = judge(footprint)
+        if j is None or j["confidence"] < CONFIDENCE_THRESHOLD:
+            return None
+        merged = dict(result)
+        merged["package"] = j["package"]
+        if j.get("envelope") and not merged.get("envelope"):
+            merged["envelope"] = j["envelope"]
+        store.put_interpretation("footprint", merged, "llm",
+                                 footprint=footprint,
+                                 confidence=j["confidence"])
+        return j["package"] or None
+
     def api_approve(self, body: dict) -> dict:
         from ..resolver.orchestration.queue import apply_approvals
 
@@ -550,6 +593,7 @@ POST_ROUTES = {
     "/api/intake": "api_intake",
     "/api/confirm-spec": "api_confirm_spec",
     "/api/resolve": "api_resolve",
+    "/api/explore": "api_explore",
     "/api/approve": "api_approve",
     "/api/emit": "api_emit",
     "/api/rotation": "api_rotation",

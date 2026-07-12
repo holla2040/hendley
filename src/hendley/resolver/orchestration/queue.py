@@ -97,9 +97,24 @@ def _verified_candidates(datasource: DataSource, category: str, spec: SpecKey,
                                     "params": {"search": search}})
     else:
         return [], None
+    return _verify_rows(datasource, rows, exclude), used
+
+
+def explore(datasource: DataSource, search: str) -> list[dict]:
+    """Verified candidates for an engineer-fired free search (no spec) —
+    the 'explore alternates' path for schematic-pinned parts. Only verified
+    rows return; there is nothing advisory to show."""
+    rows = datasource.discover({"category": "components",
+                                "params": {"search": search}})
+    return [r for r in _verify_rows(datasource, rows, set()) if r["verified"]]
+
+
+def _verify_rows(datasource: DataSource, rows: list[dict],
+                 exclude: set[str]) -> list[dict]:
+    """One batched verify over discovery rows → the candidate row shape."""
     codes = [r["code"] for r in rows if r.get("code") and r["code"] not in exclude]
     if not codes:
-        return [], used
+        return []
     facts = datasource.verify(codes)
     out = []
     for r in rows:
@@ -124,7 +139,7 @@ def _verified_candidates(datasource: DataSource, category: str, spec: SpecKey,
             "parameters": d.get("parameters") if verified else None,
             "keyParams": _key_params(d.get("parameters")) if verified else {},
         })
-    return out, used
+    return out
 
 
 def _price1(detail: dict) -> float | None:

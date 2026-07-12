@@ -140,6 +140,8 @@ tr.linkrow:hover td { background:rgba(217,164,65,.06); }
 .stop-link { background:none; border:none; padding:0; cursor:pointer;
   font:12px var(--sans); color:var(--tin); text-decoration:underline; }
 .stop-link:hover { color:var(--err); }
+.btn.mini { padding:2px 9px; font-size:11px; margin-left:8px;
+  white-space:nowrap; }
 details.unconf { margin-top:12px; }
 details.unconf > summary { cursor:pointer; color:var(--tin);
   font:12px var(--mono); }
@@ -220,6 +222,8 @@ const S = {
   rotations: [],
   avlCache: {},        // spec JSON -> housePart (this session)
   searches: {},        // lineKey -> the engineer's search terms (draft-persisted)
+  exploring: {},       // lineKey -> the pinned part's explore panel is open
+  exploreResults: {},  // lineKey -> live-verified explore candidates (session)
   altSort: {key: null, dir: -1},  // alternates sort: "stock" | "price"
   showUnconfirmed: false,  // the collapsed package-not-confirmed block
   selected: null,      // lineIndex of the open detail panel
@@ -279,6 +283,8 @@ async function hydrate(data, readAt) {
   const d = await api("/api/draft?design=" + encodeURIComponent(S.design));
   S.overrides = {};
   S.searches = {};
+  S.exploring = {};
+  S.exploreResults = {};
   if (d.draft) {
     if (d.draft.productionQuantity) $("qty").value = d.draft.productionQuantity;
     const valid = new Set(S.requirements.lines.map(lineKey));
@@ -544,7 +550,8 @@ const PART_TABLE_HEAD =
   '<tr><th></th><th>lcsc</th><th>manufacturer</th><th>mpn</th>' +
   '<th>package</th>' +
   '<th class="num">live stock</th><th class="num">need</th>' +
-  '<th class="num">unit $</th><th class="num">order $</th><th>why</th></tr>';
+  '<th class="num">unit $</th><th class="num">order $</th>' +
+  '<th>class</th><th>why</th></tr>';
 
 /* the alternates table: live stock and unit $ headers sort the candidates */
 function sortableHead() {
@@ -557,7 +564,8 @@ function sortableHead() {
   return '<tr><th></th><th>lcsc</th><th>manufacturer</th><th>mpn</th>' +
     '<th>package</th>' +
     h("live stock", "stock") + '<th class="num">need</th>' +
-    h("unit $", "price") + '<th class="num">order $</th><th>why</th></tr>';
+    h("unit $", "price") + '<th class="num">order $</th>' +
+    '<th>class</th><th>why</th></tr>';
 }
 
 function partRow(o) {
@@ -583,9 +591,12 @@ function partRow(o) {
     '<td class="num">' + fmt(o.need) + '</td>' +
     '<td class="num">' + esc(unitStr(o.unit)) + '</td>' +
     '<td class="num">' + esc(money(o.unit, o.need)) + '</td>' +
+    '<td' + (o.cls ? "" : ' class="dimtd"') + '>' +
+    esc(o.cls ? offerLabel(o.cls) : "—") + '</td>' +
     '<td class="why">' + (o.why || "") +
-    (o.action ? ' <button class="stop-link" data-act="' + o.action.act +
-      '">' + o.action.label + "</button>" : "") +
+    (o.action ? ' <button class="' +
+      (o.action.act === "explore" ? "btn mini" : "stop-link") +
+      '" data-act="' + o.action.act + '">' + o.action.label + "</button>" : "") +
     '</td></tr>';
 }
 
@@ -629,17 +640,24 @@ function confBody(i) {
     qualifier: g.qualifier || ""}, null);
 }
 
-/* the schematic names an exact part; short means fix it in Fusion */
+/* the schematic names an exact part; alternates are explored on demand and
+   any pick is order-only (the schematic stays authoritative) */
 function pinnedBody(i) {
   const l = S.resolution.lines[i];
   const e = escFor(i);
+  const key = lineKey(S.requirements.lines[i]);
+  const over = isOverridden(i);
   const code = l.ref || (e && e.ref) ||
     (S.requirements.lines[i].providerRefs || {}).jlcpcb || "";
   const row = partRow({
     radio: false, checked: !e, code: code, mpn: l.mpn, maker: l.manufacturer,
-    pkg: l.footprint,
+    pkg: l.footprint, cls: l.offerClass,
     stock: l.liveStock, stockCls: e ? "short-num" : "ok-num",
-    need: l.requiredQty, unit: l.unitPrice, why: "named by the schematic"});
+    need: l.requiredQty, unit: l.unitPrice,
+    why: over ? "your pick — this order only" : "named by the schematic",
+    action: over
+      ? {act: "clearover", label: "undo — use the schematic part"}
+      : {act: "explore", label: "explore alternates"}});
   let extra = "";
   if (e) {
     const lcscUrl = "https://www.lcsc.com/product-detail/" +
@@ -649,9 +667,65 @@ function pinnedBody(i) {
       (code ? ' <a href="' + lcscUrl + '" target="_blank" rel="noopener">' +
         esc(code) + " on LCSC</a>" : "") + "</p>";
   }
+  let exploreHtml = "";
+  if (S.exploring[key]) {
+    // seed is value only: library footprint names return zero FTS rows;
+    // the package narrowing is the agent-judged filter, not the search
+    const seed = S.searches[key] || l.comment || l.mpn || "";
+    exploreHtml = '<div class="sect"><div class="form">' +
+      '<label>search in-stock parts <input id="sf-explore" value="' +
+      esc(seed) + '"></label>' +
+      '<button class="btn solid" id="explore-search" data-line="' + i +
+      '">Search</button></div></div>' + exploreResultsHtml(i, l);
+  }
   return '<div class="sect"><div class="tablewrap"><table>' + PART_TABLE_HEAD +
-    row + "</table></div>" + extra + checksHtml(l) + "</div>" +
-    '<div id="avl-slot"></div>';
+    row + "</table></div>" + extra + checksHtml(l) + "</div>" + exploreHtml;
+}
+
+function exploreResultsHtml(i, l) {
+  const key = lineKey(S.requirements.lines[i]);
+  const r = S.exploreResults[key];
+  if (!r) return "";
+  const need = l.requiredQty;
+  const all = r.candidates || [];
+  const pkgOk = c => !r.package || (c.package || "") === r.package;
+  const covers = c => (c.liveStock || 0) >= need;
+  const exploreRow = (c, radio) => partRow({
+    radio: radio, checked: false, code: c.code, mpn: c.model,
+    maker: c.manufacturer, pkg: c.package, cls: c.libraryType,
+    stock: c.liveStock, stockCls: covers(c) ? "ok-num" : "short-num",
+    need: need, unit: c.unitPrice1,
+    pickArg: "over:" + c.code, why: ""});
+
+  const main = all.filter(c => pkgOk(c) && covers(c));
+  const otherPkg = all.filter(c => !pkgOk(c));           // pickable: aliases exist
+  const short = all.filter(c => pkgOk(c) && !covers(c)); // never pickable
+
+  const block = (list, summary, radio) => list.length
+    ? '<details class="unconf"><summary>' + summary + "</summary>" +
+      '<div class="tablewrap"><table>' + PART_TABLE_HEAD +
+      list.map(c => exploreRow(c, radio)).join("") + "</table></div></details>"
+    : "";
+  const blocks =
+    block(otherPkg, otherPkg.length + " other package" +
+      (otherPkg.length === 1 ? "" : "s"), true) +
+    block(short, short.length + " can’t cover " + need, false);
+  const note = r.package
+    ? '<p class="note">package ' + esc(r.package) + " only</p>" : "";
+
+  if (!main.length) {
+    const alert = all.length
+      ? "search found " + all.length + " — " +
+        [otherPkg.length ? otherPkg.length + " other packages" : "",
+         short.length ? short.length + " can’t cover " + need : ""]
+          .filter(Boolean).join(", ")
+      : "search found nothing — adjust the terms and search again";
+    return note + '<p class="alert">' + esc(alert) + "</p>" + blocks;
+  }
+  return note +
+    '<div class="sect"><div class="tablewrap"><table>' + PART_TABLE_HEAD +
+    main.map(c => exploreRow(c, true)).join("") + "</table></div></div>" +
+    blocks;
 }
 
 /* a spec line: the single list — your part(s) first, then search results */
@@ -674,6 +748,7 @@ function specBody(i) {
       maker: l.manufacturer,
       pkg: (l.spec && l.spec.package) || (rl.spec && rl.spec.package) ||
            l.footprint,
+      cls: l.offerClass,
       stock: l.liveStock, stockCls: "ok-num",
       need: need, unit: l.unitPrice, pickArg: "over:" + l.ref,
       why: over ? "your pick — this order only"
@@ -735,7 +810,7 @@ function specBody(i) {
   }
   const candRows = confirmed.map(c => partRow({
     radio: true, checked: false, code: c.code, mpn: c.model,
-    maker: c.manufacturer, pkg: c.package,
+    maker: c.manufacturer, pkg: c.package, cls: c.libraryType,
     stock: c.liveStock,
     stockCls: (c.liveStock || 0) >= need ? "ok-num" : "",
     need: need, unit: c.unitPrice1,
@@ -743,7 +818,7 @@ function specBody(i) {
     why: candWhy(c)}));
   const unconfRows = unconf.map(c => partRow({
     radio: true, checked: false, code: c.code, mpn: c.model,
-    maker: c.manufacturer, pkg: c.package,
+    maker: c.manufacturer, pkg: c.package, cls: c.libraryType,
     stock: c.liveStock, stockCls: "",
     need: need, unit: c.unitPrice1,
     pickArg: (firstPick ? "first:" : "over:") + c.code,
@@ -793,11 +868,8 @@ function offerLabel(v) {
 function candWhy(c) {
   const bits = [];
   for (const x of (c.scoreContributions || [])) {
-    if (x.factor === "stock-margin" || x.factor === "price") continue;
-    if (x.factor === "offer-class") {
-      if (c.libraryType) bits.push("JLC " + offerLabel(c.libraryType));
-      continue;
-    }
+    // stock/price restatements and the fee class have their own columns
+    if (["stock-margin", "price", "offer-class"].includes(x.factor)) continue;
     bits.push(x.why);
   }
   return bits.map(esc).join(" · ");
@@ -807,9 +879,9 @@ function candWhy(c) {
    no query composed or run behind their back */
 function searchRowHtml(i, l) {
   const key = lineKey(S.requirements.lines[i]);
-  const spec = l.spec || {};
+  const spec = l.spec || S.requirements.lines[i].spec || {};
   const seed = S.searches[key] ||
-    [spec.qualifier, spec.value].filter(Boolean).join(" ");
+    [spec.qualifier, spec.value, spec.package].filter(Boolean).join(" ");
   return '<div class="sect"><div class="form">' +
     '<label>search in-stock parts <input id="sf-terms" value="' + esc(seed) +
     '"></label>' +
@@ -894,12 +966,22 @@ function wireMain() {
       render();
     };
   });
-  document.querySelectorAll("#main .stop-link").forEach(btn => {
+  document.querySelectorAll("#main [data-act]").forEach(btn => {
     btn.onclick = () => {
       if (btn.dataset.act === "clearover") clearOverride(S.selected);
-      else stopUsing(S.selected);
+      else if (btn.dataset.act === "explore") {
+        S.exploring[lineKey(S.requirements.lines[S.selected])] = true;
+        render();
+      } else stopUsing(S.selected);
     };
   });
+  const expl = $("explore-search");
+  if (expl) {
+    const fire = () => doExploreSearch(parseInt(expl.dataset.line, 10));
+    expl.onclick = fire;
+    const input = $("sf-explore");
+    if (input) input.onkeydown = ev => { if (ev.key === "Enter") fire(); };
+  }
   if (S.selected != null) ensureAvl(S.selected);
 }
 
@@ -914,6 +996,23 @@ async function ensureAvl(i) {
   catch (e) { S.avlCache[key] = null; return; }
   if (S.selected === i) render();
 }
+
+async function doExploreSearch(i) { await run(
+  "searching (judging a new footprint can take a few seconds)", async () => {
+  const t = $("sf-explore").value.trim();
+  if (!t) throw new Error("enter search terms first");
+  const key = lineKey(S.requirements.lines[i]);
+  S.searches[key] = t;
+  saveDraft();
+  const d = await api("/api/explore", {
+    search: t, footprint: S.resolution.lines[i].footprint || undefined});
+  S.exploreResults[key] = d;
+  render();
+  const n = (d.candidates || []).length;
+  msg(n ? n + " part(s) found — pick one for this order"
+        : "nothing found — adjust the terms and search again",
+      n ? "ok" : "warn");
+}); }
 
 /* undo an order-only pick: the resolver's own choice comes back */
 async function clearOverride(i) { await run("undoing pick", async () => {
