@@ -137,9 +137,6 @@ tr.linkrow:hover td { background:rgba(217,164,65,.06); }
   font:600 11px var(--mono); letter-spacing:.1em; text-transform:uppercase;
   color:var(--tin); white-space:nowrap; }
 .th-sort:hover { color:var(--pad); }
-.stop-link { background:none; border:none; padding:0; cursor:pointer;
-  font:12px var(--sans); color:var(--tin); text-decoration:underline; }
-.stop-link:hover { color:var(--err); }
 .btn.mini { padding:2px 9px; font-size:11px; margin-left:8px;
   white-space:nowrap; }
 details.unconf { margin-top:12px; }
@@ -594,9 +591,8 @@ function partRow(o) {
     '<td' + (o.cls ? "" : ' class="dimtd"') + '>' +
     esc(o.cls ? offerLabel(o.cls) : "—") + '</td>' +
     '<td class="why">' + (o.why || "") +
-    (o.action ? ' <button class="' +
-      (o.action.act === "explore" ? "btn mini" : "stop-link") +
-      '" data-act="' + o.action.act + '">' + o.action.label + "</button>" : "") +
+    (o.action ? ' <button class="btn mini" data-act="' + o.action.act +
+      '">' + o.action.label + "</button>" : "") +
     '</td></tr>';
 }
 
@@ -645,27 +641,34 @@ function confBody(i) {
 function pinnedBody(i) {
   const l = S.resolution.lines[i];
   const e = escFor(i);
-  const key = lineKey(S.requirements.lines[i]);
+  const rl = S.requirements.lines[i];
+  const key = lineKey(rl);
   const over = isOverridden(i);
-  const code = l.ref || (e && e.ref) ||
-    (S.requirements.lines[i].providerRefs || {}).jlcpcb || "";
+  const schematicCode = (rl.providerRefs || {}).jlcpcb || "";
+  const code = l.ref || (e && e.ref) || schematicCode;
   const row = partRow({
     radio: false, checked: !e, code: code, mpn: l.mpn, maker: l.manufacturer,
     pkg: l.footprint, cls: l.offerClass,
     stock: l.liveStock, stockCls: e ? "short-num" : "ok-num",
     need: l.requiredQty, unit: l.unitPrice,
-    why: over ? "your pick — this order only" : "named by the schematic",
+    why: over ? "your pick — this order only"
+      : schematicCode ? "schematic LCSC attribute"
+      : "schematic MPN attribute “" + esc(rl.mpn || "") + "” only",
     action: over
       ? {act: "clearover", label: "undo — use the schematic part"}
       : {act: "explore", label: "explore alternates"}});
   let extra = "";
-  if (e) {
+  if (e && schematicCode) {
     const lcscUrl = "https://www.lcsc.com/product-detail/" +
       encodeURIComponent(code) + ".html";
     extra = '<p class="alert">' + esc(e.reason) +
       ' — resolve this in Fusion; the schematic pins this exact part.' +
-      (code ? ' <a href="' + lcscUrl + '" target="_blank" rel="noopener">' +
-        esc(code) + " on LCSC</a>" : "") + "</p>";
+      ' <a href="' + lcscUrl + '" target="_blank" rel="noopener">' +
+      esc(code) + " on LCSC</a></p>";
+  } else if (e) {
+    extra = '<p class="alert">the schematic gives only an MPN — JLC can’t ' +
+      "verify by MPN. Add the LCSC attribute in Fusion, or pick a part " +
+      "below for this order.</p>";
   }
   let exploreHtml = "";
   if (S.exploring[key]) {
