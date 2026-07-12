@@ -8,4 +8,4 @@ Then:
 - Relay the stock report. A nonzero exit means blockers — name each blocked part and offer to find verified alternates.
 - Confirm the two files: `~/tmp/hendley_output/bom.csv` and `cpl.csv`.
 - Remind the user Fusion's engine is left on the board context — click the schematic tab before running again.
-- If it errors "no schematic parts readable": the schematic view isn't active in Fusion (or a modal dialog is open). If it errors "cannot reach the Fusion bridge": Fusion isn't running with the MCP Server enabled, or the Windows portproxy doesn't match the current WSL gateway IP (`ip route | grep default`) — see README "Reading from Fusion Electronics".
+- If it errors "no schematic parts readable": the schematic view isn't active in Fusion (or a modal dialog is open). If it errors "cannot reach the Fusion bridge": Fusion isn't running with the MCP Server enabled, or the Windows portproxy doesn't match the current WSL gateway IP (`ip route | grep default`) — see `docs/fusion-notes.md` "Reaching Fusion from WSL2".

@@ -90,9 +90,10 @@ literally `JOP`, no algorithm suffix), sign algorithm `HMAC_SHA256`. The
 Other algorithms exist but are not the default: `HmacSHA1`, `SHA256withRSA`
 (`RSA_SHA256`), `HMAC-SM3`.
 
-Standard headers on every JSON call: `Authorization`,
-`Content-Type: application/json`, `Accept: application/json`, `Accept-Language`,
-`User-Agent`.
+Standard headers sent by `client.py` on every JSON call: `Authorization`,
+`Content-Type: application/json`, `Accept: application/json`, `User-Agent`.
+(The Java SDK additionally sends `Accept-Language`; the Python client does
+not.)
 
 ### File uploads (signing + transport)
 

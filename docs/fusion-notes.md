@@ -1,9 +1,11 @@
 # Fusion Electronics — introspection notes (hendrix)
 
-Recorded from a **live** Autodesk Fusion session, reached from WSL2 Claude Code
-**over plain HTTP** (JSON-RPC `POST`s) through a Windows port-forward (see the
-README "Reading from Fusion Electronics" section). Active design at capture:
-**`comet`** (schematic-only — no board yet).
+Recorded from **live** Autodesk Fusion sessions, reached from WSL2 Claude Code
+**over plain HTTP** (JSON-RPC `POST`s) through a Windows port-forward (see
+"Reaching Fusion from WSL2" below). Reference design: **`comet`**
+(schematic-only at first capture; a board was added later — see the BOARD
+section). Part values quoted below are session-specific examples — the design
+has changed across captures, so read them as shapes, not current data.
 
 > **This project talks to Fusion over HTTP only — there is NO MCP connector or
 > client involved.** Fusion publishes a local HTTP endpoint (you enable it with
@@ -14,20 +16,75 @@ README "Reading from Fusion Electronics" section). Active design at capture:
 > use Claude Desktop's "Autodesk Fusion" connector, an MCP client library, or
 > `claude mcp add` — none exists in this project and none is needed.
 
+## Reaching Fusion from WSL2 — the Windows port-forward
+
+If you run Hendley on the same Windows machine as Fusion, `http://127.0.0.1:27182`
+just works. If you run it under **WSL2**, Windows loopback isn't reachable across
+the NAT boundary, so forward the port on the **Windows** side (elevated
+PowerShell).
+
+> ⚠️ **Use the WSL gateway IP as `listenaddress`, NOT `0.0.0.0`.** A `0.0.0.0`
+> listener on `27182` sits in front of the *same* loopback port Fusion's server
+> and the Claude Desktop "Autodesk Fusion" connector use, and hijacks their
+> `127.0.0.1:27182` traffic — Fusion appears to "connect then close
+> unexpectedly" and **Claude Desktop stops connecting**. Bind the WSL-facing
+> gateway address specifically so loopback is never intercepted.
+
+First get the WSL→Windows gateway IP **from inside WSL** (it is also the address
+WSL uses to reach Windows):
+
+```bash
+ip route | grep default | awk '{print $3}'   # e.g. 172.17.64.1
+```
+
+Then, on Windows (elevated), forward that address only — substitute your gateway
+IP for `172.17.64.1`:
+
+```powershell
+netsh interface portproxy add v4tov4 listenaddress=172.17.64.1 listenport=27182 connectaddress=127.0.0.1 connectport=27182
+```
+
+From WSL, reach Fusion at `http://172.17.64.1:27182/mcp`. The gateway IP can
+change across WSL restarts — re-check it with the `ip route` line above and
+re-add the rule if Fusion becomes unreachable.
+
+**Health check / troubleshooting.** On Windows, `curl http://127.0.0.1:27182/mcp`
+should return an instant JSON error when Fusion's server is healthy —
+`{"error": "Not Found"}` on older builds, `{"error": "Server does not offer an
+SSE stream at this endpoint"}` on newer ones (observed 2026-07-10). Either body
+means healthy; only a hang or "connection closed unexpectedly" is bad. (In
+PowerShell, `curl` is `Invoke-WebRequest` and paints non-2xx responses as red
+exceptions — read the body, not the color.)
+If it (or Claude Desktop) "closes the connection unexpectedly," a bad `0.0.0.0`
+forward is almost certainly hijacking loopback — delete it and the symptom
+clears:
+
+```powershell
+netsh interface portproxy show all     # look for a 0.0.0.0 ... 27182 entry
+netsh interface portproxy delete v4tov4 listenaddress=0.0.0.0 listenport=27182
+```
+
+Remove the (correct) gateway forward when you're done with:
+
+```powershell
+netsh interface portproxy delete v4tov4 listenaddress=172.17.64.1 listenport=27182
+```
+
 ## Talking to Fusion over HTTP — the full recipe (copy-paste, verified)
 
 Plain `curl` over HTTP is all you need — but the JSON-RPC handshake has steps
-that, if skipped, fail with confusing errors. **This is the layer that isn't
-written down anywhere else, so every agent re-derives it (or hand-writes a
-`bridge.py`).** Here it is, end to end, exactly as verified live. Don't read
-source or invent your own client — run this.
+that, if skipped, fail with confusing errors. The committed client —
+`FusionBridge` in `src/hendley/ingestion/fusion/bridge.py` — implements this
+handshake end to end, so from Python use it (or just run `hendley pcba` /
+`hendley app`). The raw recipe below is the reference for debugging or for
+working outside the package. Don't invent another client — run this.
 
 **The rules that bite (each one cost a debugging session to rediscover):**
 - **Never `127.0.0.1` from WSL.** Fusion listens on the *Windows* loopback; from
   WSL2 you must hit the **Windows host IP = the default gateway**
   (`ip route | grep default | awk '{print $3}'`, e.g. `172.17.64.1`). Needs the
-  Windows port-forward in place — see README "Reading from Fusion Electronics"
-  and the `listenaddress=0.0.0.0` gotcha in CLAUDE.md.
+  Windows port-forward in place — see "Reaching Fusion from WSL2" above,
+  including the `listenaddress=0.0.0.0` gotcha.
 - **…but spoof the `Host` header to loopback.** The server now **validates the
   `Host` header**: hitting the gateway IP makes `Host` read `172.17.64.1:27182`,
   which it rejects with **`HTTP 403 {"error":"Invalid Host header"}`** *before*
@@ -107,6 +164,9 @@ via a `tools/call` `POST`):
 
 Requires an active Electronics document. Read returns rows as a JSON string in
 `result.content[0].text` → `{ "items": [...], "pagination": {...} }`.
+An unpaginated read caps at 100 rows — pass `pagination{limit,offset}` for
+more. `FusionBridge.read_all()` pages at `limit` 1000 per batch (with a
+100-batch runaway guard), stopping on the first empty batch.
 
 ## Object model (what we walk)
 
@@ -132,7 +192,9 @@ Requires an active Electronics document. Read returns rows as a JSON string in
     **`{"items":[]}`** — empty, not an error. So "the attribute reader doesn't
     surface JLC attrs" is a **myth**: `LCSC`/`MPN`/`MANUFACTURER` read back fine
     once you scope to the live part. Verified on `comet` R1:
-    `LCSC=C31850`, `MPN=0603WAF2202T5E`, `MANUFACTURER=UNI-ROYAL`.
+    `LCSC=C31850`, `MPN=0603WAF2202T5E`, `MANUFACTURER=UNI-ROYAL`. (A later
+    capture, after part swaps, reads different values for R1 — see the table
+    below; both snapshots are real, from different sessions.)
   - ⚠️ **`object_id`s are NOT stable across sessions.** They are reassigned every
     time the design reloads (R1 was `2812` one session, `11225` the next). Always
     re-read `electronics.Part` for the *current* `object_id` in the same session
@@ -341,11 +403,16 @@ After the switch (verified live on `comet`, 2026-07-10):
 
 ### CPL generation + `data/cpl-rotations.json`
 
-This whole flow is committed as **`hendley pcba`** (`src/hendley/bridge.py` +
-`src/hendley/pcba.py`) — schematic read, one-way `BOARD;` switch, placement
-read, rotation corrections, live JLC stock check, and exactly two output files
-(`bom.csv` + `cpl.csv`). **Run the command; don't rebuild this pipeline by
-hand.** One standing data file supports it: **`data/cpl-rotations.json`**
+This whole flow is committed as **`hendley pcba`** (bridge:
+`src/hendley/ingestion/fusion/bridge.py`; live read:
+`src/hendley/ingestion/fusion/live_design.py`; BOM/CPL + rotation
+corrections: `src/hendley/providers/jlcpcb/order_files.py`; command:
+`src/hendley/cli/manufacturing.py`) — schematic read, one-way `BOARD;`
+switch, placement read, rotation corrections, live JLC stock check, and
+exactly two output files (`bom.csv` + `cpl.csv`). Do-not-populate parts — a
+schematic `DNP` attribute set to anything but empty/`0`, or a board element
+whose `populate` flag is off — are excluded from both files and from the
+stock check. **Run the command; don't rebuild this pipeline by hand.** One standing data file supports it: **`data/cpl-rotations.json`**
 records per-footprint rotation corrections — some library footprints are drawn
 with a zero-orientation that differs from JLC's feeder expectation, so those
 parts need the same hand-rotate in JLC's order preview on *every* submission.

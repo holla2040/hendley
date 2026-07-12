@@ -34,7 +34,7 @@ contradicts are flagged as such.
 | BOM Checks table (named checks with validated severities) | **PORT** → `domain/model.py` | PRD §12.2's blocking/warning/informational triad. The mis-cased-severity bug was already fixed on-branch (`cf3a73a`); intake validation comes along. |
 | "Rank is deliberate-only, **never** computed" (sourcing design §"divergence from ActiveBOM") | **AMENDED** by ADR-0001 | Kept for the approved AVL (never reordered); relaxed for newly discovered candidates, which the PRD §12.6 ranking engine orders. The branch's stance survives where it mattered. |
 | Lifecycle evaluation absent (design Q5) | **NOT misalignment** — signed-off deferral | JLC API returns no lifecycle data. Stays deferred (plan: v1 deferral list). |
-| Fusion write path excluded from sourcing (design Q3) | **ALIGNED** | Matches invariant 10 and README "Design writes are explicit". |
+| Fusion write path excluded from sourcing (design Q3) | **ALIGNED** | Matches invariant 10 and `docs/cli.md` "Design writes are explicit". |
 | CLI surface: `resolve`, `bom`, `db lookup/record/rerank/remove/list/refresh` | **PORT** → `cli/knowledge.py` + `cli/manufacturing.py` | `db record` gains `--mpn/--manufacturer` as identity; `--lcsc` becomes a provider ref. |
 | 86 tests (`test_partsdb/resolve/bom/snapshot.py`) | **PORT with adaptation** | Identity-related assertions updated for v3; migration tests extended to the v2→v3 and v1→v2→v3 chains. |
 | `order-bom` skill | **REWRITE** (Phase 8) | Reframed as the secondary surface per ADR-0003, driving the same library flow as the app. |

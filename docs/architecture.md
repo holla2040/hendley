@@ -225,7 +225,9 @@ source:
 notes:
 ```
 
-The exact schema is an open architecture decision and should be versioned once selected.
+The schema is now defined in `hendley.domain.model` (`RequirementsBom` /
+`RequirementLine` / `SpecKey`) and versioned via `requirementsBomVersion`
+(currently 1), enforced on read.
 
 ### 5.4 Component Data Source Connectors
 
@@ -508,6 +510,15 @@ ProviderAdapter.export(selections, configuration) -> OutputArtifacts
 
 Persisted and plugin-facing contracts should use versioned schemas. Internal Python interfaces may evolve more freely.
 
+The implemented names differ in places from the conceptual sketch above:
+`RequirementsNormalizer.normalize` → `requirements_from_design()`
+(`hendley.requirements.normalizer`); `DataSource.search` → `verify()` +
+`discover()` (`hendley.datasources.base`); `KnowledgeStore.find` →
+`lookup()` (`hendley.knowledge.base`); `AIProvider.analyze` →
+`Interpreter.interpret_part` (`hendley.ai.interpreter`, ADR-0005);
+`SourceRecord` → `PartFact`. `ProviderStrategy` and `ProviderAdapter`
+(`hendley.providers.base`) match the sketch closely.
+
 ## 8. Persistence and Caching
 
 The implementation shall separate:
@@ -518,7 +529,7 @@ The implementation shall separate:
 - audit records
 - credentials
 
-SQLite is a reasonable candidate for local structured data but is not an approved decision merely because it appeared in an earlier draft. The storage choice should be recorded when selected.
+Local structured data uses SQLite — the recorded decision (ADR-0002), implemented in `hendley.knowledge.partsdb`.
 
 Caching rules:
 
@@ -623,10 +634,11 @@ A possible target structure is:
 ```text
 src/hendley/
 ├── cli/
+├── app/
 ├── domain/
 ├── ingestion/
 │   ├── fusion/
-│   └── csv/
+│   └── csv/        (future)
 ├── requirements/
 ├── resolver/
 │   ├── constraints/
@@ -655,18 +667,26 @@ Decided so far (see `docs/adr/`):
 - ~~persistence technology and migrations~~ — **ADR-0002**: SQLite, numbered
   single-transaction migrations, file backup before destructive changes.
 - ~~UI form (model level)~~ — **ADR-0003**: app-first over a shared library
-  and versioned JSON documents; CLI/agent is the secondary surface. The
-  concrete app form (web/TUI/desktop) is ADR-0004, pending.
+  and versioned JSON documents; CLI/agent is the secondary surface.
+- ~~concrete app form~~ — **ADR-0004**: a local stdlib web app served by the
+  CLI (`hendley app`, `src/hendley/app/`).
+- ~~AI interpretation~~ — **ADR-0005**: the replaceable `Interpreter`
+  protocol (`hendley.ai`), `claude -p` as the first implementation, judgments
+  cached in the DB (schema v4) with provenance.
+- ~~discovery/search composition~~ — **ADR-0006**: judgment belongs to the
+  agent and the engineer; searches are human-fired, deterministic
+  auto-discovery only.
+- ~~canonical Requirements BOM schema~~ — implemented and versioned in
+  `hendley.domain.model` (`requirementsBomVersion: 1`); see §5.3.
 
 The following remain intentionally unresolved:
 
-- canonical Requirements BOM schema
 - component taxonomy and category-specific constraints
 - plugin packaging and discovery
 - ranking configuration model (the weights/format engineers may edit)
-- concrete app form (ADR-0004)
 - PCBWay data acquisition
-- AI provider abstraction
+- multi-vendor AI provider selection (the `Interpreter` seam exists per
+  ADR-0005; alternatives beyond `claude -p` are unexplored)
 - project/user/organization knowledge precedence
 - requirement-signature algorithm
 - open-source license and transition plan

@@ -6,8 +6,8 @@
 
 **Read this first.** Every judgment call I made that the design doc left open,
 in task order. Items marked ⚠️ are the ones to review hardest (the "would have
-been a sign-off question" tier). This file is deliberately uncommitted —
-delete it after review.
+been a sign-off question" tier). (Originally written as an uncommitted
+scratch log; kept committed for traceability per the banner above.)
 
 _Reference: `docs/hendley-sourcing-design.md` (AGREED). Commits land per task
 on `house-parts-bom`._

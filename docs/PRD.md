@@ -117,7 +117,7 @@ Hendley is not starting from an empty repository. The current codebase already p
 - live Fusion Electronics reads over Fusion's local HTTP interface
 - generation of explicit Fusion `.scr` migration scripts
 
-These capabilities are useful independently and should be preserved. They do not yet constitute the complete product defined by this PRD. In particular, the current alternate workflow gathers and verifies candidates but does not implement the canonical Requirements BOM, deterministic multi-provider resolver, reusable approval knowledge, ranked review workflow, or provider-independent output architecture.
+These capabilities are useful independently and were preserved. Since this baseline was written, the rest of the product defined by this PRD has been implemented: the canonical Requirements BOM (`hendley.domain.model`), the deterministic multi-provider resolver (`hendley.resolver`), reusable approval knowledge (`hendley.knowledge`), the ranked review workflow (the app, ADR-0003/0004), and the provider-independent output architecture (`hendley.providers`, with PCBWay as the second provider).
 
 Fusion write-back is considered an ancillary, engineer-initiated migration utility. It is not an automatic step in the BOM-resolution workflow.
 
@@ -1120,7 +1120,7 @@ Given the same Requirements BOM, configuration, provider strategy, and preserved
 
 ## 21. Open Questions
 
-The following questions remain to be resolved during architecture and implementation planning:
+Questions open when this PRD was written; several have since been resolved — the Requirements BOM schema (`hendley.domain.model`, versioned), provider data retrieval/caching (`hendley.datasources` / `hendley.providers`), the AI/deterministic split (ADR-0005/0006), and manual-alternate representation (the ranked AVL, ADR-0006). `docs/architecture.md` §14 tracks what remains. The original list:
 
 - What canonical schema will represent the Requirements BOM?
 - Which Fusion Electronics export or API path will be used first?

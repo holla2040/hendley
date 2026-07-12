@@ -72,7 +72,7 @@ concrete `providers/*` or `datasources/jlc` — only the base protocols.
   degrade to one-time confirm cards in the app, never break the flow.
   **Standing rule (ADR-0006): judgment belongs to Claude and the engineer;
   Python never composes searches, invents filters, or parses names.**
-- `src/hendley/knowledge/partsdb.py` — the house-parts DB (SQLite v3 at
+- `src/hendley/knowledge/partsdb.py` — the house-parts DB (SQLite v4 at
   `~/.hendley/parts.db`, `HENDLEY_DB` to override): House Parts (opaque id +
   spec-tuple index), ranked Part Choices (deliberate rank, `active|removed`),
   `choice_provider_ids` (provider-neutral identity: mpn/manufacturer preferred,
@@ -81,7 +81,8 @@ concrete `providers/*` or `datasources/jlc` — only the base protocols.
   provider ref decides first; a bare-MPN match is rejected when the row
   carries a conflicting ref** — different manufacturers publish the same MPN
   (e.g. 1N4148WS), and collapsing them once overwrote a recorded pick. Migrations chain
-  v1→v2→v3 on open, one transaction each, file backup (`.v<N>.bak`) first.
+  v1→v2→v3→v4 on open (v4 adds the `interpretations` cache, ADR-0005), one
+  transaction each, file backup (`.v<N>.bak`) first.
   `PartsDb` class = the KnowledgeStore contract.
 - `src/hendley/resolver/` — provider-independent core:
   - `orchestration/resolve.py` — the rank-walk resolver (one batched verify,
@@ -175,7 +176,12 @@ concrete `providers/*` or `datasources/jlc` — only the base protocols.
   config helpers).
 - `docs/api-reference.md` — **the API contract** (reverse-engineered from the
   Java SDK). Source of truth for endpoints, request/response shapes, and the
-  not-yet-wrapped PCB/TDP order routes.
+  PCB/TDP order routes (wrapped in `client.py` but not exercised end-to-end).
+- `docs/app.md` — the app user guide (the order workbench page: rail, detail
+  panel, pick semantics, staged Update commit, export).
+- `docs/cli.md` — the CLI guide (commands + output formats, `hendley pcba`
+  and the CPL rotations, the design-change workflow, the `.scr` swap-JSON
+  contract, the Python API). The README is a TL;DR pointing here.
 - `docs/adr/` — architecture decision records (ranking synthesis, SQLite,
   app-first interface, …).
 - `sdk/` — reference JLCPCB Java SDK jars (Core + Business).
@@ -255,8 +261,9 @@ The point of Hendley: the user runs Claude in this repo, says something in plain
 words about a JLC part, and you have the conversation — **you are the interpreter
 of their words into the existing tooling.** Three standing rules for that role:
 
-- **Everything you need to drive the tools is documented** — this file, the
-  `README`, and the module docstrings named below. **Do not read the source to
+- **Everything you need to drive the tools is documented** — this file,
+  `docs/cli.md` + `docs/app.md` (the README is a TL;DR pointing there), and
+  the module docstrings named below. **Do not read the source to
   figure out how to use a tool.** If something genuinely isn't documented, say so;
   don't reverse-engineer it from the code.
 - **Never modify Hendley's source to satisfy a request.** You translate the user's
@@ -327,8 +334,8 @@ below — to get its designator and the exact package variant names.) Drive it a
    power/voltage rating, so check the part's actual dissipation first. Recommend
    one with reasoning the user can override.
 5. **Build the swap and generate the `.scr`.** Do NOT read the `scr` module source for the
-   input format — the swap-JSON contract is documented in **README → "The
-   workflow" (the `.scr` file format)** and the `hendley.migration.fusion_script.scr` module docstring.
+   input format — the swap-JSON contract is documented in **`docs/cli.md` →
+   "The `.scr` file format"** and the `hendley.migration.fusion_script.scr` module docstring.
    Fields (only `designator` required), filled from data you already have:
    - `designator` — the schematic ref (e.g. `R6`). Find it in the BOM
      (`hendley fusion PARTS.json --no-enrich`, or grep the parts JSON) by matching
@@ -522,7 +529,7 @@ the loopback that Fusion's server and the Claude Desktop connector use, so they
 Windows `curl http://127.0.0.1:27182/mcp` returns `{"error":"Not Found"}` when
 healthy; if it closes unexpectedly, delete any `0.0.0.0` portproxy rule
 (`netsh interface portproxy delete v4tov4 listenaddress=0.0.0.0 listenport=27182`).
-See README "Reading from Fusion Electronics".
+See `docs/fusion-notes.md` "Reaching Fusion from WSL2".
 
 ## Verified endpoint facts
 

@@ -5,8 +5,8 @@ description: Resolve a Fusion design's BOM into a JLCPCB-upload-ready CSV. Use w
 
 # order-bom — resolve a design's specs into an orderable JLCPCB BOM
 
-> **The app is the primary interface for this flow** (`hendley app` — House
-> Parts / Resolve / Order tabs do everything below visually). Drive this
+> **The app is the primary interface for this flow** (`hendley app` — the
+> single-page order workbench does everything below visually). Drive this
 > skill when the user prefers the conversation, is headless, or asks you to.
 > Same library, same documents, same results.
 

@@ -172,7 +172,7 @@ The repository already contains practical building blocks:
 - Fusion Electronics design reading over its local HTTP interface
 - generation of explicit, engineer-reviewed Fusion migration scripts
 
-These capabilities are the starting point. The target product adds the provider-independent Requirements BOM, deterministic resolver, ranking, knowledge reuse, review workflow, and provider adapters described in the PRD.
+These capabilities were the starting point. The provider-independent Requirements BOM, deterministic resolver, ranking, knowledge reuse, review workflow, and provider adapters described in the PRD are now implemented (see `docs/architecture.md` §14 for what remains open).
 
 Existing migration utilities may remain as explicit engineering tools, but they are not part of the automatic BOM-resolution path and must not blur the boundary between design intent and procurement resolution.
 

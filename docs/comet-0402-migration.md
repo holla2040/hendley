@@ -67,6 +67,7 @@ For each resistor, update its Fusion part attributes and footprint:
 - `MANUFACTURER` → `UNI-ROYAL`
 - package/footprint → 0402
 
-(When Fusion Electronics gains write access, Hendley will be able to push these
-attribute changes back into the schematic directly; until then, apply them in
-Fusion.)
+(This path now exists: describe the swaps in a JSON file and run
+`hendley scr swaps.json -o changes.scr`, then apply the script in Fusion —
+manually via *File > Execute Script*, or over the HTTP bridge with
+`Electron.run`. See `docs/cli.md` → "The `.scr` file format".)
