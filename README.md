@@ -258,14 +258,15 @@ same library the CLI uses:
   cells say `????` rather than dressing cached values as current.
 - **Pick semantics**: the *first* pick for a spec with nothing approved is
   the choosing — recorded permanently as the AVL rank 1 ("picked in the
-  app", with a **stop using this part** undo). A pick that *overrides* an
-  existing approved part is **this order only** ("undo — use the automatic
-  pick"); the preferred part returns when its stock does.
+  app"). A pick that *overrides* an existing approved part is **this order
+  only** ("undo — use the automatic pick"); the preferred part returns
+  when its stock does.
 - **Alternates grow the list**: the **alt checkbox column** marks parts for
   the spec's ranked list (ranks 2, 3, … — the next design with the same
   part gets the preferred pick *and* its alternates straight from the
   database, no search, and silent substitution covers a short rank 1).
-  Saved alternates render pre-checked; unchecking prunes the list, audited.
+  Every approved part renders pre-checked — the mounted part included —
+  and unchecking prunes it from the AVL, audited.
   **Nothing saves on click** — radio and checkbox selections stage until
   the **Update** button (on the part-title line, beside **Search
   Alternates**) commits them in one act. Search Alternates reopens the

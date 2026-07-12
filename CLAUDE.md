@@ -34,9 +34,10 @@ concrete `providers/*` or `datasources/jlc` — only the base protocols.
   spec search / dashed DNP); click a component → detail panel (one table:
   the radio picks what mounts — order-only when overriding an approved
   part, AVL rank 1 on a new spec's first pick — and an **alt checkbox
-  column** grows/prunes the spec's ranked AVL; radio+checkbox changes STAGE
-  and commit only via **Update** on the title line, both undoable in
-  place; opening a panel live-verifies its whole list, `????` when live
+  column** grows/prunes the spec's ranked AVL (every approved choice
+  renders checked, the mounted part included — unchecking is the one
+  audited removal path); radio+checkbox changes STAGE and commit only via
+  **Update** on the title line, both undoable in place; opening a panel live-verifies its whole list, `????` when live
   access is down — never stale-as-current); searches are human-fired
   (ADR-0006: seeded from the spec, sent verbatim; auto-discovery only where
   deterministic) and results split into package-confirmed /

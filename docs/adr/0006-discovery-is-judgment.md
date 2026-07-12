@@ -54,9 +54,9 @@ parse it — that's why we introduced Claude for this."*
    as AVL rank 1 (choosing *is* the approval). A pick that **overrides** an
    existing approved part — or a schematic-pinned part — is order-only: an
    in-memory pin, re-resolved and draft-persisted, never written to the
-   parts DB. Both are undoable in place ("stop using this part" = audited
-   removal; "undo — use the automatic pick / the schematic part" = clear
-   the pin).
+   parts DB. Both are undoable in place (unchecking the mounted part's
+   backup checkbox = audited removal via Update; "undo — use the automatic
+   pick / the schematic part" = clear the pin).
 
    *Amended 2026-07-13 — ranked backups and the staged commit.* A
    **backup checkbox column** rides the same tables: checking a row marks
