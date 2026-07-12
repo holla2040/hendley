@@ -19,6 +19,10 @@ Endpoints (all JSON):
 - ``POST /api/emit``              — gate + export order files (+ snapshot when clean)
 - ``GET  /api/snapshots``         — release snapshots in the output dir
 - ``GET  /api/snapshot?name=``    — one snapshot document
+- ``GET  /api/rotations``         — CPL rotation corrections (data/cpl-rotations.json)
+- ``POST /api/rotation``          — upsert/remove one correction (footprint/LCSC key)
+- ``GET  /api/draft?design=``     — the in-progress order draft for a design
+- ``POST /api/draft``             — save/clear a design's draft (survives reloads)
 """
 
 from __future__ import annotations
@@ -35,6 +39,8 @@ from ..knowledge.partsdb import PartsDb
 from .ui import PAGE_HTML
 
 DEFAULT_OUTDIR = "~/tmp/hendley_output"
+DEFAULT_DRAFT_PATH = "~/.hendley/draft.json"
+DEFAULT_CACHE_PATH = "~/.hendley/design-cache.json"
 
 
 class ApiError(Exception):
@@ -82,10 +88,16 @@ class HendleyApp:
     def __init__(self, db_path=None, outdir: str | Path = DEFAULT_OUTDIR,
                  fusion_host: str | None = None,
                  datasource_factory=None, bridge_factory=None,
-                 interpreter_factory=None):
+                 interpreter_factory=None,
+                 rotations_path: str | Path | None = None,
+                 draft_path: str | Path = DEFAULT_DRAFT_PATH,
+                 cache_path: str | Path = DEFAULT_CACHE_PATH):
         self.db_path = db_path
         self.outdir = Path(outdir).expanduser()
         self.fusion_host = fusion_host
+        self.rotations_path = rotations_path
+        self.draft_path = Path(draft_path).expanduser()
+        self.cache_path = Path(cache_path).expanduser()
         self._datasource_factory = datasource_factory or _default_datasource
         self._bridge_factory = bridge_factory or _default_bridge
         self._interpreter_factory = interpreter_factory or _default_interpreter
@@ -196,7 +208,7 @@ class HendleyApp:
             raise ApiError(f"Fusion read failed: {exc}", status=502)
         requirements = requirements_from_design(design, parts, n, placements)
         uninterpreted = self._interpret_lines(requirements)
-        return {
+        out = {
             "requirements": requirements.to_dict(),
             "uninterpreted": uninterpreted,
             "placements": [
@@ -204,17 +216,56 @@ class HendleyApp:
                  "mirror": p.mirror, "populate": p.populate, "footprint": p.footprint}
                 for p in placements],
         }
+        self._write_cache(requirements.design, out)
+        return out
 
-    def _interpret_lines(self, requirements) -> list[dict]:
+    def _write_cache(self, design: str | None, out: dict) -> None:
+        """Persist the intake so the page repopulates without a Fusion read."""
+        from datetime import datetime, timezone
+
+        doc = dict(out)
+        doc["design"] = design
+        doc["savedAt"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        try:
+            self.cache_path.parent.mkdir(parents=True, exist_ok=True)
+            self.cache_path.write_text(json.dumps(doc, ensure_ascii=False))
+        except OSError:
+            pass  # the cache is a convenience — never break intake
+
+    def api_intake_cache(self, params: dict) -> dict:
+        """The last intake, with the interpretation cache re-applied: spec
+        answers given since the read stick, and the LLM is never consulted on
+        a cache load."""
+        try:
+            doc = json.loads(self.cache_path.read_text())
+        except (FileNotFoundError, json.JSONDecodeError):
+            return {"cached": None}
+        try:
+            requirements = RequirementsBom.from_dict(doc.get("requirements") or {})
+        except ValueError:
+            return {"cached": None}
+        old = {u.get("lineIndex"): u for u in doc.get("uninterpreted") or []}
+        fresh = self._interpret_lines(requirements, consult_interpreter=False)
+        for u in fresh:  # keep the read-time LLM guess as the prefill
+            guess = (old.get(u["lineIndex"]) or {}).get("guess") or {}
+            if guess.get("spec"):
+                u["guess"] = guess
+        doc["uninterpreted"] = fresh
+        doc["requirements"] = requirements.to_dict()
+        return {"cached": doc}
+
+    def _interpret_lines(self, requirements,
+                         consult_interpreter: bool = True) -> list[dict]:
         """Judge every mode-less line: cache first, then the LLM, else the
         engineer (returned as confirm-card material). Each unique string is
-        judged once, ever; user answers are authoritative."""
+        judged once, ever; user answers are authoritative. With
+        ``consult_interpreter=False`` only the cache answers (cache loads)."""
         from ..ai.interpreter import Interpretation
         from ..domain.model import SpecKey
 
         store = self._store()
         interpreter = None
-        interpreter_dead = False
+        interpreter_dead = not consult_interpreter
         out: list[dict] = []
         for i, line in enumerate(requirements.lines):
             if line.dnp or line.mode is not None:
@@ -329,21 +380,127 @@ class HendleyApp:
             from ..providers.jlcpcb.adapter import JLCPCBAdapter
 
             adapter = JLCPCBAdapter()
-            paths = adapter.export(resolution, self.outdir, on_note=notes.append)
+            paths = adapter.export(resolution, self.outdir,
+                                   rotations=self.rotations_path,
+                                   on_note=notes.append)
         blockers = [c.to_dict() for c in adapter.validate(resolution)]
         snapshot = None
         if not blockers:
             from ..reporting.snapshot import write_release_snapshot
 
             snapshot = str(write_release_snapshot(resolution, paths[0]))
+            self._clear_draft(resolution.get("design"))
+        contents = {}
+        for p in paths:  # lets the page save copies via the browser's picker
+            try:
+                contents[Path(p).name] = Path(p).read_text()
+            except OSError:
+                pass
         return {
             "provider": provider,
             "files": [str(p) for p in paths],
+            "fileContents": contents,
             "blockers": blockers,
             "readyToUpload": not blockers,
             "snapshot": snapshot,
             "notes": notes,
         }
+
+    # -- rotations -----------------------------------------------------------
+
+    def _rotations_file(self) -> Path:
+        from ..providers.jlcpcb.order_files import find_rotations_file
+
+        path = find_rotations_file(self.rotations_path)
+        if path is None or not path.exists():
+            raise ApiError(
+                "cpl-rotations.json not found — start the app from the repo",
+                status=503)
+        return path
+
+    def api_rotations(self, params: dict) -> dict:
+        path = self._rotations_file()
+        doc = json.loads(path.read_text())
+        return {"corrections": doc.get("corrections", []), "path": str(path)}
+
+    def api_rotation(self, body: dict) -> dict:
+        """Upsert one correction, keyed by footprint (or LCSC when no
+        footprint); an offset of 0 removes the entry. The flaw belongs to the
+        library model, so the fix follows the part into every design."""
+        footprint = str(body.get("footprint") or "").strip()
+        lcsc = str(body.get("lcsc") or "").strip()
+        if not footprint and not lcsc:
+            raise ApiError("'footprint' or 'lcsc' is required")
+        try:
+            offset = int(body["rotationOffsetDeg"]) % 360
+        except (KeyError, TypeError, ValueError):
+            raise ApiError("'rotationOffsetDeg' must be an integer")
+        path = self._rotations_file()
+        doc = json.loads(path.read_text())
+        corrections = doc.setdefault("corrections", [])
+        entry = next(
+            (c for c in corrections
+             if (footprint and c.get("footprint") == footprint)
+             or (not footprint and lcsc and c.get("lcsc") == lcsc)), None)
+        if offset == 0:
+            if entry is not None:
+                corrections.remove(entry)
+        else:
+            if entry is None:
+                entry = {}
+                corrections.append(entry)
+            if lcsc:
+                entry["lcsc"] = lcsc
+            if body.get("mpn"):
+                entry["mpn"] = str(body["mpn"])
+            if footprint:
+                entry["footprint"] = footprint
+            entry["rotationOffsetDeg"] = offset
+            from datetime import date
+
+            entry["verified"] = (str(body["note"]) if body.get("note")
+                                 else f"{date.today().isoformat()} set via the app")
+        path.write_text(json.dumps(doc, indent=2, ensure_ascii=False) + "\n")
+        return {"corrections": corrections}
+
+    # -- draft (in-progress order state; survives page reloads) ---------------
+
+    def _read_drafts(self) -> dict:
+        try:
+            doc = json.loads(self.draft_path.read_text())
+        except (FileNotFoundError, json.JSONDecodeError):
+            return {"drafts": {}}
+        if not isinstance(doc.get("drafts"), dict):
+            return {"drafts": {}}
+        return doc
+
+    def _write_drafts(self, doc: dict) -> None:
+        self.draft_path.parent.mkdir(parents=True, exist_ok=True)
+        self.draft_path.write_text(json.dumps(doc, ensure_ascii=False, indent=2) + "\n")
+
+    def api_draft_get(self, params: dict) -> dict:
+        design = params.get("design") or ""
+        return {"draft": self._read_drafts()["drafts"].get(design)}
+
+    def api_draft_put(self, body: dict) -> dict:
+        design = str(body.get("design") or "")
+        if not design:
+            raise ApiError("'design' is required")
+        doc = self._read_drafts()
+        if body.get("draft") is None:
+            doc["drafts"].pop(design, None)
+        else:
+            doc["drafts"][design] = body["draft"]
+        self._write_drafts(doc)
+        return {"draft": doc["drafts"].get(design)}
+
+    def _clear_draft(self, design: str | None) -> None:
+        if not design:
+            return
+        doc = self._read_drafts()
+        if design in doc["drafts"]:
+            doc["drafts"].pop(design)
+            self._write_drafts(doc)
 
     def api_snapshots(self, params: dict) -> dict:
         snaps = sorted(self.outdir.glob("*.snapshot.json"), reverse=True)
@@ -375,6 +532,9 @@ GET_ROUTES = {
     "/api/part": "api_part",
     "/api/snapshots": "api_snapshots",
     "/api/snapshot": "api_snapshot",
+    "/api/rotations": "api_rotations",
+    "/api/draft": "api_draft_get",
+    "/api/intake-cache": "api_intake_cache",
 }
 POST_ROUTES = {
     "/api/record": "api_record",
@@ -386,6 +546,8 @@ POST_ROUTES = {
     "/api/resolve": "api_resolve",
     "/api/approve": "api_approve",
     "/api/emit": "api_emit",
+    "/api/rotation": "api_rotation",
+    "/api/draft": "api_draft_put",
 }
 
 

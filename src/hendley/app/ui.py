@@ -1,9 +1,17 @@
 """The app page — one self-contained HTML document, vanilla JS, no CDN.
 
-Three surfaces over the JSON API: **House Parts** (the AVL manager),
-**Resolve** (intake → resolution → approval queue → re-resolve), **Order**
-(gate + emit + snapshots). All state lives in the page; every button is one
-API call.
+The single-page design (approved via mockup, 2026-07-12): a left rail with
+the open Fusion design's components colored by stock state (green = covers
+the order, red = short, amber = needs a spec search, dashed = DNP), a detail
+panel driven by clicking a component, and an Export button in the title bar
+that stays disabled until every row is green.
+
+One gesture everywhere: a radio column picks the part that mounts for this
+order. A pick that overrides an existing approved part is order-only (the
+requirements line is pinned in memory and re-resolved — nothing written to
+the parts DB); the FIRST pick for a spec with no house part is permanent
+(recorded as the approved part at rank 1). In-progress picks persist through
+page reloads via the server-side draft (``/api/draft``).
 """
 
 PAGE_HTML = r"""<!DOCTYPE html>
@@ -13,129 +21,220 @@ PAGE_HTML = r"""<!DOCTYPE html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Hendley</title>
 <style>
-:root { --fg:#1a1a1a; --bg:#fafafa; --line:#d8d8d8; --accent:#0a5ba8;
-        --ok:#1a7f37; --warn:#9a6700; --err:#c0392b; --dim:#6a6a6a; }
-@media (prefers-color-scheme: dark) {
-  :root { --fg:#e6e6e6; --bg:#161616; --line:#3a3a3a; --accent:#5aa2e0;
-          --ok:#4ac26b; --warn:#d4a72c; --err:#e5734f; --dim:#9a9a9a; }
+:root {
+  --board:#0E241B; --panel:#143024; --line:#27493A;
+  --silk:#E9EEE7; --tin:#8FA79A; --pad:#D9A441;
+  --ok-bg:#BFE3C4; --err-bg:#F0C9C2; --warn-bg:#EFDCA8; --chip-fg:#13221A;
+  --ok:#6FD59A; --err:#F08373; --warn:#E5C063;
+  --mono:ui-monospace,"Cascadia Mono","SF Mono",Menlo,Consolas,monospace;
+  --sans:system-ui,"Segoe UI",sans-serif;
 }
 * { box-sizing:border-box; }
-body { margin:0; font:15px/1.45 system-ui, sans-serif; color:var(--fg);
-       background:var(--bg); }
-header { display:flex; align-items:baseline; gap:1rem; padding:.7rem 1.2rem;
-         border-bottom:1px solid var(--line); }
-header h1 { font-size:1.15rem; margin:0; }
-header .tag { color:var(--dim); font-size:.85rem; }
-nav button { background:none; border:none; font:inherit; color:var(--dim);
-             padding:.4rem .8rem; cursor:pointer; border-bottom:2px solid transparent; }
-nav button.active { color:var(--fg); border-bottom-color:var(--accent); }
-main { padding:1rem 1.2rem 4rem; max-width:1100px; margin:0 auto; }
-section.tab { display:none; } section.tab.active { display:block; }
-table { border-collapse:collapse; width:100%; margin:.6rem 0; }
-th, td { text-align:left; padding:.3rem .55rem; border-bottom:1px solid var(--line);
-         vertical-align:top; }
-th { color:var(--dim); font-weight:600; font-size:.8rem; text-transform:uppercase; }
-input, select, textarea { font:inherit; color:var(--fg); background:var(--bg);
-  border:1px solid var(--line); border-radius:4px; padding:.3rem .5rem; }
-textarea { width:100%; font-family:ui-monospace, monospace; font-size:.85rem; }
-button.act { font:inherit; padding:.35rem .9rem; border-radius:5px; cursor:pointer;
-  border:1px solid var(--accent); background:var(--accent); color:#fff; }
-button.quiet { background:none; color:var(--accent); }
-button.small { padding:.1rem .5rem; font-size:.85rem; }
-.row { display:flex; gap:.6rem; flex-wrap:wrap; align-items:end; margin:.5rem 0; }
-.row label { display:flex; flex-direction:column; font-size:.8rem; color:var(--dim); }
-.ok { color:var(--ok); } .warn { color:var(--warn); } .err { color:var(--err); }
-.dim { color:var(--dim); }
-.badge { display:inline-block; padding:0 .45rem; border-radius:8px;
-  font-size:.78rem; border:1px solid var(--line); }
-.badge.err { border-color:var(--err); } .badge.warn { border-color:var(--warn); }
-.badge.info { border-color:var(--line); }
-.card { border:1px solid var(--line); border-radius:8px; padding:.8rem 1rem;
-        margin:.8rem 0; }
-.card h3 { margin:.1rem 0 .4rem; font-size:1rem; }
-#msg { position:fixed; bottom:0; left:0; right:0; padding:.5rem 1.2rem;
-  background:var(--bg); border-top:1px solid var(--line); font-size:.9rem;
-  white-space:pre-wrap; }
-details > summary { cursor:pointer; color:var(--dim); }
-.why { font-size:.85rem; color:var(--dim); margin:.1rem 0 0 .2rem; }
-h2 { font-size:1.05rem; margin:1.2rem 0 .3rem; }
-code { font-family:ui-monospace, monospace; font-size:.88em; }
+html, body { margin:0; height:100%; overflow:hidden; }
+body { background:var(--board); color:var(--silk); font:14px/1.5 var(--sans);
+       display:flex; flex-direction:column; }
+button { font:inherit; cursor:pointer; }
+:focus-visible { outline:2px solid var(--pad); outline-offset:2px; }
+@media (prefers-reduced-motion: reduce) { * { transition:none !important; } }
+
+/* ---- header -------------------------------------------------------------- */
+.top { display:flex; align-items:center; gap:14px; padding:10px 22px;
+       border-bottom:1px solid var(--line); position:relative; flex:none; }
+.brand { font:600 15px var(--mono); letter-spacing:.35em; color:var(--silk); }
+.tag { color:var(--tin); font-size:12.5px; }
+.design { position:absolute; left:50%; top:50%; transform:translate(-50%,-50%);
+          font:600 13px var(--mono); color:var(--silk); }
+.meta { margin-left:auto; display:flex; align-items:center; gap:10px;
+        font:12px var(--mono); color:var(--tin); }
+.adapter { background:var(--panel); border:1px solid var(--line); border-radius:4px;
+           color:var(--silk); font:12px var(--mono); padding:3px 6px; }
+.btn { background:none; border:1px solid var(--pad); color:var(--pad);
+       border-radius:4px; padding:7px 12px; font:600 13px var(--mono); }
+.btn:hover { background:rgba(217,164,65,.12); }
+.btn.solid { background:var(--pad); color:#1A1406; }
+.btn.solid:hover { background:#E4B45C; }
+.btn.solid[aria-disabled="true"] { background:var(--panel); color:var(--tin);
+  border-color:var(--line); cursor:not-allowed; }
+.meta .btn { padding:5px 12px; }
+
+/* ---- frame ---------------------------------------------------------------- */
+.wrap { display:grid; grid-template-columns:308px 1fr;
+        flex:1; min-height:0; }
+.wrap > main { overflow-y:auto; min-height:0; }
+@media (max-width:760px) { .wrap { grid-template-columns:1fr; }
+  .rail { border-right:none; border-bottom:1px solid var(--line); } }
+
+/* ---- left rail ------------------------------------------------------------ */
+.rail { border-right:1px solid var(--line); display:flex; flex-direction:column;
+        min-height:0; }
+.rail-top { display:flex; gap:8px; align-items:center; padding:14px 14px 8px; }
+.qty { display:flex; align-items:center; gap:6px; font:12px var(--mono);
+       color:var(--tin); }
+.qty input { width:52px; background:var(--panel); border:1px solid var(--line);
+  border-radius:4px; color:var(--silk); font:13px var(--mono); padding:6px 8px;
+  text-align:right; }
+.read-note { margin:0; padding:0 16px 6px; font:11.5px var(--mono); color:var(--tin); }
+.comps { display:flex; flex-direction:column; gap:4px;
+         padding:4px 14px 48px; overflow-y:auto; flex:1; min-height:0; }
+.comp { display:flex; justify-content:space-between; align-items:baseline; gap:10px;
+  width:100%; text-align:left; border:1px solid transparent; border-radius:4px;
+  padding:3px 11px; font:12.5px var(--mono); background:var(--panel);
+  color:var(--silk); }
+.comp .ref { font-weight:700; }
+.comp .desc { opacity:.78; margin-left:6px; }
+.comp .stat { font-variant-numeric:tabular-nums; white-space:nowrap; }
+.comp.st-ok    { background:var(--ok-bg);  color:var(--chip-fg); }
+.comp.st-short { background:var(--err-bg); color:var(--chip-fg); }
+.comp.st-conf  { background:var(--warn-bg); color:var(--chip-fg); }
+.comp.st-dnp   { background:transparent; color:var(--tin);
+                 border:1px dashed var(--line); }
+.comp.st-na    { background:var(--panel); color:var(--silk); }
+.comp.sel { outline:2px solid var(--pad); outline-offset:2px; }
+
+/* ---- main / detail --------------------------------------------------------- */
+.panel { padding:12px 30px 60px; }
+.crumb { font:12px var(--mono); color:var(--pad); background:none; border:none;
+         padding:0; margin-bottom:14px; }
+.crumb:hover { text-decoration:underline; }
+.part-title { display:flex; align-items:baseline; gap:12px; flex-wrap:wrap;
+              margin:0 0 4px; }
+.part-title .ref { font:700 21px var(--mono); color:var(--pad);
+                   letter-spacing:.04em; }
+.part-title .spec { font:400 16px var(--sans); color:var(--silk); }
+.badge { font:700 10.5px var(--mono); letter-spacing:.1em; text-transform:uppercase;
+         border-radius:3px; padding:3px 8px; color:var(--chip-fg); }
+.badge.ok { background:var(--ok-bg); } .badge.short { background:var(--err-bg); }
+.badge.conf { background:var(--warn-bg); }
+.badge.na { background:var(--panel); color:var(--tin);
+            border:1px solid var(--line); }
+.sub { color:var(--tin); font-size:13px; margin:0 0 6px; }
+.per-board { margin-left:auto; font:600 13px var(--mono); color:var(--silk);
+             white-space:nowrap; }
+.sect { border-top:1px solid var(--line); margin-top:22px; padding-top:14px; }
+.sect.tight { margin-top:8px; padding-top:6px; }
+.sect.tight td { border-bottom:none; }
+.sect.tight tr:nth-child(even) td { background:rgba(233,238,231,.04); }
+.sect.tight tr.linkrow:hover td { background:rgba(217,164,65,.08); }
+.eyebrow { font:600 11px var(--mono); letter-spacing:.16em;
+           text-transform:uppercase; color:var(--tin); margin:0 0 10px; }
+.tablewrap { overflow-x:auto; }
+table { border-collapse:collapse; width:100%; font-variant-numeric:tabular-nums; }
+th { text-align:left; font:600 11px var(--mono); letter-spacing:.1em;
+     text-transform:uppercase; color:var(--tin); padding:5px 12px 5px 0;
+     border-bottom:1px solid var(--line); }
+td { padding:7px 12px 7px 0; border-bottom:1px solid var(--line); font-size:13px;
+     vertical-align:top; }
+td code, .mono { font:12.5px var(--mono); }
+tr.picked td { background:rgba(217,164,65,.07); }
+tr.linkrow { cursor:pointer; }
+tr.linkrow:hover td { background:rgba(217,164,65,.06); }
+.num { text-align:right; } th.num { text-align:right; }
+.short-num { color:var(--err); font-weight:600; }
+.ok-num { color:var(--ok); }
+.dimtd { color:var(--tin); }
+.why { color:var(--tin); font-size:12px; line-height:1.45; }
+.note { color:var(--tin); font-size:12.5px; margin:10px 0 0; }
+.alert { color:var(--err); font-size:13px; margin:10px 0; }
+input[type=radio] { accent-color:var(--pad); width:16px; height:16px;
+                    cursor:pointer; }
+td.pick { padding-right:4px; }
+a { color:var(--pad); }
+.form { display:flex; gap:10px; align-items:end; margin-top:6px; }
+.form label { display:flex; flex-direction:column; gap:4px; font:11px var(--mono);
+  letter-spacing:.08em; text-transform:uppercase; color:var(--tin);
+  flex:1 1 0; min-width:0; }
+.form input, .form select, .place select {
+  background:var(--panel); border:1px solid var(--line); border-radius:4px;
+  color:var(--silk); font:13px var(--mono); padding:7px 9px; width:100%; }
+.place select { width:auto; padding:4px 6px; }
+.form input.suspect { border-color:var(--warn); }
+.form .btn { flex:0 0 auto; white-space:nowrap; }
+@media (max-width:900px) { .form { flex-wrap:wrap; }
+  .form label { flex:1 1 140px; } }
+.place { display:flex; gap:26px; flex-wrap:wrap; align-items:center;
+         font:13px var(--mono); }
+.place span b { color:var(--tin); font-weight:400; margin-right:6px; }
+.effective { color:var(--pad); }
+.card { border:1px solid var(--line); border-radius:6px; padding:12px 16px;
+        margin:14px 0; }
+.card.dismiss { cursor:pointer; }
+.ok-line { color:var(--ok); }
+#msg { position:fixed; bottom:0; left:0; right:0; padding:.45rem 1.2rem;
+  background:var(--board); border-top:1px solid var(--line); font-size:.9rem;
+  white-space:pre-wrap; color:var(--tin); }
+#msg.ok { color:var(--ok); } #msg.err { color:var(--err); }
+#msg.warn { color:var(--warn); }
 </style>
 </head>
 <body>
-<header>
-  <h1>Hendley</h1><span class="tag">free engineers to do design</span>
-  <nav>
-    <button data-tab="parts" class="active">House Parts</button>
-    <button data-tab="resolve">Resolve</button>
-    <button data-tab="order">Order</button>
-  </nav>
+<header class="top">
+  <span class="brand">HENDLEY</span>
+  <span class="tag">free engineers to do design</span>
+  <span class="design" id="design-name"></span>
+  <span class="meta">
+    <select class="adapter" id="provider" aria-label="output adapter">
+      <option value="jlcpcb">JLCPCB</option><option value="pcbway">PCBWay</option>
+    </select>
+    <button class="btn solid" id="export-btn" aria-disabled="true"
+      title="Refresh the design first.">Export BOM/CPL</button>
+  </span>
 </header>
-<main>
 
-<section class="tab active" id="tab-parts">
-  <div class="row">
-    <label>kind filter <input id="p-kind" placeholder="resistor"></label>
-    <button class="act" onclick="loadParts()">Load</button>
-    <button class="act quiet" onclick="refreshStock()">Live-refresh stock</button>
+<div class="wrap">
+<aside class="rail">
+  <div class="rail-top">
+    <button class="btn" id="refresh-btn">&#10227; Refresh</button>
+    <span class="qty">boards <input id="qty" value="1" aria-label="board quantity"></span>
   </div>
-  <div id="parts"></div>
-  <h2>Approve a Part Choice</h2>
-  <div class="row" id="rec">
-    <label>kind <input id="r-kind"></label>
-    <label>value <input id="r-value"></label>
-    <label>package <input id="r-package"></label>
-    <label>qualifier <input id="r-qualifier"></label>
-    <label>LCSC <input id="r-lcsc" placeholder="C31850"></label>
-    <label>MPN <input id="r-mpn"></label>
-    <label>manufacturer <input id="r-manufacturer"></label>
-    <label>rank <input id="r-rank" value="1" size="3"></label>
-    <label>note <input id="r-note" size="28"></label>
-    <button class="act" onclick="recordChoice()">Record</button>
-  </div>
-</section>
+  <p class="read-note" id="read-note"></p>
+  <nav class="comps" id="comps"></nav>
+</aside>
+<main><div class="panel" id="main">
+  <p class="sub">Hit <b>Refresh</b> to read the open Fusion design (schematic
+  view active) and check every part against live stock.</p>
+</div></main>
+</div>
+<div id="msg">ready</div>
 
-<section class="tab" id="tab-resolve">
-  <div class="row">
-    <label>Production Quantity (boards) <input id="q-n" value="1" size="6"></label>
-    <label>provider
-      <select id="q-provider"><option>jlcpcb</option><option>pcbway</option></select>
-    </label>
-    <button class="act" onclick="intake()">Read open Fusion design</button>
-    <button class="act quiet" onclick="runResolve()">Resolve</button>
-  </div>
-  <details><summary>Requirements BOM (JSON, for inspection — the tool fills it)</summary>
-    <textarea id="q-req" rows="10" placeholder='{"productionQuantity": 1, "lines": [...]}'></textarea>
-  </details>
-  <div id="confirms"></div>
-  <div id="resolution"></div>
-  <div id="queue"></div>
-</section>
-
-<section class="tab" id="tab-order">
-  <div class="row">
-    <button class="act" onclick="emitFiles()">Emit order files</button>
-    <span class="dim">writes to the server's output directory from the last resolution</span>
-  </div>
-  <div id="emit"></div>
-  <h2>Release snapshots</h2>
-  <div class="row"><button class="act quiet" onclick="loadSnaps()">Refresh list</button></div>
-  <div id="snaps"></div>
-</section>
-
-</main>
-<div id="msg" class="dim">ready</div>
 <script>
 "use strict";
 const $ = id => document.getElementById(id);
-const S = { requirements: null, placements: null, resolution: null, queue: null,
-            uninterpreted: [],   // intake lines awaiting a one-time spec confirm
-            proposals: {} };     // entryIndex -> ordered candidate rows (the AVL-to-be)
+const S = {
+  requirements: null,  // intake result — never mutated by order-only picks
+  placements: null,
+  uninterpreted: [],   // lines awaiting a spec search (by lineIndex)
+  resolution: null,
+  queue: null,
+  overrides: {},       // lineKey -> {code}: order-only pins, draft-persisted
+  rotations: [],
+  avlCache: {},        // spec JSON -> housePart (this session)
+  selected: null,      // lineIndex of the open detail panel
+  design: "",
+  exportResult: null,
+};
 
 function msg(text, cls) { const m = $("msg"); m.textContent = text;
-  m.className = cls || "dim"; }
+  m.className = cls || ""; }
 function esc(s) { return String(s ?? "").replace(/[&<>"]/g,
   c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
+function fmt(n) { return n == null ? "—" : Number(n).toLocaleString("en-US"); }
+function money(unit, qty) {
+  return unit == null ? "—" : (Number(unit) * qty).toFixed(2); }
+function unitStr(u) { return u == null ? "—" : String(u); }
+function qty() { return Math.max(1, parseInt($("qty").value || "1", 10) || 1); }
+function provider() { return $("provider").value; }
+function lineKey(line) { return line.designators.join(","); }
+function specStr(spec) {
+  if (!spec) return "";
+  return [spec.kind, spec.value, spec.package, spec.qualifier]
+    .filter(Boolean).join(" · ");
+}
+function specQS(spec) {
+  return "kind=" + encodeURIComponent(spec.kind) +
+    "&value=" + encodeURIComponent(spec.value) +
+    "&package=" + encodeURIComponent(spec.package) +
+    "&qualifier=" + encodeURIComponent(spec.qualifier || "");
+}
 
 async function api(path, body) {
   const opts = body === undefined ? {} :
@@ -148,308 +247,631 @@ async function api(path, body) {
 }
 async function run(label, fn) {
   msg(label + " …");
-  try { await fn(); } catch (e) { msg(label + " failed: " + e.message, "err"); }
+  try { await fn(); }
+  catch (e) { msg(label + " failed: " + e.message, "err"); }
 }
 
-document.querySelectorAll("nav button").forEach(b => b.onclick = () => {
-  document.querySelectorAll("nav button").forEach(x => x.classList.remove("active"));
-  document.querySelectorAll("section.tab").forEach(x => x.classList.remove("active"));
-  b.classList.add("active"); $("tab-" + b.dataset.tab).classList.add("active");
-});
+/* ---- refresh: intake -> draft -> resolve --------------------------------- */
 
-/* ---- House Parts (7a) -------------------------------------------------- */
-
-function specQS(p) { return `kind=${encodeURIComponent(p.kind)}&value=${
-  encodeURIComponent(p.value)}&package=${encodeURIComponent(p.package)}&qualifier=${
-  encodeURIComponent(p.qualifier || "")}`; }
-
-function loadParts() { run("loading parts", async () => {
-  const kind = $("p-kind").value.trim();
-  const data = await api("/api/parts" + (kind ? `?kind=${encodeURIComponent(kind)}` : ""));
-  $("parts").innerHTML = data.parts.length ? data.parts.map(partCard).join("")
-    : '<p class="dim">no House Parts yet — record the first below.</p>';
-  msg(`${data.parts.length} House Part(s)`);
-}); }
-
-function partCard(p) {
-  const spec = `${p.kind} ${p.value} ${p.package}${p.qualifier ? " " + p.qualifier : ""}`;
-  const key = JSON.stringify({kind:p.kind, value:p.value, package:p.package,
-                              qualifier:p.qualifier});
-  const rows = p.choices.map(c => `<tr>
-    <td>${c.rank}</td><td><code>${esc(c.lcscCode || "")}</code></td>
-    <td>${esc(c.mpn || "")}</td><td>${esc(c.manufacturer || "")}</td>
-    <td>${c.lastStock ?? "—"}${c.lastVerifiedAt ?
-        ` <span class="dim">@ ${esc(c.lastVerifiedAt.slice(0,10))}</span>` : ""}</td>
-    <td>${c.lastPrice ?? "—"}</td><td class="dim">${esc(c.note || "")}</td>
-    <td>
-      <button class="act quiet small" onclick='rerankChoice(${key},
-        ${JSON.stringify(c.lcscCode || c.mpn)}, 1)'>→ rank 1</button>
-      <button class="act quiet small" onclick='removeChoice(${key},
-        ${JSON.stringify(c.lcscCode || c.mpn)})'>remove</button>
-    </td></tr>`).join("");
-  return `<div class="card"><h3>${esc(spec)}</h3>
-    <table><tr><th>rank</th><th>lcsc</th><th>mpn</th><th>maker</th>
-    <th>stock (advisory)</th><th>price</th><th>note</th><th></th></tr>${rows}</table>
-    <details ontoggle='if (this.open) loadHistory(${key}, ${p.id})'>
-      <summary>audit history</summary>
-      <div id="hist-${p.id}" class="dim">…</div></details></div>`;
-}
-
-function loadHistory(spec, id) { run("history", async () => {
-  const data = await api("/api/part?" + specQS(spec));
-  $("hist-" + id).innerHTML = data.history.map(h =>
-    `<div>${esc(h.at)} — <b>${esc(h.event)}</b> ${esc(h.providerRef || "")} ` +
-    `${h.note ? "· " + esc(h.note) : ""}</div>`).join("") || "no events";
-}); }
-
-function recordChoice() { run("recording", async () => {
-  const body = { kind: $("r-kind").value.trim(), value: $("r-value").value.trim(),
-    package: $("r-package").value.trim(), qualifier: $("r-qualifier").value.trim(),
-    lcsc: $("r-lcsc").value.trim(), mpn: $("r-mpn").value.trim(),
-    manufacturer: $("r-manufacturer").value.trim(),
-    rank: parseInt($("r-rank").value || "1", 10), note: $("r-note").value.trim() };
-  const data = await api("/api/record", body);
-  msg(`recorded at rank ${data.choice.rank}`, "ok"); loadParts();
-}); }
-
-function rerankChoice(spec, ref, rank) { run("reranking", async () => {
-  await api("/api/rerank", {spec, ref, rank});
-  msg(`moved ${ref} to rank ${rank}`, "ok"); loadParts();
-}); }
-
-function removeChoice(spec, ref) { run("removing", async () => {
-  const note = prompt(`Why remove ${ref}? (audited)`) || undefined;
-  await api("/api/remove", {spec, ref, note});
-  msg(`removed ${ref} (state change — audited)`, "ok"); loadParts();
-}); }
-
-function refreshStock() { run("live refresh", async () => {
-  const d = await api("/api/refresh", {});
-  msg(`refreshed ${d.refreshed} · out of stock: ${d.outOfStock.join(", ") || "none"}` +
-      ` · missing: ${d.missing.join(", ") || "none"}`,
-      d.outOfStock.length || d.missing.length ? "warn" : "ok");
-  loadParts();
-}); }
-
-/* ---- Resolve (7b) ------------------------------------------------------ */
-
-function intake() { run("reading Fusion (interpreting new parts may take a minute)",
-                        async () => {
-  const n = parseInt($("q-n").value || "1", 10);
-  const data = await api("/api/intake", {productionQuantity: n});
-  S.requirements = data.requirements; S.placements = data.placements;
+async function hydrate(data, readAt) {
+  S.requirements = data.requirements;
+  S.placements = data.placements;
   S.uninterpreted = data.uninterpreted || [];
-  $("q-req").value = JSON.stringify(S.requirements, null, 2);
-  renderConfirms();
-  const un = S.uninterpreted.length;
-  msg(`read '${data.requirements.design || "design"}': ` +
-      `${data.requirements.lines.length} line(s)` +
-      (un ? ` — ${un} part(s) need a one-time spec confirm below` : " — hit Resolve"),
-      un ? "warn" : "ok");
-}); }
-
-function renderConfirms() {
-  const u = S.uninterpreted;
-  if (!u.length) { $("confirms").innerHTML = ""; return; }
-  $("confirms").innerHTML = `<h2>New parts — confirm the spec once</h2>
-    <p class="dim">These strings weren't confidently interpretable. Your answer
-    is cached forever — this question never repeats for the same part text.</p>` +
-    u.map((x, i) => {
-      const g = (x.guess && x.guess.spec) || {};
-      return `<div class="card"><h3>${esc(x.designators.join(","))} —
-        “${esc(x.value)}” on ${esc(x.footprint || "?")}</h3>
-        ${x.guess && x.guess.rationale ?
-          `<div class="dim">guess: ${esc(x.guess.rationale)}</div>` : ""}
-        <div class="row">
-          <label>kind <input id="cf-kind-${i}" value="${esc(g.kind || "")}"></label>
-          <label>value <input id="cf-value-${i}" value="${esc(g.value || "")}"></label>
-          <label>package <input id="cf-package-${i}"
-            value="${esc(g.package || x.footprint || "")}"></label>
-          <label>qualifier <input id="cf-qual-${i}"
-            value="${esc(g.qualifier || "")}"></label>
-          <button class="act" onclick="confirmSpec(${i})">Confirm</button>
-        </div></div>`;
-    }).join("");
-}
-
-function confirmSpec(i) { run("confirming", async () => {
-  const x = S.uninterpreted[i];
-  const spec = { kind: $(`cf-kind-${i}`).value.trim(),
-                 value: $(`cf-value-${i}`).value.trim(),
-                 package: $(`cf-package-${i}`).value.trim(),
-                 qualifier: $(`cf-qual-${i}`).value.trim() };
-  const envelope = (x.guess && x.guess.envelope) || undefined;
-  const data = await api("/api/confirm-spec", {
-    kindHint: x.kindHint, value: x.value, footprint: x.footprint,
-    spec, envelope });
-  S.requirements.lines[x.lineIndex].spec = data.spec;
-  $("q-req").value = JSON.stringify(S.requirements, null, 2);
-  S.uninterpreted.splice(i, 1);
-  renderConfirms();
-  msg(S.uninterpreted.length ? "confirmed — next one" :
-      "all confirmed — hit Resolve", "ok");
-}); }
-
-function runResolve() { run("resolving", async () => {
-  const text = $("q-req").value.trim();
-  if (!text) throw new Error("no Requirements BOM — intake from Fusion or paste one");
-  S.requirements = JSON.parse(text);
-  S.requirements.productionQuantity = parseInt($("q-n").value || "1", 10);
-  const data = await api("/api/resolve", {
-    requirements: S.requirements, placements: S.placements,
-    provider: $("q-provider").value });
-  S.resolution = data.resolution; S.queue = data.queue || null;
-  S.proposals = {};
-  if (S.queue) S.queue.entries.forEach((e, i) => S.proposals[i] = [...e.proposal]);
-  renderResolution(); renderQueue();
-  const esc_ = data.resolution.escalations.length;
-  msg(esc_ ? `${esc_} escalation(s) — clear the approval queue below` : "all clean",
-      esc_ ? "warn" : "ok");
-}); }
-
-function checkBadges(checks) { return (checks || []).map(c =>
-  `<span class="badge ${c.severity === "error" ? "err" :
-     c.severity === "warning" ? "warn" : "info"}" title="${esc(c.message)}">` +
-  `${esc(c.check)}</span>`).join(" "); }
-
-function renderResolution() {
-  const r = S.resolution;
-  if (!r) { $("resolution").innerHTML = ""; return; }
-  const rows = r.lines.map(l => `<tr${l.dnp ? ' class="dim"' : ""}>
-    <td>${esc(l.designators.join(","))}</td><td>${esc(l.comment || "")}</td>
-    <td>${esc(l.footprint || "")}</td>
-    <td><code>${esc(l.ref || "")}</code>${l.mpn ? `<br><span class="dim">${esc(l.mpn)}</span>` : ""}</td>
-    <td>${l.rankUsed ?? ""}${l.substitution ? ' <span class="warn">sub</span>' : ""}</td>
-    <td>${l.liveStock ?? "—"} / ${l.requiredQty}</td>
-    <td>${l.unitPrice ?? "—"}</td><td>${checkBadges(l.checks)}</td></tr>`).join("");
-  $("resolution").innerHTML = `<h2>Resolution — ${r.lines.length} line(s) ×
-    ${r.productionQuantity} board(s) · ${esc(r.provider)}</h2>
-    <table><tr><th>designators</th><th>comment</th><th>footprint</th><th>part</th>
-    <th>rank</th><th>stock/need</th><th>unit $</th><th>checks</th></tr>${rows}</table>`;
-}
-
-function renderQueue() {
-  const q = S.queue;
-  if (!q || !q.entries.length) { $("queue").innerHTML = ""; return; }
-  $("queue").innerHTML = `<h2>Approval queue — ${q.entries.length} decision(s)</h2>
-    <p class="dim">Each part comes with a proposed AVL: rank 1 + two alternates,
-    reasons shown. Reorder or swap if you disagree, then Approve — the list as
-    you leave it becomes the approved parts list for this spec, everywhere,
-    from now on.</p>` +
-    q.entries.map((e, i) => queueCard(e, i)).join("") +
-    `<div class="row"><button class="act" onclick="approveAll()">
-     Approve all &amp; re-resolve</button></div>`;
-}
-
-function candRow(c, controls) {
-  const params = Object.values(c.keyParams || {}).map(esc).join(" · ");
-  return `<td>${controls}</td>
-    <td><code>${esc(c.code)}</code></td><td>${esc(c.model || "")}</td>
-    <td>${params}</td>
-    <td>${c.liveStock ?? "—"}</td><td>${c.unitPrice1 ?? "—"}</td>
-    <td>${esc(c.libraryType || "")}</td>
-    <td class="why">${(c.why || c.fitUnknownBecause || []).map(esc).join("<br>")}</td>`;
-}
-
-const CAND_HEAD = `<tr><th></th><th>code</th><th>mpn</th><th>specs</th>
-  <th>stock</th><th>unit $</th><th>class</th><th>why</th></tr>`;
-
-function queueCard(e, i) {
-  const spec = e.spec ? `${e.spec.kind} ${e.spec.value} ${e.spec.package}` : (e.ref || e.mpn || "?");
-  const avl = e.avlChoices.length ? `<div class="dim">current AVL: ` + e.avlChoices.map(c =>
-    `rank-${c.rank ?? "—"} ${esc(c.ref || c.mpn || "?")} (stock ${c.liveStock})`)
-    .join(" · ") + `</div>` : "";
-  const prop = S.proposals[i] || [];
-  const proposal = prop.length ? `<table>${CAND_HEAD}` +
-    prop.map((c, r) => `<tr>${candRow(c,
-      `<b>rank ${r + 1}</b>
-       ${r > 0 ? `<button class="act quiet small" onclick="moveUp(${i},${r})">↑</button>` : ""}
-       <button class="act quiet small" onclick="dropRow(${i},${r})">✕</button>`
-    )}</tr>`).join("") + `</table>` :
-    `<p class="dim">${esc(e.discovery.note || "no fit-confirmed candidates — " +
-      "promote one from below, or search manually")}</p>`;
-  const extra = (title, rows, cls) => rows.length ?
-    `<details><summary>${title} (${rows.length})</summary><table>${CAND_HEAD}` +
-    rows.map(c => `<tr class="${cls}">${candRow(c,
-      `<button class="act quiet small" onclick='promote(${i},
-        ${JSON.stringify(c.code)})'>add</button>`)}</tr>`).join("") +
-    `</table></details>` : "";
-  return `<div class="card"><h3>${esc(e.designators.join(","))} — ${esc(spec)}
-    <span class="badge err">${esc(e.reason)}</span>
-    <span class="dim">need ${e.requiredQty}</span></h3>${avl}
-    <div><b>Proposed AVL</b> — approve as-is or reorder:</div>${proposal}
-    ${extra("also found (fit OK, ranked lower)", e.alsoFound, "")}
-    ${extra("⚠ fit unconfirmed — check dimensions before promoting",
-            e.fitUnconfirmed, "dim")}</div>`;
-}
-
-function moveUp(i, r) {
-  const p = S.proposals[i];
-  [p[r - 1], p[r]] = [p[r], p[r - 1]];
-  renderQueue();
-}
-
-function dropRow(i, r) { S.proposals[i].splice(r, 1); renderQueue(); }
-
-function promote(i, code) {
-  const e = S.queue.entries[i];
-  const all = [...e.candidates, ...e.alsoFound, ...e.fitUnconfirmed];
-  const c = all.find(x => x.code === code);
-  if (c && !S.proposals[i].some(x => x.code === code)) S.proposals[i].push(c);
-  renderQueue();
-}
-
-function approveAll() { run("recording approvals", async () => {
-  const approvals = [];
-  for (const [i, rows] of Object.entries(S.proposals)) {
-    const e = S.queue.entries[i];
-    rows.forEach((c, idx) => approvals.push({
-      spec: e.spec, lcsc: c.code, mpn: c.model || undefined, rank: idx + 1,
-      design: S.resolution.design || undefined,
-      note: `approved AVL rank ${idx + 1} (queue: ${e.reason})`,
-    }));
+  S.design = data.requirements.design || "";
+  S.selected = null;
+  S.exportResult = null;
+  $("design-name").textContent = S.design || "(unnamed design)";
+  $("read-note").textContent = "read " + readAt.toLocaleString();
+  const d = await api("/api/draft?design=" + encodeURIComponent(S.design));
+  S.overrides = {};
+  if (d.draft) {
+    if (d.draft.productionQuantity) $("qty").value = d.draft.productionQuantity;
+    const valid = new Set(S.requirements.lines.map(lineKey));
+    for (const [k, v] of Object.entries(d.draft.overrides || {}))
+      if (valid.has(k)) S.overrides[k] = v;   // stale picks drop silently
   }
-  if (!approvals.length) throw new Error("no proposal rows to approve");
-  await api("/api/approve", {approvals});
-  msg(`recorded ${approvals.length} choice(s) — re-resolving`, "ok");
-  await runResolve(); loadParts();
+  try { S.rotations = (await api("/api/rotations")).corrections; }
+  catch (e) { S.rotations = []; }
+  await resolveNow();
+}
+
+async function refresh() {
+  $("comps").innerHTML = "";   // stale rows never sit under a fresh read
+  $("main").innerHTML =
+    '<p class="sub">Reading the open Fusion design …</p>';
+  await run(
+  "reading Fusion (interpreting new parts can take a minute)", async () => {
+  const data = await api("/api/intake", {productionQuantity: qty()});
+  await hydrate(data, new Date());
+  msg("read “" + (S.design || "design") + "” — " +
+      S.requirements.lines.length + " part type" +
+      (S.requirements.lines.length === 1 ? "" : "s") + ". " +
+      "(Click Fusion’s schematic tab before the next Refresh.)", "ok");
 }); }
 
-/* ---- Order (7c) --------------------------------------------------------- */
+/* page load: repopulate from the last read — every correction reapplies
+   (confirmed specs from the DB, picks from the draft, rotations from the
+   corrections file); Refresh re-reads Fusion whenever you want */
+async function loadCache() {
+  let cached = null;
+  try { cached = (await api("/api/intake-cache")).cached; } catch (e) {}
+  if (!cached) return;
+  await run("loading last design", async () => {
+    await hydrate(cached, cached.savedAt ? new Date(cached.savedAt) : new Date());
+    msg("loaded “" + (S.design || "design") +
+        "” from the last read — Refresh re-reads Fusion.", "ok");
+  });
+}
 
-function emitFiles() { run("emitting", async () => {
-  if (!S.resolution) throw new Error("resolve first (Resolve tab)");
-  const d = await api("/api/emit", {resolution: S.resolution});
-  const files = d.files.map(f => `<code>${esc(f)}</code>`).join("<br>");
-  const gate = d.readyToUpload
-    ? '<p class="ok"><b>READY TO UPLOAD</b></p>'
-    : `<p class="err"><b>${d.blockers.length} BLOCKER(S) — DO NOT UPLOAD</b></p>` +
-      d.blockers.map(b => `<div class="err">${esc(b.check)}: ${esc(b.message)}</div>`).join("");
-  $("emit").innerHTML = `<div class="card">${gate}${files}
-    ${d.snapshot ? `<div class="dim">snapshot: <code>${esc(d.snapshot)}</code></div>` : ""}
-    ${d.notes.map(n => `<div class="dim">${esc(n)}</div>`).join("")}</div>`;
-  msg(d.readyToUpload ? "order files ready" : "blocked — do not upload",
-      d.readyToUpload ? "ok" : "err");
-  loadSnaps();
+function effectiveRequirements() {
+  const req = JSON.parse(JSON.stringify(S.requirements));
+  req.productionQuantity = qty();
+  if (provider() === "jlcpcb") {
+    for (const line of req.lines) {
+      const o = S.overrides[lineKey(line)];
+      if (o && o.code) {   // order-only pin: pick replaces the mode in memory
+        delete line.spec; delete line.mpn; delete line.manufacturer;
+        line.providerRefs = {jlcpcb: o.code};
+      }
+    }
+  }
+  return req;
+}
+
+async function resolveNow() {
+  const data = await api("/api/resolve", {
+    requirements: effectiveRequirements(),
+    placements: S.placements, provider: provider()});
+  S.resolution = data.resolution;
+  S.queue = data.queue || null;
+  render();
+  saveDraft();
+}
+
+function saveDraft() {
+  if (!S.design) return;
+  api("/api/draft", {design: S.design, draft: {
+    productionQuantity: qty(),
+    overrides: S.overrides,
+    savedAt: new Date().toISOString(),
+  }}).catch(() => {});   // draft is a convenience — never break the flow
+}
+
+/* ---- state per line -------------------------------------------------------- */
+
+function escFor(i) {
+  return (S.resolution.escalations || []).find(e => e.lineIndex === i) || null;
+}
+function queueFor(i) {
+  return S.queue ? (S.queue.entries || []).find(e => e.lineIndex === i) || null
+                 : null;
+}
+function uninterpFor(i) {
+  return S.uninterpreted.find(u => u.lineIndex === i) || null;
+}
+function lineState(i) {
+  const l = S.resolution.lines[i];
+  if (l.dnp) return "dnp";
+  if (uninterpFor(i)) return "conf";
+  if (escFor(i)) return "short";
+  if (l.ref || l.mpn) {
+    if ((l.checks || []).some(c => c.check === "unverified")) return "na";
+    return "ok";
+  }
+  return "short";
+}
+function isOverridden(i) {
+  const rl = S.requirements.lines[i];
+  return !!S.overrides[lineKey(rl)];
+}
+
+/* ---- render ----------------------------------------------------------------- */
+
+function render() { renderRail(); renderExport(); renderMain(); }
+
+const STATE_BADGE = {ok: "ok", short: "short", conf: "conf", na: "na",
+                     dnp: null};
+
+function railStat(i, state) {
+  const l = S.resolution.lines[i];
+  if (state === "dnp") return "DNP";
+  if (state === "conf") return "search";
+  if (state === "na") return "unverified";
+  if (state === "short") return "short";
+  let tail = "✓";
+  if (isOverridden(i)) tail += " alt";
+  else if (l.substitution) tail += " sub";
+  return tail;
+}
+
+function railDesc(l) {
+  const bits = [];
+  if (l.comment) bits.push(l.comment);
+  else if (l.mpn) bits.push(l.mpn);
+  if (l.spec && l.spec.package) bits.push(l.spec.package);
+  else if (l.footprint) bits.push(l.footprint);
+  return bits.join(" · ");
+}
+
+function renderRail() {
+  if (!S.resolution) { $("comps").innerHTML = ""; return; }
+  const order = S.resolution.lines.map((l, i) => i)
+    .sort((a, b) => (S.resolution.lines[a].dnp ? 1 : 0) -
+                    (S.resolution.lines[b].dnp ? 1 : 0));
+  $("comps").innerHTML = order.map(i => {
+    const l = S.resolution.lines[i];
+    const state = lineState(i);
+    const sel = S.selected === i ? " sel" : "";
+    return '<button class="comp st-' + state + sel + '" data-line="' + i + '">' +
+      '<span><span class="ref">' + esc(l.designators.join(" ")) + '</span>' +
+      '<span class="desc">' + esc(railDesc(l)) + '</span></span>' +
+      '<span class="stat">' + esc(railStat(i, state)) + '</span></button>';
+  }).join("");
+  document.querySelectorAll("#comps .comp").forEach(b =>
+    b.onclick = () => select(parseInt(b.dataset.line, 10)));
+}
+
+function select(i) {
+  S.selected = (S.selected === i) ? null : i;
+  render();
+}
+
+function renderExport() {
+  const b = $("export-btn");
+  const ready = !!S.resolution &&
+    (S.resolution.escalations || []).length === 0 &&
+    S.uninterpreted.length === 0;
+  b.setAttribute("aria-disabled", ready ? "false" : "true");
+  if (ready) b.removeAttribute("title");
+  else b.title = S.resolution
+    ? "Complete the part substitutions — every part in the list must be green."
+    : "Refresh the design first.";
+}
+
+function renderMain() {
+  if (!S.resolution) return;
+  $("main").innerHTML = (S.selected == null) ? overviewHtml() : detailHtml(S.selected);
+  wireMain();
+}
+
+function checksHtml(l) {
+  return (l.checks || [])
+    .filter(c => c.severity !== "info")
+    .map(c => '<div class="' +
+      (c.severity === "error" ? "alert" : "why") + '">' +
+      esc(c.check) + ": " + esc(c.message) + "</div>").join("");
+}
+
+function overviewHtml() {
+  const r = S.resolution;
+  const order = r.lines.map((l, i) => i)
+    .sort((a, b) => (r.lines[a].dnp ? 1 : 0) - (r.lines[b].dnp ? 1 : 0));
+  const rows = order.map((i, n) => {
+    const l = r.lines[i];
+    const state = lineState(i);
+    const lcsc = l.ref
+      ? '<a href="https://www.lcsc.com/product-detail/' +
+        encodeURIComponent(l.ref) + '.html" target="_blank" rel="noopener" ' +
+        'onclick="event.stopPropagation()"><code>' + esc(l.ref) + "</code></a>"
+      : "—";
+    const stock = state === "short"
+      ? '<td class="num short-num">' +
+        (Math.max(0, ...(((escFor(i) || {}).choices || []).map(
+          c => c.liveStock || 0))) || "—") + " / " + fmt(l.requiredQty) + '</td>'
+      : '<td class="num' + (l.liveStock == null ? " dimtd" : "") + '">' +
+        (l.dnp ? "—" : fmt(l.liveStock) + " / " + fmt(l.requiredQty)) + '</td>';
+    return '<tr class="linkrow" data-line="' + i + '"' +
+      (l.dnp ? ' style="color:var(--tin)"' : "") + '>' +
+      '<td class="dimtd mono">' + (n + 1) + '</td>' +
+      '<td class="mono">' + esc(l.designators.join(" ")) + '</td>' +
+      '<td>' + esc(l.comment || l.mpn || "") +
+        (l.footprint ? ' <span class="dimtd">' + esc(l.footprint) + '</span>' : "") +
+      '</td>' +
+      '<td>' + lcsc + '</td>' + stock +
+      '<td class="num">' + esc(unitStr(l.unitPrice)) + '</td>' +
+      '<td class="num">' + esc(l.dnp ? "—" : money(l.unitPrice, l.requiredQty)) +
+      '</td></tr>';
+  }).join("");
+  const priced = r.lines.filter(l => !l.dnp);
+  const total = priced.reduce((t, l) =>
+    t + (l.unitPrice == null ? 0 : Number(l.unitPrice) * l.requiredQty), 0);
+  const partial = priced.some(l => l.unitPrice == null);
+  const perBoard = total > 0
+    ? '<span class="per-board">' + (partial ? "≥ " : "") +
+      "$" + (total / r.productionQuantity).toFixed(2) + " / board</span>"
+    : "";
+  return exportCardHtml() +
+    '<h2 class="part-title"><span class="spec">Design Overview</span>' +
+    perBoard + '</h2>' +
+    '<div class="sect tight"><div class="tablewrap"><table>' +
+    '<tr><th>#</th><th>designators</th><th>part</th><th>lcsc</th>' +
+    '<th class="num">stock / need</th><th class="num">unit $</th>' +
+    '<th class="num">order $</th></tr>' + rows +
+    '</table></div></div>';
+}
+
+function exportCardHtml() {
+  const d = S.exportResult;
+  if (!d) return "";
+  const files = d.files.map(f => "<code>" + esc(f) + "</code>").join("<br>");
+  const blockers = (d.blockers || []).map(b =>
+    '<div class="alert">' + esc(b.check) + ": " + esc(b.message) + "</div>").join("");
+  const notes = (d.notes || []).map(n =>
+    '<div class="why">' + esc(n) + "</div>").join("");
+  return '<div class="card dismiss" id="export-card">' +
+    (d.readyToUpload
+      ? '<div class="ok-line"><b>Files written</b>' +
+        (d.savedTo ? " — saved to <b>" + esc(d.savedTo) + "</b>" : "") + "</div>"
+      : '<div class="alert"><b>Blocked — do not upload</b></div>') +
+    files + blockers + notes + "</div>";
+}
+
+/* ---- detail panel ------------------------------------------------------------ */
+
+const PART_TABLE_HEAD =
+  '<tr><th></th><th>lcsc</th><th>mpn</th><th>maker</th>' +
+  '<th class="num">live stock</th><th class="num">need</th>' +
+  '<th class="num">unit $</th><th class="num">order $</th><th>why</th></tr>';
+
+function partRow(o) {
+  // o: {radio, checked, disabled, code, mpn, maker, stock, stockCls, need,
+  //     unit, why, pickArg}
+  const radio = o.radio
+    ? '<input type="radio" name="pick" ' + (o.checked ? "checked " : "") +
+      'data-pick="' + esc(o.pickArg) + '" aria-label="use ' + esc(o.code) +
+      ' for this order">'
+    : "";
+  return '<tr' + (o.checked ? ' class="picked"' : "") + '>' +
+    '<td class="pick">' + radio + '</td>' +
+    '<td><code>' + esc(o.code || "—") + '</code></td>' +
+    '<td class="mono">' + esc(o.mpn || "") + '</td>' +
+    '<td>' + esc(o.maker || "—") + '</td>' +
+    '<td class="num ' + (o.stockCls || "") + '">' + fmt(o.stock) + '</td>' +
+    '<td class="num">' + fmt(o.need) + '</td>' +
+    '<td class="num">' + esc(unitStr(o.unit)) + '</td>' +
+    '<td class="num">' + esc(money(o.unit, o.need)) + '</td>' +
+    '<td class="why">' + (o.why || "") + '</td></tr>';
+}
+
+function detailHtml(i) {
+  const l = S.resolution.lines[i];
+  const rl = S.requirements.lines[i];
+  const state = lineState(i);
+  const badge = STATE_BADGE[state]
+    ? '<span class="badge ' + STATE_BADGE[state] + '">' +
+      (state === "conf" ? "search" : state === "na" ? "unverified" : state) +
+      '</span>' : "";
+  const title = l.spec ? specStr(l.spec)
+    : (l.comment || l.mpn || "") +
+      (l.footprint ? " on " + l.footprint : "");
+  let body;
+  if (l.dnp) {
+    body = '<p class="sub">Marked DNP in the schematic — excluded from the ' +
+      "BOM and CPL. Nothing to resolve.</p>";
+  } else if (state === "conf") {
+    body = confBody(i);
+  } else if (!rl.spec && (rl.providerRefs || rl.mpn)) {
+    body = pinnedBody(i);
+  } else {
+    body = specBody(i);
+  }
+  return '<button class="crumb" data-line="-1">&#8592; design overview</button>' +
+    '<h2 class="part-title"><span class="ref">' +
+    esc(l.designators.join(" ")) + '</span><span class="spec">' + esc(title) +
+    '</span>' + badge + '</h2>' + body + placementHtml(i);
+}
+
+/* a line awaiting its one-time spec search */
+function confBody(i) {
+  const u = uninterpFor(i);
+  const g = (u && u.guess && u.guess.spec) || {};
+  const rationale = u && u.guess && u.guess.rationale
+    ? '<p class="sub">' + esc(u.guess.rationale) + "</p>" : "";
+  return rationale + specFormHtml(i, {
+    kind: g.kind || "", value: g.value || (u ? u.value : ""),
+    package: g.package || (u ? u.footprint : "") || "",
+    qualifier: g.qualifier || ""}, null);
+}
+
+/* the schematic names an exact part; short means fix it in Fusion */
+function pinnedBody(i) {
+  const l = S.resolution.lines[i];
+  const e = escFor(i);
+  const code = l.ref || (e && e.ref) ||
+    (S.requirements.lines[i].providerRefs || {}).jlcpcb || "";
+  const row = partRow({
+    radio: false, checked: !e, code: code, mpn: l.mpn, maker: l.manufacturer,
+    stock: l.liveStock, stockCls: e ? "short-num" : "ok-num",
+    need: l.requiredQty, unit: l.unitPrice, why: "named by the schematic"});
+  let extra = "";
+  if (e) {
+    const lcscUrl = "https://www.lcsc.com/product-detail/" +
+      encodeURIComponent(code) + ".html";
+    extra = '<p class="alert">' + esc(e.reason) +
+      ' — resolve this in Fusion; the schematic pins this exact part.' +
+      (code ? ' <a href="' + lcscUrl + '" target="_blank" rel="noopener">' +
+        esc(code) + " on LCSC</a>" : "") + "</p>";
+  }
+  return '<div class="sect"><div class="tablewrap"><table>' + PART_TABLE_HEAD +
+    row + "</table></div>" + extra + checksHtml(l) + "</div>" +
+    '<div id="avl-slot"></div>';
+}
+
+/* a spec line: the single list — your part(s) first, then search results */
+function specBody(i) {
+  const l = S.resolution.lines[i];
+  const e = escFor(i);
+  const q = queueFor(i);
+  const need = l.requiredQty;
+  let rows = "";
+  if (!e) {
+    // green: current pick row now; the full approved list fills in async
+    rows = partRow({
+      radio: true, checked: true, disabled: false, code: l.ref, mpn: l.mpn,
+      maker: l.manufacturer, stock: l.liveStock, stockCls: "ok-num",
+      need: need, unit: l.unitPrice, pickArg: "over:" + l.ref,
+      why: isOverridden(i) ? "your pick — this order only"
+        : l.substitution ? "substituted — preferred part is short" : ""});
+    return '<div class="sect"><div class="tablewrap"><table id="part-table">' +
+      PART_TABLE_HEAD + rows + "</table></div>" + checksHtml(l) + "</div>" +
+      '<div id="avl-slot"></div>';
+  }
+  // red: approved-but-short rows first (no radio), then verified alternates
+  const avlRows = (e.choices || []).map(c => partRow({
+    radio: false, code: c.ref, mpn: c.mpn, maker: null,
+    stock: c.liveStock, stockCls: "short-num", need: need, unit: null,
+    why: "your part"}));
+  const firstPick = e.reason === "no-part-choices";
+  const candidates = q
+    ? [].concat(q.proposal || [], q.alsoFound || []) : [];
+  const unconfirmed = q ? (q.fitUnconfirmed || []) : [];
+  const candRows = candidates.map(c => partRow({
+    radio: true, checked: false, code: c.code, mpn: c.model, maker: null,
+    stock: c.liveStock, stockCls: (c.liveStock || 0) >= need ? "ok-num" : "",
+    need: need, unit: c.unitPrice1,
+    pickArg: (firstPick ? "first:" : "over:") + c.code,
+    why: esc((c.why || []).join(" · "))}))
+    .concat(unconfirmed.map(c => partRow({
+      radio: true, checked: false, code: c.code, mpn: c.model, maker: null,
+      stock: c.liveStock, stockCls: "", need: need, unit: c.unitPrice1,
+      pickArg: (firstPick ? "first:" : "over:") + c.code,
+      why: "⚠ fit unconfirmed — check dimensions" +
+        (c.fitUnknownBecause ? " · " + esc(c.fitUnknownBecause.join(" · ")) : "")})));
+  if (!candRows.length) {
+    // empty search: editable terms, suspect field flagged
+    const auto = q && q.discovery && q.discovery.automatic;
+    const noteText = q && q.discovery && q.discovery.note
+      ? q.discovery.note
+      : auto
+        ? "no in-stock part matches package “" +
+          (l.spec ? l.spec.package : "") +
+          "” exactly — package matching has no wildcards; " +
+          "correct the term and search again"
+        : "no search ran — check the terms and search again";
+    return '<div class="sect"><div class="tablewrap"><table>' +
+      PART_TABLE_HEAD + avlRows.join("") + "</table></div>" +
+      '<p class="alert">' + esc(noteText) + "</p></div>" +
+      specFormHtml(i, l.spec || {}, auto ? "package" : "kind");
+  }
+  return '<div class="sect"><div class="tablewrap"><table>' + PART_TABLE_HEAD +
+    avlRows.join("") + candRows.join("") + "</table></div>" +
+    checksHtml(l) + "</div>";
+}
+
+function specFormHtml(i, spec, suspect) {
+  const f = (name, val) =>
+    '<label>' + name + ' <input id="sf-' + name + '" value="' + esc(val || "") +
+    '"' + (suspect === name ? ' class="suspect"' : "") + "></label>";
+  return '<div class="sect"><div class="form">' +
+    f("kind", spec.kind) + f("value", spec.value) +
+    f("package", spec.package) + f("qualifier", spec.qualifier) +
+    '<button class="btn solid" id="spec-search" data-line="' + i +
+    '">Search</button></div></div>';
+}
+
+/* rotation / placement — JLCPCB CPL only */
+function placementHtml(i) {
+  const l = S.resolution.lines[i];
+  if (l.dnp || provider() !== "jlcpcb" || !S.placements) return "";
+  const p = (S.placements || []).find(
+    pl => l.designators.includes(pl.designator));
+  if (!p) return "";
+  const c = S.rotations.find(r =>
+    (r.lcsc && l.ref && r.lcsc === l.ref) ||
+    (r.footprint && r.footprint === p.footprint));
+  const off = c ? (c.rotationOffsetDeg || 0) : 0;
+  const ships = ((Number(p.angle) || 0) + off) % 360;
+  const opts = [0, 90, 180, 270].map(d =>
+    '<option value="' + d + '"' + (d === off ? " selected" : "") + '>' +
+    (d ? "+" + d + "° CCW" : "0°") + "</option>").join("");
+  return '<div class="sect"><p class="eyebrow">Placement (CPL)</p>' +
+    '<div class="place">' +
+    '<span><b>x</b>' + esc(p.x) + '</span><span><b>y</b>' + esc(p.y) +
+    '</span><span><b>board angle</b>' + esc(p.angle) + "°</span>" +
+    '<span><b>correction</b><select id="rot-select" data-line="' + i +
+    '" data-footprint="' + esc(p.footprint || "") + '">' + opts +
+    "</select></span>" +
+    '<span class="effective"><b>ships as</b>' + ships + "°</span></div>" +
+    '<p class="note">Applies to footprint <span class="mono">' +
+    esc(p.footprint || "?") + "</span> in every design.</p></div>";
+}
+
+/* ---- wiring + actions --------------------------------------------------------- */
+
+function wireMain() {
+  document.querySelectorAll("#main [data-line]").forEach(el => {
+    if (el.classList.contains("crumb"))
+      el.onclick = () => { S.selected = null; render(); };
+    else if (el.classList.contains("linkrow"))
+      el.onclick = () => select(parseInt(el.dataset.line, 10));
+  });
+  document.querySelectorAll('#main input[type=radio][data-pick]').forEach(r => {
+    r.onchange = () => {
+      const [kind, code] = r.dataset.pick.split(":");
+      pick(S.selected, code, kind === "first");
+    };
+  });
+  const search = $("spec-search");
+  if (search) search.onclick = () => doSearch(parseInt(search.dataset.line, 10));
+  const rot = $("rot-select");
+  if (rot) rot.onchange = () =>
+    setRotation(parseInt(rot.dataset.line, 10), rot.dataset.footprint, rot.value);
+  const card = $("export-card");
+  if (card) card.onclick = () => { S.exportResult = null; render(); };
+  if (S.selected == null || !escFor(S.selected)) fillAvl(S.selected);
+}
+
+/* green spec line: fill in the rest of the approved list (backups pickable) */
+async function fillAvl(i) {
+  if (i == null) return;
+  const slot = $("avl-slot");
+  const l = S.resolution.lines[i];
+  const rl = S.requirements.lines[i];
+  const spec = rl.spec;   // the original spec, even when overridden
+  if (!slot || !spec) return;
+  const key = JSON.stringify(spec);
+  try {
+    if (!(key in S.avlCache)) {
+      const d = await api("/api/part?" + specQS(spec));
+      S.avlCache[key] = d.housePart;
+    }
+  } catch (e) { return; }
+  const house = S.avlCache[key];
+  if (!house || !house.choices || house.choices.length < 1) return;
+  const need = l.requiredQty;
+  const table = $("part-table");
+  if (!table) return;
+  const rows = house.choices
+    .filter(c => c.lcscCode && c.lcscCode !== l.ref)
+    .map(c => {
+      const stock = c.lastStock;
+      const canPick = (stock || 0) >= need;
+      return partRow({
+        radio: canPick, checked: false, code: c.lcscCode, mpn: c.mpn,
+        maker: c.manufacturer, stock: stock,
+        stockCls: canPick ? "" : "short-num", need: need, unit: c.lastPrice,
+        pickArg: "over:" + c.lcscCode,
+        why: "approved rank " + c.rank +
+          (c.lastVerifiedAt ? " · checked " + esc(c.lastVerifiedAt.slice(0, 10))
+                            : "")});
+    }).join("");
+  if (rows) {
+    table.insertAdjacentHTML("beforeend", rows);
+    document.querySelectorAll('#part-table input[type=radio][data-pick]')
+      .forEach(r => { r.onchange = () => {
+        const [kind, code] = r.dataset.pick.split(":");
+        pick(S.selected, code, kind === "first");
+      }; });
+  }
+}
+
+async function pick(i, code, firstPick) { await run("applying pick", async () => {
+  const rl = S.requirements.lines[i];
+  if (firstPick) {
+    // first pick for a spec with nothing approved: THE choosing — permanent
+    const q = queueFor(i);
+    const all = q ? [].concat(q.candidates || [], q.fitUnconfirmed || []) : [];
+    const cand = all.find(c => c.code === code);
+    await api("/api/approve", {approvals: [{
+      spec: rl.spec, lcsc: code,
+      mpn: (cand && cand.model) || undefined, rank: 1,
+      design: S.design || undefined, note: "picked in the app"}]});
+  } else {
+    // overriding an existing approved part: this order only
+    S.overrides[lineKey(rl)] = {code: code};
+  }
+  await resolveNow();
+  msg("using " + code +
+      (firstPick ? " — recorded as your part for this spec"
+                 : " for this order"), "ok");
 }); }
 
-function loadSnaps() { run("snapshots", async () => {
-  const d = await api("/api/snapshots");
-  $("snaps").innerHTML = d.snapshots.length ? "<table>" + d.snapshots.map(s =>
-    `<tr><td><code>${esc(s.name)}</code></td><td class="dim">${s.size} B</td>
-     <td><button class="act quiet small" onclick='viewSnap(${JSON.stringify(s.name)})'>
-     view</button></td></tr>`).join("") + "</table>"
-    : '<p class="dim">no release snapshots yet.</p>';
+async function doSearch(i) { await run("searching", async () => {
+  const spec = {
+    kind: $("sf-kind").value.trim(), value: $("sf-value").value.trim(),
+    package: $("sf-package").value.trim(),
+    qualifier: $("sf-qualifier").value.trim()};
+  const rl = S.requirements.lines[i];
+  const u = uninterpFor(i);
+  const hint = ((rl.designators[0] || "").match(/^[A-Za-z]+/) || [""])[0]
+    .toUpperCase();
+  // remember the answer silently (a user answer is never re-asked) …
+  await api("/api/confirm-spec", {
+    kindHint: u ? u.kindHint : hint,
+    value: u ? u.value : (rl.comment || ""),
+    footprint: u ? u.footprint : (rl.footprint || ""),
+    spec: spec,
+    envelope: (u && u.guess && u.guess.envelope) || undefined});
+  // … then search: the line becomes a spec line and re-resolves
+  rl.spec = spec;
+  delete rl.mpn; delete rl.manufacturer; delete rl.providerRefs;
+  S.uninterpreted = S.uninterpreted.filter(x => x.lineIndex !== i);
+  delete S.overrides[lineKey(rl)];
+  await resolveNow();
+  const q = queueFor(i);
+  const found = q ? (q.candidates || []).length + (q.fitUnconfirmed || []).length
+                  : 0;
+  msg(found ? found + " part(s) found — pick one"
+            : "nothing found — adjust a term and search again",
+      found ? "ok" : "warn");
 }); }
 
-function viewSnap(name) { run("snapshot", async () => {
-  const d = await api(`/api/snapshot?name=${encodeURIComponent(name)}`);
-  const w = window.open("", "_blank");
-  w.document.write(`<pre>${esc(JSON.stringify(d, null, 2))}</pre>`);
-  w.document.title = name;
-}); }
+async function setRotation(i, footprint, deg) {
+  await run("saving rotation", async () => {
+    const l = S.resolution.lines[i];
+    const d = await api("/api/rotation", {
+      footprint: footprint || undefined, lcsc: l.ref || undefined,
+      mpn: l.mpn || undefined, rotationOffsetDeg: parseInt(deg, 10)});
+    S.rotations = d.corrections;
+    render();
+    msg("rotation saved — applies to every export from now on", "ok");
+  });
+}
 
-loadParts();
+async function doExport() {
+  const b = $("export-btn");
+  if (b.getAttribute("aria-disabled") === "true") return;
+  // the directory dialog must open inside the click gesture (Chrome/Edge);
+  // browsers without the API fall back to the server's output directory
+  let dir = null;
+  if (window.showDirectoryPicker) {
+    try { dir = await window.showDirectoryPicker({mode: "readwrite"}); }
+    catch (e) { msg("export canceled", "warn"); return; }
+  }
+  await run("exporting", async () => {
+    const d = await api("/api/emit", {
+      resolution: S.resolution, provider: provider()});
+    d.savedTo = null;
+    if (dir && d.readyToUpload && d.fileContents) {
+      for (const [name, text] of Object.entries(d.fileContents)) {
+        const fh = await dir.getFileHandle(name, {create: true});
+        const w = await fh.createWritable();
+        await w.write(text);
+        await w.close();
+      }
+      d.savedTo = dir.name;
+    }
+    S.exportResult = d;
+    S.selected = null;
+    render();
+    msg(d.readyToUpload
+        ? "order files written" + (d.savedTo ? " to " + d.savedTo : "")
+        : "blocked — do not upload",
+        d.readyToUpload ? "ok" : "err");
+  });
+}
+
+/* ---- top-level wiring ------------------------------------------------------------ */
+
+$("refresh-btn").onclick = refresh;
+$("export-btn").onclick = doExport;
+$("provider").onchange = () => {
+  if (S.requirements) run("re-resolving", resolveNow);
+};
+$("qty").onchange = () => {
+  if (S.requirements) run("re-resolving", resolveNow);
+};
+loadCache();
 </script>
 </body>
 </html>

@@ -92,7 +92,9 @@ def client(tmp_path):
     app = HendleyApp(db_path=tmp_path / "parts.db", outdir=tmp_path / "out",
                      datasource_factory=lambda: source,
                      bridge_factory=lambda host: FakeBridge(),
-                     interpreter_factory=_no_interpreter)
+                     interpreter_factory=_no_interpreter,
+                     draft_path=tmp_path / "draft.json",
+                     cache_path=tmp_path / "design-cache.json")
     server = ThreadingHTTPServer(("127.0.0.1", 0), make_handler(app))
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -119,7 +121,9 @@ def client(tmp_path):
 
 
 def test_root_serves_html(tmp_path):
-    app = HendleyApp(db_path=tmp_path / "parts.db", outdir=tmp_path / "out")
+    app = HendleyApp(db_path=tmp_path / "parts.db", outdir=tmp_path / "out",
+                     draft_path=tmp_path / "draft.json",
+                     cache_path=tmp_path / "design-cache.json")
     server = ThreadingHTTPServer(("127.0.0.1", 0), make_handler(app))
     threading.Thread(target=server.serve_forever, daemon=True).start()
     try:
@@ -280,7 +284,9 @@ def _mystery_app(tmp_path, interp):
     app = HendleyApp(db_path=tmp_path / "parts.db", outdir=tmp_path / "out",
                      datasource_factory=lambda: FakeSource({}),
                      bridge_factory=lambda host: MysteryBridge(),
-                     interpreter_factory=lambda: interp)
+                     interpreter_factory=lambda: interp,
+                     draft_path=tmp_path / "draft.json",
+                     cache_path=tmp_path / "design-cache.json")
     server = ThreadingHTTPServer(("127.0.0.1", 0), make_handler(app))
     threading.Thread(target=server.serve_forever, daemon=True).start()
     base = f"http://127.0.0.1:{server.server_port}"

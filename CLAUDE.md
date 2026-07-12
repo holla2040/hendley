@@ -28,9 +28,15 @@ concrete `providers/*` or `datasources/jlc` — only the base protocols.
   `app.py` (`app`), and `migration.py` (`scr`).
 - `src/hendley/app/` — **the app, the primary interface** (ADR-0003/0004):
   `hendley app` serves a stdlib-only local web UI on 127.0.0.1 (`server.py` =
-  JSON API 1:1 over library calls; `ui.py` = the single embedded page). Tabs:
-  House Parts (AVL manager), Resolve (intake → resolution → approval queue),
-  Order (gate + emit + snapshots). Zero new dependencies.
+  JSON API 1:1 over library calls; `ui.py` = the single embedded page). One
+  page (2026-07 redesign): left rail = Refresh + board qty + the design's
+  components colored by stock state (green covers / red short / amber needs a
+  spec search / dashed DNP); click a component → detail panel (one radio
+  table picks what mounts; a pick overriding an approved part is order-only,
+  the first pick for a new spec records AVL rank 1); Placement section edits
+  `data/cpl-rotations.json`; Export BOM/CPL in the title bar stays disabled
+  until all rows are green. Picks persist via the server-side draft
+  (`~/.hendley/draft.json`, cleared on clean export). Zero new dependencies.
 - `src/hendley/domain/model.py` — the canonical vocabulary: `SpecKey`,
   `RequirementLine` (one selection mode: spec | mpn | provider refs; `dnp`
   carried), `RequirementsBom` (versioned JSON, `requirementsBomVersion: 1`),
@@ -171,7 +177,7 @@ never need to guess magic words. Match their message against this table
   NOT ask what they want — run it, then relay the stock report and flag
   blockers. (`hendley jlc` is a real alias of `pcba` — if they typed it, run it.)
 - **`app`**, "start the app", "open hendley" → run **`hendley app`** (the
-  primary UI: House Parts / Resolve / Order at http://127.0.0.1:8341).
+  primary UI: the single-page order workbench at http://127.0.0.1:8341).
 - "resolve the BOM", "order N boards", "prepare a PCBA order from specs" →
   the **order-bom skill** (`.claude/skills/order-bom/SKILL.md`): Requirements
   BOM → `hendley resolve --queue` → one approval batch → `hendley bom`.
@@ -189,7 +195,7 @@ never need to guess magic words. Match their message against this table
 ```
 Hendley — say any of these:
 
-  app                      open the Hendley app (House Parts / Resolve / Order)
+  app                      open the Hendley app (the single-page order workbench)
                            in your browser — the main way to drive everything below
   jlc                      generate bom.csv + cpl.csv from the open Fusion design
                            and check JLC stock (= hendley pcba). Fusion must be
