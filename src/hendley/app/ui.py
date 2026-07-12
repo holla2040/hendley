@@ -408,13 +408,12 @@ function stagedFor(i) {
 }
 function committedRadio(i) { return S.resolution.lines[i].ref || null; }
 function committedChecks(i) {
-  // codes on the spec's approved list, minus the mounted part (rank 1
-  // isn't a "backup")
+  // codes on the spec's approved list, mounted part included — every
+  // active AVL choice is "checked"; unchecking any of them prunes it
   const rl = S.requirements.lines[i];
   const house = rl.spec ? S.avlCache[JSON.stringify(rl.spec)] : null;
-  const mounted = committedRadio(i);
   return new Set(((house && house.choices) || [])
-    .map(c => c.lcscCode).filter(c => c && c !== mounted));
+    .map(c => c.lcscCode).filter(Boolean));
 }
 function effRadio(i) {
   const st = stagedFor(i);
@@ -812,13 +811,13 @@ function specBody(i) {
       cls: l.offerClass,
       stock: l.liveStock, stockCls: "ok-num",
       need: need, unit: l.unitPrice,
+      check: {show: !!mine.rank, on: effCheck(i, l.ref)},
       why: over ? "your pick — this order only"
         : l.substitution ? "substituted — preferred part is short"
         : esc(mine.note || (mine.rank ? "your approved part" : "")),
       action: over
         ? {act: "clearover", label: "undo — use the automatic pick"}
-        : (mine.rank ? {act: "stopusing", label: "stop using this part"}
-                     : null)});
+        : null});
     rows += choices
       .filter(c => c.lcscCode && c.lcscCode !== l.ref)
       .map(c => {
@@ -905,7 +904,7 @@ function specBody(i) {
   const unconfBlock = unconf.length
     ? '<details class="unconf"' + (S.showUnconfirmed ? " open" : "") + '>' +
       "<summary>" + unconf.length + " more — package not confirmed</summary>" +
-      '<div class="tablewrap"><table>' + PART_TABLE_HEAD + unconfRows.join("") +
+      '<div class="tablewrap"><table>' + sortableHead() + unconfRows.join("") +
       "</table></div></details>"
     : "";
   const yourPart = '<div class="sect"><div class="tablewrap"><table>' +
@@ -1084,10 +1083,7 @@ function wireMain() {
     };
   });
   document.querySelectorAll("#main [data-act]").forEach(btn => {
-    btn.onclick = () => {
-      if (btn.dataset.act === "clearover") clearOverride(S.selected);
-      else stopUsing(S.selected);
-    };
+    btn.onclick = () => clearOverride(S.selected);
   });
   const expl = $("explore-search");
   if (expl) {
@@ -1150,17 +1146,6 @@ async function clearOverride(i) { await run("undoing pick", async () => {
   msg("back to the automatic pick", "ok");
 }); }
 
-/* undo a recorded pick: audited removal, the spec goes back to needing one */
-async function stopUsing(i) { await run("removing part", async () => {
-  const rl = S.requirements.lines[i];
-  const l = S.resolution.lines[i];
-  await api("/api/remove", {spec: rl.spec, ref: l.ref,
-                            note: "removed in the app (undo pick)"});
-  if (rl.spec) delete S.avlCache[JSON.stringify(rl.spec)];
-  await resolveNow();
-  msg("removed " + l.ref + " — pick again below", "ok");
-}); }
-
 function modelFor(i, code) {
   const q = queueFor(i);
   const key = lineKey(S.requirements.lines[i]);
@@ -1221,7 +1206,9 @@ async function applyStaged(i) { await run("saving", async () => {
   if (approvals.length) await api("/api/approve", {approvals: approvals});
   for (const code of removals)
     await api("/api/remove", {spec: rl.spec, ref: code,
-                              note: "alt removed in the app"});
+                              note: code === committedRadio(i)
+                                ? "removed in the app"
+                                : "alt removed in the app"});
   if (rl.spec) delete S.avlCache[JSON.stringify(rl.spec)];
   await resolveNow();
   const done = [];
