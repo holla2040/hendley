@@ -148,9 +148,10 @@ details.unconf > summary:hover { color:var(--pad); }
 input[type=radio], input[type=checkbox] { accent-color:var(--pad);
   width:16px; height:16px; cursor:pointer; }
 td.pick { padding-right:4px; }
-.update-row { display:flex; justify-content:flex-end; align-items:center;
-              gap:8px; margin:10px 0 0; }
-.update-left { margin-right:auto; margin-left:0; }
+.title-actions { margin-left:auto; display:flex; align-items:center;
+                 gap:8px; }
+.title-actions .btn.mini { margin-left:0; padding:3px 9px; font-size:10.5px;
+                           line-height:1.35; }
 a { color:var(--pad); }
 .form { display:flex; gap:10px; align-items:end; margin-top:6px; }
 .form label { display:flex; flex-direction:column; gap:4px; font:11px var(--mono);
@@ -676,7 +677,8 @@ function detailHtml(i) {
   return '<button class="crumb" data-line="-1">&#8592; design overview</button>' +
     '<h2 class="part-title"><span class="ref">' +
     esc(l.designators.join(" ")) + '</span><span class="spec">' + esc(title) +
-    '</span>' + badge + '</h2>' + body + placementHtml(i);
+    '</span>' + badge + titleActionsHtml(i) + '</h2>' + body +
+    placementHtml(i);
 }
 
 /* a line awaiting its one-time spec search */
@@ -711,7 +713,7 @@ function pinnedBody(i) {
       : "schematic MPN attribute “" + esc(rl.mpn || "") + "” only",
     action: over
       ? {act: "clearover", label: "undo — use the schematic part"}
-      : {act: "explore", label: "explore alternates"}});
+      : null});
   let extra = "";
   if (e && schematicCode) {
     const lcscUrl = "https://www.lcsc.com/product-detail/" +
@@ -734,9 +736,7 @@ function pinnedBody(i) {
       '<label>search in-stock parts <input id="sf-explore" value="' +
       esc(seed) + '"></label>' +
       '<button class="btn solid" id="explore-search" data-line="' + i +
-      '">Search</button></div></div>' +
-      (S.exploreResults[key] ? updateBtnHtml(i) : "") +
-      exploreResultsHtml(i, l);
+      '">Search</button></div></div>' + exploreResultsHtml(i, l);
   }
   return '<div class="sect"><div class="tablewrap"><table>' + PART_TABLE_HEAD +
     row + "</table></div>" + extra + checksHtml(l) + "</div>" + exploreHtml;
@@ -836,9 +836,6 @@ function specBody(i) {
     // the search stays reachable after picks are saved: search more
     // alternates any time, results committed by the same Update button
     const lk = lineKey(rl);
-    const searchBtn = S.exploring[lk] ? "" :
-      '<button class="btn mini update-left" id="green-explore">' +
-      "search alternates</button>";
     let explore = "";
     if (S.exploring[lk]) {
       const seed = S.searches[lk] ||
@@ -849,8 +846,7 @@ function specBody(i) {
         '<button class="btn solid" id="explore-search" data-line="' + i +
         '">Search</button></div></div>' + exploreResultsHtml(i, l);
     }
-    return updateBtnHtml(i, searchBtn) +
-      '<div class="sect"><div class="tablewrap"><table>' +
+    return '<div class="sect"><div class="tablewrap"><table>' +
       PART_TABLE_HEAD + rows + "</table></div>" + checksHtml(l) + "</div>" +
       explore;
   }
@@ -921,8 +917,7 @@ function specBody(i) {
         ? '<p class="alert">searched “' + esc(disc.search) + '” — nothing ' +
           "in stock matched; adjust the terms and search again</p>"
         : "";
-      return updateBtnHtml(i) + yourPart + miss + "</div>" +
-        searchRowHtml(i, l);
+      return yourPart + miss + "</div>" + searchRowHtml(i, l);
     }
     const noteText = disc.note ? disc.note
       : disc.automatic
@@ -931,11 +926,11 @@ function specBody(i) {
           "” exactly — package matching has no wildcards; " +
           "correct the term and search again"
         : "no search ran — check the terms and search again";
-    return updateBtnHtml(i) + yourPart +
+    return yourPart +
       '<p class="alert">' + esc(noteText) + "</p></div>" +
       specFormHtml(i, l.spec || {}, disc.automatic ? "package" : "kind");
   }
-  return (searchable ? searchRowHtml(i, l) : "") + updateBtnHtml(i) +
+  return (searchable ? searchRowHtml(i, l) : "") +
     '<div class="sect"><div class="tablewrap"><table>' + sortableHead() +
     avlRows.join("") + candRows.join("") + "</table></div>" +
     unconfBlock + checksHtml(l) + "</div>";
@@ -943,13 +938,27 @@ function specBody(i) {
 
 /* the acknowledgement: staged selections write to the database (or the
    order draft) only when this button is pressed */
-function updateBtnHtml(i, left) {
+function updateBtnHtml(i) {
   const dirty = stagedDirty(i);
-  return '<div class="update-row">' + (left || "") +
-    '<button class="btn solid" id="update-btn" ' +
+  return '<button class="btn solid mini" id="update-btn" ' +
     'data-line="' + i + '"' +
     (dirty ? "" : ' aria-disabled="true" title="no changes to save"') +
-    ">Update</button></div>";
+    ">Update</button>";
+}
+
+/* the title-line actions: search alternates + Update, right side */
+function titleActionsHtml(i) {
+  const l = S.resolution.lines[i];
+  const rl = S.requirements.lines[i];
+  if (l.dnp || lineState(i) === "conf") return "";
+  const pinned = !rl.spec && (rl.providerRefs || rl.mpn);
+  if (!pinned && !rl.spec) return "";
+  const canSearch = (pinned || !escFor(i)) &&
+    !S.exploring[lineKey(rl)];   // red spec panels carry the search inline
+  return '<span class="title-actions">' +
+    (canSearch ? '<button class="btn mini" id="open-search">' +
+      "Search Alternates</button>" : "") +
+    updateBtnHtml(i) + "</span>";
 }
 
 function offerLabel(v) {
@@ -1077,10 +1086,7 @@ function wireMain() {
   document.querySelectorAll("#main [data-act]").forEach(btn => {
     btn.onclick = () => {
       if (btn.dataset.act === "clearover") clearOverride(S.selected);
-      else if (btn.dataset.act === "explore") {
-        S.exploring[lineKey(S.requirements.lines[S.selected])] = true;
-        render();
-      } else stopUsing(S.selected);
+      else stopUsing(S.selected);
     };
   });
   const expl = $("explore-search");
@@ -1090,7 +1096,7 @@ function wireMain() {
     const input = $("sf-explore");
     if (input) input.onkeydown = ev => { if (ev.key === "Enter") fire(); };
   }
-  const ge = $("green-explore");
+  const ge = $("open-search");
   if (ge) ge.onclick = () => {
     S.exploring[lineKey(S.requirements.lines[S.selected])] = true;
     render();
