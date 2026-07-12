@@ -30,8 +30,8 @@ Today, Hendley can inspect live JLC component details, check BOM stock, discover
   the gaps
 - **gated BOM emission** (`hendley bom`) — the upload CSV plus an immutable
   release snapshot; error checks block the emit (JLCPCB and PCBWay formats)
-- **the Hendley app** (`hendley app`) — the local web UI over all of the
-  above: House Parts / Resolve / Order (see [The app](#the-app-hendley-app))
+- **the Hendley app** (`hendley app`) — the single-page order workbench over
+  all of the above (see [The app](#the-app-hendley-app))
 - generation of Fusion `.scr` migration scripts
 - optional, explicit execution of reviewed scripts through Fusion's command channel
 
@@ -207,7 +207,7 @@ hendley scr swaps.json -o changes.scr
 | `hendley fusion PARTS.json` | Validate and optionally enrich Fusion parts-export data. |
 | `hendley stock PARTS.json` | Check BOM inventory and return nonzero on blocking stock problems. |
 | `hendley pcba` (alias: `hendley jlc`) | Generate the JLCPCB PCBA order files (`bom.csv` + `cpl.csv`) from the live Fusion design, rotation-corrected and stock-checked; exits nonzero on stock blockers. |
-| `hendley app` | Start the local web app (House Parts / Resolve / Order) on 127.0.0.1 — the primary interface. |
+| `hendley app` | Start the local web app (the single-page order workbench) on 127.0.0.1 — the primary interface. |
 | `hendley db lookup\|record\|rerank\|remove\|list\|refresh` | The house-parts knowledge base: House Parts with deliberately ranked, audited Part Choices (the AVL). Local SQLite; only `refresh` hits the live API. |
 | `hendley resolve REQUEST.json` | Resolve a Requirements BOM against the AVLs + live stock at the order's board count; `--queue` writes the batched approval queue for escalations; exits 1 on escalations. |
 | `hendley bom RESOLUTION.json` | Render a resolution into the upload BOM CSV (JLCPCB, or `--provider pcbway`); a clean `-o` emit also writes the immutable release snapshot; blockers exit 1. |
@@ -234,17 +234,51 @@ Python stdlib only, zero extra dependencies, bound to `127.0.0.1`.
 hendley app            # serves http://127.0.0.1:8341/ and opens the browser
 ```
 
-Three tabs, each a thin surface over the same library the CLI uses:
+One page — the order workbench (2026-07 redesign) — a thin surface over the
+same library the CLI uses:
 
-- **House Parts** — browse and search the AVLs; record, re-rank, and remove
-  Part Choices (all audited); live-refresh the advisory stock cache.
-- **Resolve** — read the open Fusion design (or paste a Requirements BOM),
-  set the Production Quantity, resolve, and clear the **approval queue**:
-  every escalated line arrives with discovered, live-verified,
-  constraint-filtered, ranked candidates and a `why` for each score.
-  Approvals write to the knowledge base and re-resolve.
-- **Order** — the blocking gate (`READY TO UPLOAD` / blockers), order-file
-  emission, and the release-snapshot browser.
+- **Left rail**: **Refresh** (reads the open Fusion design — schematic view
+  active — then resolves against live JLC stock in one click) and the board
+  quantity, above the design's components colored by state: green = the
+  order is covered, light red = short or unresolved, amber = needs a spec
+  search, dashed = DNP (sunk to the bottom). On page load the app
+  repopulates from the last read (`~/.hendley/design-cache.json`) with every
+  correction re-applied — no Fusion round-trip until you want one.
+- **Design Overview** (nothing selected): one row per part — LCSC code
+  (linked to its product page), stock/need, unit and order cost, JLC
+  Basic/Extended class — with the per-board parts cost on the title line.
+- **Click a component** for its detail panel: one table, radio column on the
+  left. **The checked radio is what mounts for this order.** Your part leads
+  the table (no radio when it can't cover the order); live-verified
+  alternates follow with manufacturer, package, class, and a `why` column
+  carrying only judgments the other columns don't (prior approvals,
+  shortfall warnings). Sort by stock or price from the headers.
+- **Pick semantics**: the *first* pick for a spec with nothing approved is
+  the choosing — recorded permanently as the AVL rank 1 ("picked in the
+  app", with a **stop using this part** undo). A pick that *overrides* an
+  existing approved part is **this order only** ("undo — use the automatic
+  pick"); the preferred part returns when its stock does.
+- **Searches are yours**: discovery auto-runs only where the query is
+  deterministic (R/C value params, chip packages). Everything else shows a
+  search box seeded from the spec — *you* fire it, verbatim, and results
+  split honestly: package-confirmed on top (the agent judges each library
+  footprint to its catalog package — `C-0603` → `0603` — cached forever),
+  with "N other packages" and "M can't cover the order" expandable below.
+- **Schematic-pinned parts** (an `LCSC` attribute) are verified as-is, with
+  an **explore alternates** button for order-only substitutes; an MPN-only
+  attribute is called out honestly (JLC can't verify by MPN).
+- **Placement (CPL)** in each panel edits `data/cpl-rotations.json` — set a
+  rotation correction once (keyed by footprint/LCSC, never designator) and
+  every later export applies it.
+- **Export BOM/CPL** in the title bar stays disabled until every row is
+  green, then writes `bom.csv` + `cpl.csv` (+ the release snapshot) — in
+  Chromium browsers it first opens the standard folder picker and saves
+  copies where you choose (Brave ships the picker disabled:
+  `brave://flags/#file-system-access-api`).
+- **Nothing is lost to a reload**: picks, searches, and the board quantity
+  write through to a server-side draft (`~/.hendley/draft.json`, per
+  design), reconciled by line identity on the next load and cleared by a
+  clean export.
 
 Under WSL2 the Windows browser reaches the WSL loopback directly — no
 port-forwarding needed for the app itself. The app starts fine without JLC
@@ -305,9 +339,15 @@ alongside the rotations.
 
 ## The workflow
 
-There is **one** workflow. A part needs to change — it's **out of stock**, you
-want a **different package**, or a **different value** — and the path is the same
-each time; only the trigger differs. It runs as an interactive
+First, the distinction that decides where you work: an **order-time
+substitution** ("mount a different part this run — the design is fine") is an
+app gesture — click the red part, pick a radio, done. A **design change**
+(different package or value, a new `LCSC` attribute, fixing a stale `MPN`) has
+to land in Fusion, and that is this workflow.
+
+There is **one** design-change workflow. A part needs to change — it's **out of
+stock**, you want a **different package**, or a **different value** — and the
+path is the same each time; only the trigger differs. It runs as an interactive
 [Claude Code](https://claude.com/claude-code) session in this repo: Claude reads
 the live design and does the JLC lookups, **you** make the design decision, and
 **Fusion** is where the change is written (the Electronics *object* API is
@@ -389,6 +429,12 @@ two steps:
 It deliberately **does not rank or pick** — it gathers and verifies; you (or
 Claude) weigh inventory vs. price vs. spec margin vs. package. It does not
 perform the full PRD ranking and approval workflow.
+
+The app's red-panel search and the **explore alternates** button are the
+interactive form of the same two steps — discovery plus one batched live
+verify — with the same division of labor: the search string is yours,
+fired verbatim; judgment (normalizing footprint names, weighing candidates)
+belongs to the agent and to you, never to a parser (ADR-0006).
 
 ## Fusion Electronics Integration
 
@@ -552,15 +598,17 @@ The PRD/architecture v1 pipeline is implemented (2026-07-10): canonical
 Requirements BOM schema, live Fusion ingestion, deterministic constraints,
 JLCPCB strategy + adapter, candidate ranking with explanations, approval
 persistence (the audited AVL), the PCBWay strategy/adapter provider-
-independence proof, and the app as the primary interface.
+independence proof, and the app as the primary interface. The AI
+interpretation tier (`ai/` — ad-hoc values and footprint names judged via
+`claude -p`, cached forever, ADR-0005/0006) and the single-page app
+(2026-07-12 redesign) followed.
 
 Next, from the PRD and the open decisions in `docs/architecture.md` §14:
 
 1. User-editable ranking configuration (weights are hardcoded; ADR when it hurts)
-2. The AI assistance layer (`ai/` — advisory, optional, replaceable)
-3. Additional ECAD importers (generic CSV, KiCad)
-4. Lifecycle data (needs a source beyond the JLC API)
-5. Organization-level knowledge scopes
+2. Additional ECAD importers (generic CSV, KiCad)
+3. Lifecycle data (needs a source beyond the JLC API)
+4. Organization-level knowledge scopes
 
 PCBA order placement and website-loop automation are useful future ideas but are outside the Version 1 resolver scope.
 

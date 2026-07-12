@@ -14,7 +14,11 @@ Endpoints (all JSON):
 - ``POST /api/remove``            — remove a choice (state change)
 - ``POST /api/refresh``           — live-verify every JLC-coded choice
 - ``POST /api/intake``            — read the open Fusion design → Requirements BOM
-- ``POST /api/resolve``           — resolve a Requirements BOM (+ approval queue)
+- ``GET  /api/intake-cache``      — the last intake, interpretation cache re-applied
+- ``POST /api/resolve``           — resolve a Requirements BOM (+ approval queue;
+  ``searches={lineIndex: terms}`` fires the engineer's searches verbatim)
+- ``POST /api/explore``           — free search for a pinned part's alternates,
+  live-verified, plus the agent-judged package for its footprint
 - ``POST /api/approve``           — record queue answers to the knowledge store
 - ``POST /api/emit``              — gate + export order files (+ snapshot when clean)
 - ``GET  /api/snapshots``         — release snapshots in the output dir

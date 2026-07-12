@@ -1,6 +1,8 @@
 # ADR-0005 — LLM interpretation tier: judgment via `claude -p`, cached forever
 
-**Status:** Accepted (settled in discussion with Craig, 2026-07-11)
+**Status:** Accepted (settled in discussion with Craig, 2026-07-11).
+§5 superseded by ADR-0006 (single-radio picks); §4's package rule extended by
+ADR-0006 (the agent normalizes footprint names to catalog packages).
 **Date:** 2026-07-11
 
 ## Context

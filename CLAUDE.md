@@ -33,9 +33,16 @@ concrete `providers/*` or `datasources/jlc` — only the base protocols.
   components colored by stock state (green covers / red short / amber needs a
   spec search / dashed DNP); click a component → detail panel (one radio
   table picks what mounts; a pick overriding an approved part is order-only,
-  the first pick for a new spec records AVL rank 1); Placement section edits
-  `data/cpl-rotations.json`; Export BOM/CPL in the title bar stays disabled
-  until all rows are green. Picks persist via the server-side draft
+  the first pick for a new spec records AVL rank 1 — both undoable in
+  place); searches are human-fired (ADR-0006: seeded from the spec, sent
+  verbatim; auto-discovery only where deterministic) and results split into
+  package-confirmed / other-packages / can't-cover buckets;
+  schematic-pinned parts get "explore alternates" (`/api/explore`,
+  order-only picks); Placement section edits `data/cpl-rotations.json`;
+  Export BOM/CPL in the title bar stays disabled until all rows are green
+  (Chromium: standard folder picker for the copies). Page load repopulates
+  from the last read (`~/.hendley/design-cache.json`) with all corrections
+  re-applied; picks/searches/qty persist via the server-side draft
   (`~/.hendley/draft.json`, cleared on clean export). Zero new dependencies.
 - `src/hendley/domain/model.py` — the canonical vocabulary: `SpecKey`,
   `RequirementLine` (one selection mode: spec | mpn | provider refs; `dnp`
@@ -47,13 +54,18 @@ concrete `providers/*` or `datasources/jlc` — only the base protocols.
   designator grouping, DNP flag, LCSC/MPN pass-through, and auto-spec for
   generic R/C/L via `specs.py` — deterministic ONLY for the trivially
   unambiguous; do NOT grow its regexes: ambiguity belongs to the AI tier).
-- `src/hendley/ai/` — the interpretation tier (ADR-0005): `Interpreter`
+- `src/hendley/ai/` — the interpretation tier (ADR-0005/0006): `Interpreter`
   protocol + `claude_cli.py` (`claude -p`, rides the subscription,
-  `HENDLEY_CLAUDE_BIN` override). Judges ad-hoc values (`47u/50V`) and
-  legacy footprint names (`C-E-5` → physical envelope). Every judgment is
+  `HENDLEY_CLAUDE_BIN` override). Judges ad-hoc values (`47u/50V` → value
+  `47u`, qualifier `50V`) and footprint names — **normalizing to catalog
+  packages** (`D-SOD323` → `SOD-323`, `C-0603` → `0603`; verbatim only when
+  nothing standard is recognizable, e.g. `C-E-5` → physical envelope).
+  `interpret_footprint()` serves schematic-pinned parts. Every judgment is
   cached in the DB (`interpretations`, provenance user > llm >
   deterministic — user answers are never overwritten or re-asked); failures
   degrade to one-time confirm cards in the app, never break the flow.
+  **Standing rule (ADR-0006): judgment belongs to Claude and the engineer;
+  Python never composes searches, invents filters, or parses names.**
 - `src/hendley/knowledge/partsdb.py` — the house-parts DB (SQLite v3 at
   `~/.hendley/parts.db`, `HENDLEY_DB` to override): House Parts (opaque id +
   spec-tuple index), ranked Part Choices (deliberate rank, `active|removed`),
@@ -66,8 +78,13 @@ concrete `providers/*` or `datasources/jlc` — only the base protocols.
   - `orchestration/resolve.py` — the rank-walk resolver (one batched verify,
     silent substitution down the AVL, escalations carrying per-choice live
     stock, DNP pass-through) over injected DataSource + ProviderStrategy.
-  - `orchestration/queue.py` — the ONE batched approval queue (discover by
-    kind→category, verify, filter, rank; `apply_approvals` records picks).
+  - `orchestration/queue.py` — the ONE batched approval queue: discovery
+    auto-runs only where deterministic (dense R/C value param, or chip
+    package + category); anything else needs the engineer's search terms
+    (`searches={lineIndex: terms}`, fired verbatim at the FTS index) and
+    says `discovery.needsSearch` without them (ADR-0006). Verify, filter,
+    rank; `apply_approvals` records picks; `explore()` = free search for
+    pinned parts.
   - `constraints/engine.py` — deterministic candidate rejection BEFORE
     ranking (unverified, wrong package), reasons attached.
   - `ranking/engine.py` — orders NEWLY DISCOVERED candidates only (ADR-0001;
@@ -157,11 +174,18 @@ concrete `providers/*` or `datasources/jlc` — only the base protocols.
 - `.keys` — credentials (git-ignored; never commit). `notes` — holds the
   developer-portal URL (not the API host).
 
-- `tests/` — `test_auth.py` (signing, pinned to the Java SDK algorithm),
-  `test_fusion.py` (parts-export ingest contract), `test_pcba.py` (BOM/CPL
-  builders), `test_pcba_golden.py` (end-to-end golden gate for `hendley
-  pcba` — byte-identical CSVs against a fake bridge), `test_alternates.py`,
-  `test_scr.py`.
+- `tests/` — one file per subsystem, all offline (fake bridge/datasource/
+  interpreter): `test_auth.py` (signing, pinned to the Java SDK algorithm),
+  `test_fusion.py` (parts-export ingest contract), `test_pcba.py` +
+  `test_pcba_golden.py` (BOM/CPL builders; byte-identical end-to-end gate),
+  `test_app.py` (the JSON API over a real HTTP server: intake → resolve →
+  approve → emit, interpretation caching), `test_app_draft_rotations.py`
+  (rotations/draft/design-cache/explore endpoints), `test_queue_discovery.py`
+  (deterministic-only auto-discovery, verbatim human searches),
+  `test_datasources_jlc.py` (manufacturer brand-slug parsing), plus
+  `test_domain/normalizer/specs/partsdb/resolve/resolver_engines/providers/
+  bom/snapshot/alternates/scr/ai`. Fixtures must pass tmp `db_path`,
+  `draft_path`, and `cache_path` — tests never touch `~/.hendley`.
 
 ## `help` — the plain-speak menu (READ THIS FIRST)
 
@@ -309,16 +333,20 @@ below — to get its designator and the exact package variant names.) Drive it a
      (note: jlcsearch's row field literally named `mfr` is the **MPN**, e.g.
      `0603WAF2202T5E`, NOT the maker name).
    - `manufacturer` → the `MANUFACTURER` attribute. There is **no dedicated maker
-     field** in `getComponentDetailByCode` or jlcsearch — but you can still get it
-     from the API without scraping: **`getComponentDetailByCode`'s `dataManualUrl`
+     field** in `getComponentDetailByCode` or jlcsearch — but the API still
+     yields it without scraping: **`getComponentDetailByCode`'s `dataManualUrl`
      filename embeds the LCSC brand slug**, shaped `<date>_<brand>-<MPN>_<Ccode>.pdf`
      (e.g. `2402281642_hongjiacheng-1SMA4744A_C19077482.pdf` → brand `hongjiacheng`,
-     matching JLC's part page). Prefer that over a WebFetch of the LCSC product page,
-     which can report a different brand (saw "R+O" for that same code). The slug
-     gives the brand but not its casing/full legal name, so confirm the exact
-     display string with the user if it matters. Do NOT fabricate it. If the swap
-     keeps the same maker, the design's existing `MANUFACTURER` already holds it —
-     set this only when it changes.
+     matching JLC's part page). This is now **implemented**: `JLCDataSource.verify`
+     parses the slug into `PartFact.manufacturer` (strict, anchored on the known
+     MPN and code — None on any mismatch), and every resolve backfills NULL makers
+     in the parts DB (`update_verified` never overwrites a recorded name). Prefer
+     it over a WebFetch of the LCSC product page, which can report a different
+     brand (saw "R+O" for that same code). The slug gives the brand but not its
+     casing/full legal name, so confirm the exact display string with the user if
+     it matters. Do NOT fabricate it. If the swap keeps the same maker, the
+     design's existing `MANUFACTURER` already holds it — set this only when it
+     changes.
    - `attributes` — any extra attrs (e.g. `DESC`).
 
    Then `hendley scr swap.json -o changes.scr` (offline). The script carries the
