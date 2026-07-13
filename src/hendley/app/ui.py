@@ -112,12 +112,9 @@ input.grow.working::placeholder { color:var(--pad); opacity:1; }
 .say .count { color:var(--tin); font-size:12px; margin-left:10px; }
 
 /* the query, laid bare and editable */
-details.query { margin:8px 0 0; }
-details.query > summary { cursor:pointer; color:var(--tin);
-  font:12px var(--mono); }
-details.query > summary:hover { color:var(--pad); }
-details.query .req { font:12.5px var(--mono); color:var(--silk); margin:10px 0; }
-details.query .req .mono { color:var(--pad); }
+.query { margin:8px 0 0; }
+.query .req { font:12.5px var(--mono); color:var(--silk); margin:10px 0; }
+.query .req .mono { color:var(--pad); }
 table.terms td { padding:3px 12px 3px 0; border:none; font-size:12.5px; }
 table.terms td.op { color:var(--pad); text-align:center; }
 .form.addterm { margin-top:8px; gap:8px; }
@@ -127,6 +124,20 @@ table.terms td.op { color:var(--pad); text-align:center; }
 
 /* ---- main / detail --------------------------------------------------------- */
 .panel { padding:12px 30px 60px; }
+/* A part panel is a fixed head over ONE scrolling region. The part, its approved
+   list and the search line stay put; the results scroll under them — you are
+   comparing candidates against the part above them, and scrolling that off the
+   top defeats the exercise. (The overview keeps the ordinary page scroll.) */
+.panel.detail { display:flex; flex-direction:column; height:100%;
+                padding-bottom:0; overflow:hidden; }
+.panel.detail > .pane-scroll { flex:1; min-height:0; overflow-y:auto;
+                               padding-bottom:48px; }
+/* the machinery under the search line — closed by default; it is the biggest
+   thing on a laptop screen and the criteria are on the column headers anyway */
+details.more > summary { cursor:pointer; font:12px var(--mono); color:var(--tin);
+  padding:6px 0; }
+details.more > summary:hover { color:var(--pad); }
+details.more[open] > summary { color:var(--pad); }
 .crumb { font:12px var(--mono); color:var(--pad); background:none; border:none;
          padding:0; margin-bottom:14px; }
 .crumb:hover { text-decoration:underline; }
@@ -284,7 +295,9 @@ const S = {
   busySearch: null,    // lineKey currently searching
   categories: [],      // the catalog's tables + their filterable columns
   catPick: {},         // lineKey -> the part type YOU chose ("" = auto)
-  showQuery: true,     // the criteria ARE the point — open unless you close it
+  showSearchMore: false,  // the machinery under the search line — CLOSED by
+                       // default; it is the biggest thing on a laptop screen and
+                       // the criteria are on the table's column headers anyway
   showSpecs: false,    // the comparison table's other catalog parameters
   readings: {},        // lineKey -> what the agent read this part to BE
   reading: null,       // lineKey being read right now
@@ -640,7 +653,12 @@ function renderExport() {
 
 function renderMain() {
   if (!S.resolution) return;
-  $("main").innerHTML = (S.selected == null) ? overviewHtml() : detailHtml(S.selected);
+  const detail = S.selected != null;
+  const main = $("main");
+  // only a part panel is a fixed head over a scrolling results region; the
+  // design overview scrolls as an ordinary page
+  main.classList.toggle("detail", detail);
+  main.innerHTML = detail ? detailHtml(S.selected) : overviewHtml();
   wireMain();
 }
 
@@ -705,7 +723,7 @@ function overviewHtml() {
     '<th class="num">order $</th><th>class</th></tr>' + rows +
     '</table></div></div>' +
     // the catalog is searchable without opening a part — look anything up
-    searchHtml(null);
+    searchHtml(null) + resultsHtml(null, "");
 }
 
 function exportCardHtml() {
@@ -826,12 +844,18 @@ function detailHtml(i) {
   }
   // the search box is on EVERY part, always — hunting a better part is not a
   // thing you should have to be in trouble to do
+  const key = lineKey(rl);
   const search = l.dnp ? "" : searchHtml(i);
+  // The part, its approved list and the search line STAY PUT. Only the results
+  // scroll — you are comparing candidates against the part above them, and
+  // scrolling the thing you are comparing to off the top defeats the exercise.
   return '<button class="crumb" data-line="-1">&#8592; design overview</button>' +
     '<h2 class="part-title"><span class="ref">' +
     esc(l.designators.join(" ")) + '</span><span class="spec">' + esc(title) +
     '</span>' + badge + titleActionsHtml(i) + '</h2>' +
-    ackHtml(i) + body + search + placementHtml(i);
+    ackHtml(i) + body + search +
+    '<div class="pane-scroll">' + (l.dnp ? "" : resultsHtml(i, key)) +
+    placementHtml(i) + "</div>";
 }
 
 /* an unnamed part (no schematic VALUE, no MPN) resolved from memory — say so
@@ -993,6 +1017,13 @@ function searchHtml(i) {
       '" placeholder="22k 0603 1% · 10uF 0805 X7R 25V · 1N4148WS · C25804" ' +
       'aria-label="search in-stock parts">';
   const label = reading ? "Reading …" : busy ? "Searching …" : "Search";
+  // Everything BELOW the search line — what the part was read to be, the actual
+  // query, every term, add-a-term, the recorded key — folds into one disclosure.
+  // It is the machinery, and on a laptop it was eating the screen the results
+  // are supposed to fill. Closed unless you open it; the criteria are on the
+  // table's own column headers, so nothing is hidden by closing it.
+  const more = noTypeHintHtml(i, key) + readingHtml(i, key) +
+    queryHtml(i, key) + (i == null ? "" : recordedHtml(i));
   // ONE line: what kind of part · what you want · Search
   return '<div class="sect search"><p class="eyebrow">Search in-stock parts</p>' +
     '<div class="form">' + catSelectHtml(i, key) + field +
@@ -1000,13 +1031,12 @@ function searchHtml(i) {
     (i == null ? -1 : i) + '"' +
     (busy || reading ? ' aria-disabled="true"' : "") + ">" + label +
     "</button></div>" +
-    noTypeHintHtml(i, key) + readingHtml(i, key) +
-    // before you search, the terms the agent read off THIS part are already on
-    // screen — the search is never a black box you fire and hope. After a
-    // search, the results section carries the same panel, showing what it PROVED.
-    (S.results[key] ? "" : queryHtml(i, key)) +
-    (i == null ? "" : recordedHtml(i)) +
-    "</div>" + resultsHtml(i, key);
+    (more
+      ? '<details class="more"' + (S.showSearchMore ? " open" : "") +
+        "><summary>the actual search — what it read, every term, add a term" +
+        "</summary>" + more + "</details>"
+      : "") +
+    "</div>";
 }
 
 /* what the agent read this part to BE, and where it got it — so a reading
@@ -1088,8 +1118,9 @@ function queryHtml(i, key) {
   // the next says "φD"; the catalog says "Diameter" for both)
   const cr = (S.readings[key] || {}).catalog || {};
   const catalogCols = Object.keys(cr.parameters || {});
-  return '<details class="query"' + (S.showQuery ? " open" : "") + ">" +
-    "<summary>the actual search — change any of it</summary>" +
+  // no <details> of its own — the whole block below the search line is ONE
+  // disclosure now, and a fold inside a fold is a place things go to hide
+  return '<div class="query">' +
     '<p class="req">' + (r ? "asked" : "will ask") +
     ' the catalog for <span class="mono">' + req + "</span></p>" +
     (terms
@@ -1112,7 +1143,7 @@ function queryHtml(i, key) {
     '<button class="btn mini" id="qt-add">add this term</button></div>' +
     '<p class="note">a catalog value is text ("50V") — give the unit and “' +
     esc(OPS.gte) + ' 50 V” compares; leave it off and only “=” can.</p>' +
-    "</details>";
+    "</div>";
 }
 
 const OPS = {eq: "=", ne: "≠", lte: "≤", gte: "≥", lt: "<", gt: ">",
@@ -1314,8 +1345,7 @@ function resultsHtml(i, key) {
                        : "") +
     " · " + rejects.length + " rejected" +
     (r.truncated ? " · the index stops at the 100 best-stocked — narrow it "
-                 + "down if what you want isn’t here" : "") + "</span></p>" +
-    queryHtml(i, key);
+                 + "down if what you want isn’t here" : "") + "</span></p>";
 
   if (!rows.length)
     return say + '<p class="alert">the query came back empty — nothing in the ' +
@@ -1533,9 +1563,9 @@ function wireMain() {
       S.catPick[key] = cat.value;
       render();
     };
-    // the query panel: drop a term, add a term — fired exactly as edited
-    const q = document.querySelector("#main details.query");
-    if (q) q.ontoggle = () => { S.showQuery = q.open; };
+    // the machinery under the search line: open it once and it stays open
+    const q = document.querySelector("#main details.more");
+    if (q) q.ontoggle = () => { S.showSearchMore = q.open; };
     // the terms on screen: what a search PROVED, or — before you've searched —
     // what it WILL prove. Editing either is the same gesture; the difference is
     // that one re-fires and the other just waits for you to press Search.
@@ -1544,7 +1574,7 @@ function wireMain() {
     const restage = next => {
       if (S.results[key]) { rerun(line, next); return; }
       S.seed[key] = next;
-      S.showQuery = true;
+      S.showSearchMore = true;
       render();
     };
     document.querySelectorAll("#main [data-drop]").forEach(btn => {
@@ -1697,7 +1727,7 @@ function rerun(i, sieve) {
   const key = i == null ? "" : lineKey(S.requirements.lines[i]);
   const r = S.results[key];
   if (!r || !r.query) return;
-  S.showQuery = true;
+  S.showSearchMore = true;
   S.catPick[key] = r.query.category;
   doSearch(i, {category: r.query.category, sieve: sieve, say: r.planned.say});
 }
