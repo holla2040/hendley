@@ -1180,19 +1180,9 @@ function sortRows(rows) {
    to the catalog when you edit a term. */
 const HEAD_LABEL = {
   "Capacitance": "value",
-  "capacitance_farads": "value",
-  "Resistance": "value",                 // also matches the index's `resistance`
-  "Voltage Rating": "voltage",           // also `voltage_rating`
+  "Voltage Rating": "voltage",           // also the index's `voltage_rating`
   "Temperature Coefficient": "temp_co",  // also `temperature_coefficient`
   "Tolerance": "tol",
-  "tolerance_fraction": "tol",
-  "Power(Watts)": "power",               // also `power_watts`
-  "Height - Seated (Max)": "height",
-  "Diameter": "dia",
-  "Equivalent Series Resistance(ESR)": "esr",
-  "Ripple Current": "ripple",
-  "Operating Temperature": "temp",
-  "Lifetime": "life",
 };
 
 /* One field, two spellings: the catalog says "Temperature Coefficient", the
