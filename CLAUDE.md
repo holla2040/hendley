@@ -52,17 +52,37 @@ concrete `providers/*` or `datasources/jlc` — only the base protocols.
   given (no agent call) and the request is rebuilt from the terms, so a dropped
   term can't sneak back in as a net param. Deterministic R/C lookups still
   auto-run at Refresh — into the same table, showing their query the same way.
-  One table: the radio picks what mounts (order-only when overriding an
-  approved part, AVL rank 1 on a first pick) and an **alt checkbox column**
-  grows/prunes the ranked AVL (every approved choice renders checked, the
-  mounted part included — unchecking is the one audited removal path);
-  radio+checkbox changes STAGE and commit only via **Update** on the title
-  line; opening a panel live-verifies its whole list, `????` when live access
-  is down — never stale-as-current. On Update the **agent names the
-  requirement** (`/api/key` → the AVL SpecKey) from the design line + your
-  search words + the picked part — the engineer never fills in database
-  fields. An **unnamed part** (no VALUE, no MPN) never mounts silently: amber,
-  says which part and why, one Update per design (draft `acks`).
+  **The results are ONE comparison table**: every part the query found, with its
+  actual value under each criterion as a column (`value = 10uF`,
+  `voltage ≥ 50V`, `Diameter = 5mm`), so a part is picked by reading DOWN a
+  column, not by opening fifty datasheets. A part that fails a term keeps its
+  row and all its numbers — only the failing cell goes red (`35V`) — and is
+  still pickable, because 35 V may be fine on that rail; short STOCK is not a
+  judgment call, so those sort last with red stock. Column rule: a term earns a
+  column iff the CATALOG names the field (`package`/`capacitance_farads` are
+  query plumbing and don't). `show all N specs` adds every other catalog
+  parameter. Headers are the shop's words (`value`, `voltage`, `temp_co`,
+  `tol`) with the constraint stacked underneath; the field's real name is what
+  the sieve, the sort and the term list still use.
+  **Selections save themselves** — there is no commit button. The radio picks
+  what mounts (order-only when overriding an approved part; recorded at the head
+  of the list on a first pick — `rank` is a DB column, never a word on screen);
+  the **alt checkbox** grows/prunes the AVL from either table (unchecking is the
+  one audited removal path). Both fire `/api/approve` / `/api/remove` on the tick. The two tables use SEPARATE radio groups (`pick`
+  and `found`): the same part appears in both, and one shared group meant the
+  lower table silently unchecked the upper one on every render. Opening a panel
+  live-verifies its whole list, `????` when live access is down — never
+  stale-as-current. The requirement's key comes from the READING the panel
+  already made (`/api/key` answers from it — the agent is only asked when the
+  schematic named the part *nothing*, where the engineer's search words are the
+  only thing that knows what it is). An **unnamed part** (no VALUE, no MPN)
+  never mounts silently: amber, says which part and why, and the one button
+  that remains — *"I've looked at this"* — is its acknowledgement (draft
+  `acks`). A **schematic-pinned part is a DEFAULT, not a lock**: approve a list
+  against it and the recorded key converts the line to spec-driven at intake, so
+  a short pin substitutes down the list instead of blocking the order.
+  **Never show the word "rank" in the UI** — the engineer sees a *chosen* part
+  and its *alternates*; rank is internal bookkeeping.
   **DNP this run** (title line, immediate like board qty) sits a part out of
   the current run only — `DNP · this run` in the rail, excluded from export and
   its gates, restored by **Populate this run**, schematic DNP untouchable;
@@ -79,10 +99,30 @@ concrete `providers/*` or `datasources/jlc` — only the base protocols.
   ignores every other param** — ask it for X7R/25V and it returns a 100n/50V
   X5R part with no complaint, so a query proves NOTHING. `run_search()` fires
   the agent's `net`, live-verifies every hit, then proves each candidate
-  against every `sieve` term by pure comparison over data we hold (index typed
-  columns → `attributes` JSON → verified `parameters`). Unprovable = a
-  **miss** (with the reason), never a pass. Every net param is re-asserted in
-  the sieve (`NET_COLUMNS`) so a dropped param can't leak a wrong part.
+  against every `sieve` term by pure comparison over data we hold, in order of
+  authority: the **live-verified fact** → the index row's typed column (matched
+  by name, so the catalog's `Voltage Rating` finds the index's typed
+  `voltage_rating` and gets a real number for free) → the catalog's own
+  `parameters`. Unprovable = a **miss** (with the reason), never a pass.
+  **The sieve speaks the CATALOG's language, not the index's.** The official API
+  publishes specs as NORMALIZED name/value pairs (`Capacitance`,
+  `Voltage Rating`, `Diameter`, `Height - Seated (Max)`) — the same names for
+  every manufacturer. The index's `attributes` blob is a scrape of the RAW
+  datasheet keys and they drift (of 680 sampled electrolytics the diameter is
+  `φD` on 583 rows, `Diameter` on 62), so it is **deliberately not consulted**:
+  it can only answer worse than the parameters we already fetched, and a key it
+  happens to miss would be recorded as an honest-looking miss on a part that in
+  fact matches.
+  A term may declare the **unit the catalog prints** (`{"field": "Voltage
+  Rating", "op": "gte", "value": 50, "unit": "V"}`), which is what makes "50 V
+  or better" expressible at all — without it `"63V"` is uncheckable and every
+  part misses. Python still never GUESSES a unit: it checks the string conforms
+  to the one the agent handed it, and `"17mA@120Hz"` asked for in mA stays an
+  honest miss. Every net param is re-asserted in the sieve (`NET_COLUMNS`) so a
+  dropped param can't leak a wrong part. Each part carries its `proof` — one
+  entry per term, pass AND fail, with the catalog's own string (`shown`) and a
+  `catalog` flag — because the engineer picks by comparing a column, not by
+  reading a sentence about why some other part was rejected.
   Python compares; it never parses a value or composes a query.
 - `src/hendley/domain/model.py` — the canonical vocabulary: `SpecKey`
   (**`kind` + `package` required; `value` OPTIONAL** — a general-purpose diode
@@ -114,6 +154,10 @@ concrete `providers/*` or `datasources/jlc` — only the base protocols.
   cached in the DB (`interpretations`, provenance user > llm >
   deterministic — user answers are never overwritten or re-asked); failures
   degrade to one-time confirm cards in the app, never break the flow.
+  **But a judgment made against a LIE is thrown away**, not replayed: a cached
+  plan that sieves on a column since measured to be unprovable would keep
+  rejecting every good part for ever, so `Server._stale_plan()` discards it and
+  re-reads the part. The DB heals itself.
   **An incomplete reading is knowledge, not failure**: a diode with no
   schematic VALUE comes back as `Interpretation(spec=None, partial={kind,
   package})` — it prefills the confirm card (only the value is the
@@ -122,6 +166,22 @@ concrete `providers/*` or `datasources/jlc` — only the base protocols.
   the caller stop asking it.
   **Standing rule (ADR-0006): judgment belongs to Claude and the engineer;
   Python never composes searches, invents filters, or parses names.**
+- `src/hendley/ai/partnotes.py` + **`docs/parts/`** — **the part-class knowledge
+  base.** There is no one way to search for a part, and pretending there is has
+  cost us real searches: a resistor's power is milliwatts in the index and
+  `"100mW"` in the catalog; an electrolytic hides its can dimensions inside the
+  package string; a diode's family (small-signal / Schottky / zener / avalanche)
+  is something the index **cannot tell you at all**. So the knowledge lives in
+  `docs/parts/` — one markdown note per class, human-editable, pasted whole into
+  the agent's prompt when it opens a part of that class. A note opens with a
+  fenced ` ```applies-to ` block naming the CATALOG's `secondTypeName`(s)
+  (`Aluminum Electrolytic Capacitors - SMD`, `Schottky Barrier Diodes (SBD)`) and
+  the jlcsearch slug as a coarse fallback. `note_for()` resolves the directory
+  `HENDLEY_PART_NOTES` → `docs/parts` beside the source → none. Stdlib only.
+  **No note = no special knowledge**: the agent stays conservative rather than
+  guessing, and an unmeasured "fact" in a note is worse than silence because the
+  agent will believe it. Written so far: aluminium electrolytics (the only class
+  validated end-to-end). Still to write: MOSFETs, resistors, the diode families.
 - `src/hendley/knowledge/partsdb.py` — the house-parts DB (SQLite v4 at
   `~/.hendley/parts.db`, `HENDLEY_DB` to override): House Parts (opaque id +
   spec-tuple index), ranked Part Choices (deliberate rank, `active|removed`),
@@ -177,6 +237,24 @@ concrete `providers/*` or `datasources/jlc` — only the base protocols.
     jlcsearch matches `package` (and other string filters) by **exact
     equality, no wildcards**; the fuzzy escape hatch is `--category components
     -p search=…` (FTS). `CATEGORIES` holds the 44 jlcsearch category slugs.
+    **`UNPROVABLE_COLUMNS` — the 44 columns the index publishes that are a
+    LIE.** Measured live (100+ rows per category, re-probed across distinct
+    packages so a stock-skewed sample couldn't fool us): each is constant,
+    always-null, or so sparsely populated that a term on it rejects nearly
+    everything. `capacitors.is_polarized` is **`false` on every aluminium
+    electrolytic**; `diodes.is_schottky`, `is_zener` and `is_tvs` are `false` on
+    every schottky, zener and TVS; `capacitor_type` is `"unknown"` and
+    `diode_type` is `"general_purpose"` for all of them. They are the most
+    dangerous thing in the index because they LOOK like the answer — a plan that
+    trusts one returns **ZERO parts while looking like it filtered** (this is not
+    hypothetical: `is_polarized isTrue` once rejected all 36 candidates for a
+    good 10uF 50V can). They are therefore **absent from `CATEGORY_COLUMNS`** —
+    and so from the agent's menu and the engineer's field list — but kept, named,
+    in `UNPROVABLE_COLUMNS` so the knowledge survives and a test holds the line.
+    **Never re-add one.** A part's CLASS comes from the catalog's
+    `secondTypeName`; its specs come from the catalog's `parameters`. A category
+    left with only `package` is an honest answer, not a gap: the index cannot
+    filter that part type, so the catalog must do the proving.
 - `src/hendley/ingestion/fusion/` — reading designs out of Fusion:
   - `bridge.py` — `FusionBridge`: the committed HTTP client for Fusion's local
     endpoint. Encodes the full verified handshake (gateway IP with spoofed
@@ -228,7 +306,10 @@ concrete `providers/*` or `datasources/jlc` — only the base protocols.
   Java SDK). Source of truth for endpoints, request/response shapes, and the
   PCB/TDP order routes (wrapped in `client.py` but not exercised end-to-end).
 - `docs/app.md` — the app user guide (the order workbench page: rail, detail
-  panel, pick semantics, staged Update commit, export).
+  panel, the comparison table, pick semantics, export).
+- `docs/parts/` — **the part-class knowledge base** the agent reads. One note
+  per class (`aluminium-electrolytic-capacitors.md`), keyed on the catalog's
+  `secondTypeName`. `README.md` has the format and how to add a class.
 - `docs/cli.md` — the CLI guide (commands + output formats, `hendley pcba`
   and the CPL rotations, the design-change workflow, the `.scr` swap-JSON
   contract, the Python API). The README is a TL;DR pointing here.
@@ -249,13 +330,18 @@ concrete `providers/*` or `datasources/jlc` — only the base protocols.
   `test_pcba_golden.py` (BOM/CPL builders; byte-identical end-to-end gate),
   `test_app.py` (the JSON API over a real HTTP server: intake → search →
   key → approve → emit, interpretation caching, the recorded key outranking a
-  stale spec), **`test_search_executor.py`** (the sieve's honesty: an index
+  stale spec, a plan that sieves on a lying column being thrown away, and a
+  **pinned line building an approved list that survives a Refresh**),
+  **`test_search_executor.py`** (the sieve's honesty: an index
   that silently ignores a param must not leak a wrong part; an uncheckable
-  term is a miss, never a pass; units are never guessed at),
-  `test_app_draft_rotations.py` (rotations/draft/design-cache/overview
+  term is a miss, never a pass; units are never guessed at; **the
+  manufacturer's spelling never decides the answer** — a `φD` part is proven by
+  the catalog's `Diameter`; the workings are kept for every part, matched or
+  not), `test_app_draft_rotations.py` (rotations/draft/design-cache/overview
   search), `test_queue_discovery.py`
   (deterministic-only auto-discovery), `test_datasources_jlc.py`
-  (manufacturer brand-slug parsing), plus
+  (manufacturer brand-slug parsing, **and that no unprovable column is ever
+  offered**), plus
   `test_domain/normalizer/specs/partsdb/resolve/resolver_engines/providers/
   bom/snapshot/alternates/scr/ai`. Fixtures must pass tmp `db_path`,
   `draft_path`, and `cache_path` — tests never touch `~/.hendley`.

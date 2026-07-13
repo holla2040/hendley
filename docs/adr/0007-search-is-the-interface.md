@@ -123,3 +123,72 @@ amber, states which part it is about to mount and why, and requires one
   silently ignored by the index and the results look filtered. Fatal.
 - **Python parses the engineer's text.** ADR-0006 exists because that is how
   the tool ships the wrong part; a regex tier would be re-litigating it.
+
+## Amendments — what the first real design taught us
+
+Everything below was **measured**, not reasoned about, by driving the app at one
+line (`C4 C12 C13 C14` — a 10 µF 50 V aluminium electrolytic in a D5 × 5.4 mm
+can) until it could actually be used to choose a part.
+
+### The sieve speaks the CATALOG's language, not the index's
+
+The index's `attributes` blob is a scrape of the **raw datasheet keys**, and they
+drift per manufacturer: of 680 sampled electrolytics, 583 call the diameter `φD`
+and 62 call it `Diameter`. The official API's `parameters[]` are **normalized** —
+`Capacitance`, `Voltage Rating`, `Diameter`, `Height - Seated (Max)`, identical
+for every maker — and they arrive in the `verify()` call the app already makes.
+Sieving on the blob records an honest-looking *miss* on a part that in fact
+matches, which is the worst failure this ADR exists to prevent. The blob is out
+of the proof path. Terms are written in the catalog's names.
+
+### A term may declare its unit — and that is what makes "or better" possible
+
+A catalog value is TEXT (`"50V"`, `"5.4mm"`). Until a term could carry the unit
+the catalog prints, `Voltage Rating >= 50` was *uncheckable* and every part
+missed — so the engineer was forced back to exact-match, and a 63 V can, a
+strictly better drop-in, was invisible. A term now carries `unit`, and Python
+coerces the string **only** against the unit the agent declared. It still never
+guesses: `"17mA@120Hz"` asked for in mA remains an honest miss.
+
+### The index publishes 44 columns that are a LIE
+
+`capacitors.is_polarized` is `false` on **every** aluminium electrolytic.
+`diodes.is_schottky`, `is_zener`, `is_tvs` are `false` on every schottky, zener
+and TVS. The agent, handed these as a menu of facts, wrote `is_polarized isTrue`
+and **rejected all 36 good candidates** — a wall of "✗ False is not true". They
+are constant, always-null, or too sparse to prove anything; they are now absent
+from the agent's menu (`UNPROVABLE_COLUMNS`). **A part's class comes from the
+catalog's `secondTypeName`, never from an index flag.** And a cached plan that
+names one is thrown away rather than replayed, or the bug would outlive its fix.
+
+### There is no one approach across part types — so stop looking for one
+
+Resistors put power in milliwatts; electrolytics hide the can dimensions inside
+the package string; diodes split into families the index cannot distinguish at
+all. That is knowledge, and it belongs written down: `docs/parts/`, one note per
+class, read into the prompt when the agent opens a part of that class. It works —
+the agent now leaves `Tolerance` out of an electrolytic's sieve *on its own*,
+because `eq ±20%` would reject a better ±10% part, and says so.
+
+### The results are a comparison table, and selections save themselves
+
+A list of parts with a *reason string* on each rejection cannot be used to choose
+between them; the engineer would have to open fifty datasheets. The results are
+now ONE table with the criteria as **columns** — a part is picked by reading down
+a column, and a failing part keeps its row and all its numbers with only the
+failing cell red. Rejects stay pickable (35 V may be fine on that rail); short
+STOCK is not a judgment call, so it sorts last and is marked.
+
+The **Update button is gone**. Ticking a checkbox records the alternate; the
+radio records the pick. Both are a SQLite write, and the staging gate was buying
+nothing — it was gating them behind a *second* agent call that re-derived a key
+the panel's own reading had already produced. The button survives only for the
+one act that is not a selection: confirming an unnamed part.
+
+**A schematic pin is a default, not a lock.** A pinned line can now hold an
+approved list: the recorded key converts it to spec-driven at intake, so a short
+pin substitutes down the list instead of blocking the order.
+
+**"Rank" is never shown.** The engineer sees a *chosen* part and its
+*alternates*. A radio means one choice; a checkbox means membership. Those
+conventions are older than this tool and were not ours to reinvent.

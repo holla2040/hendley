@@ -27,28 +27,34 @@ same library the CLI uses:
 - **Design Overview** (nothing selected): one row per part — LCSC code
   (linked to its product page), stock/need, unit and order cost, JLC
   Basic/Extended class — with the per-board parts cost on the title line.
-- **Click a component** for its detail panel: one table, radio column on the
-  left. **The selected radio is what mounts for this order.** Your part
-  leads the table (no radio when it can't cover the order); live-verified
-  alternates follow with manufacturer, package, class, and a `why` column
-  carrying only judgments the other columns don't (prior approvals,
-  shortfall warnings). Sort by stock, price, or class from the headers.
-  Opening a panel **live-verifies its whole list in one batched call** —
-  every number is current as of that click; when live access is down the
-  cells say `????` rather than dressing cached values as current.
-- **Pick semantics**: the *first* pick for a spec with nothing approved is
-  the choosing — recorded permanently as the AVL rank 1 ("picked in the
-  app"). A pick that *overrides* an existing approved part is **this order
-  only** ("undo — use the automatic pick"); the preferred part returns
-  when its stock does.
-- **Alternates grow the list**: the **alt checkbox column** marks parts for
-  the spec's ranked list (ranks 2, 3, … — the next design with the same
-  part gets the preferred pick *and* its alternates straight from the
-  database, no search, and silent substitution covers a short rank 1).
-  Every approved part renders pre-checked — the mounted part included —
-  and unchecking prunes it from the AVL, audited.
-  **Nothing saves on click** — radio and checkbox selections stage until
-  the **Update** button (on the part-title line) commits them in one act.
+- **Click a component** for its detail panel: the part you chose and the ones
+  approved beside it, with manufacturer, package, class, stock and price.
+  **The radio is what mounts for this order. The checkbox is what's on the
+  approved list.** That is the whole vocabulary — nothing is numbered at you.
+  Sort by stock, price, or class from the headers. Opening a panel
+  **live-verifies its whole list in one batched call** — every number is
+  current as of that click; when live access is down the cells say `????`
+  rather than dressing cached values as current.
+- **Selections save themselves.** Tick a checkbox and that part is on the
+  approved list; untick it and it is pruned (audited). Pick a radio and that
+  part mounts. There is no button to press — it is a database write, and it
+  happens on the tick, in whichever table you ticked it in.
+- **Pick semantics**: the *first* pick for a requirement with nothing approved
+  is the choosing — recorded permanently as the head of its approved list
+  ("picked in the app"). A pick that *overrides* an existing approved part is
+  **this order only** ("undo — use the automatic pick"); the preferred part
+  returns when its stock does.
+- **Alternates grow the list**: the next design with the same part gets the
+  preferred pick *and* its alternates straight from the database — no search,
+  and a short preferred part substitutes silently down the list. Every approved
+  part renders pre-checked, the mounted one included.
+- **A schematic pin is a default, not a lock.** A part the schematic pins by
+  LCSC code can still be given an approved list: choose it, approve alternates
+  beside it, and from then on the line resolves against that list — so a short
+  pinned part substitutes instead of blocking the order.
+- The one button left is on an **amber** line — a part with no VALUE and no part
+  number. *"I've looked at this"* is its acknowledgement, because nothing should
+  mount silently when the design never said what it is.
 
 ## The search box (ADR-0007)
 
@@ -69,13 +75,35 @@ word of complaint — so a search that trusts its own query ships the wrong
 part. Every result you see has been fetched, live-verified, and then *proven*
 against each of your terms.
 
-**Nothing is hidden and nothing is invented.** Above the results is the line
-the agent understood ("22k 0603, 1% or better, 1/4W or better"), how many
-parts it looked at, and how many matched. Below them, **"N didn't match your
-terms"** opens onto every rejected part *with the reason on its row* — `is
-100, not ≥ 250` when your 1/4 W demand meets an ordinary 100 mW 0603, `is
-0.05, not ≤ 0.01` for a 5 % part. A part whose data can't settle a term is
-listed as uncheckable, never quietly passed. "No parts" is never a mystery.
+**The results are one table, and the criteria are its columns.** You pick a
+part by reading *down* a column, not by opening fifty datasheets:
+
+```
+       LCSC       MANUFACTURER  MPN                 value    voltage  dia    height   LIVE STOCK
+  ◉ ☑  C72487     —             RVT1H100M0505       10uF     50V      5mm    5.4mm       111,412
+  ○ ☑  C22387980  FOLLON        EFVL063ADA100M0554  10uF     63V      5mm    5.4mm         4,031
+  ○ ☐  C280397    ROQANG        RT1V100M0505        10uF    [35V]     5mm    5.4mm        22,418
+  ○ ☐  C2992591   KNSCHA        RVT10UF25V67RV0020  10uF    [25V]   [6.3mm]  5.4mm         3,957
+```
+
+A part that **fails a term keeps its row and all its numbers** — only the value
+that failed goes red — and it is **still pickable**, because 35 V may be fine on
+your rail and that is your call, not the tool's. Above the table: what the agent
+understood, how many parts it looked at, how many matched, and how many were
+rejected. Nothing is hidden.
+
+Note the 63 V part. It is *over-rated*, drops straight into a 50 V slot, and an
+exact-match search would never have shown it to you — which is the whole reason
+a term can say "or better".
+
+**Short stock is not a judgment call.** A part that matches but has too few in
+stock to fill the run sorts to the bottom with its stock in red. There are 174 of
+them and you need 400; no opinion changes that. Its checkbox still works, because
+stock recovers and the approved list outlives this order.
+
+**show all N specs** widens the table to every other parameter the catalog
+publishes for these parts — ripple current, ESR, lifetime, operating
+temperature — for the last call.
 
 ## Changing the search — all of it
 
@@ -128,11 +156,15 @@ When the schematic never named a part — no VALUE, no MPN, just a footprint —
 whatever the app remembers is a guess about *intent*, and the same footprint
 in the next design could be a different device. So it is **never silent**:
 the part comes up amber, saying which part it's about to mount and why, and
-one **Update** confirms it for that design. The box is pre-populated with the
-remembered words, so changing your mind is one edit away.
-- **Schematic-pinned parts** (an `LCSC` attribute) are verified as-is, with
-  the same **Search Alternates** button for order-only substitutes; an
-  MPN-only attribute is called out honestly (JLC can't verify by MPN).
+one press of **"I've looked at this"** confirms it for that design. That is
+the only button on the panel, because it is the only act that isn't a
+selection. The box is pre-populated with the remembered words, so changing
+your mind is one edit away.
+- **Schematic-pinned parts** (an `LCSC` attribute) are verified as-is and
+  searchable like any other. The pin is a **default, not a lock**: approve a
+  list against it and the line resolves against that list from then on, so a
+  short pinned part substitutes instead of blocking the order. An MPN-only
+  attribute is called out honestly (JLC can't verify by MPN).
 - **DNP for this run**: every panel's title line carries a **DNP this run**
   button — the part sits out *this* board run only (excluded from the BOM
   and CPL, its stock and pending spec search stop gating the export). It
