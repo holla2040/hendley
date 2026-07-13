@@ -79,3 +79,10 @@ an Electronics document open, its HTTP endpoint enabled (the
 **Preferences > General > API > Fusion MCP Server** toggle), and — under
 WSL2 — the port forward up: see
 [Reaching Fusion from WSL2](fusion-notes.md#reaching-fusion-from-wsl2--the-windows-port-forward).
+
+**The schematic must be the current document before every Refresh** (click
+its tab/canvas), with no modal dialog open — an open dialog makes reads come
+back empty. A Refresh reads the schematic first and then switches Fusion's
+electronics engine to the board to read placements; that switch is one-way,
+so the engine is left on the board context afterward. Make the schematic
+current again before the next Refresh.

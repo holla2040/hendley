@@ -90,7 +90,9 @@ still works, but asks you to confirm each interpretation by hand.
 
 Everything happens in the app: click **Refresh** to read the design and check
 live stock, click any red part to search and approve an alternate, set the
-board quantity, and **Export BOM/CPL** when every row is green. The guide is
+board quantity, and **Export BOM/CPL** when every row is green. Before each
+Refresh, make the schematic the current document in Fusion (click its tab) —
+a Refresh leaves Fusion on the board view. The guide is
 [`docs/app.md`](docs/app.md).
 
 ## Documentation (for developers)
