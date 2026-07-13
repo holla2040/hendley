@@ -208,3 +208,63 @@ def test_truncation_is_reported_not_hidden():
     got = run_search(LyingIndex(rows), PLAN)
     assert got["truncated"] is True     # the index stops at 100 — say so
     assert len(got["candidates"]) == 100
+
+
+def test_the_workings_are_kept_for_every_part_matched_or_not():
+    """An engineer picks by comparing a column, not by reading a sentence.
+
+    So every part carries its proof: one entry per term, pass and fail alike,
+    with the catalog's own published string to put in the cell. `catalog` marks
+    the terms worth a column — the query's own plumbing (`package`,
+    `capacitance_farads`) is not one of them.
+    """
+    src = LyingIndex(
+        [{"code": "C_50", "package": "SMD,D5xL5.4mm", "capacitance_farads": 1e-5},
+         {"code": "C_25", "package": "SMD,D5xL5.4mm", "capacitance_farads": 1e-5}],
+        catalog={"C_50": {"Capacitance": "10uF", "Voltage Rating": "50V"},
+                 "C_25": {"Capacitance": "10uF", "Voltage Rating": "25V"}})
+    got = run_search(src, {
+        "mode": "parametric", "category": "capacitors",
+        "net": {"package": "SMD,D5xL5.4mm", "capacitance": 1e-5},
+        "sieve": [{"field": "Capacitance", "op": "eq", "value": "10uF"},
+                  {"field": "Voltage Rating", "op": "gte", "value": 50,
+                   "unit": "V"}]})
+
+    [hit] = got["candidates"]
+    [miss] = got["misses"]
+    assert hit["code"] == "C_50" and miss["code"] == "C_25"
+
+    # the REJECTED part carries its workings too — that is the whole point: you
+    # can see it is a 10uF 5x5.4 can and that ONLY its voltage is wrong
+    by_field = {p["field"]: p for p in miss["proof"]}
+    assert by_field["Capacitance"]["ok"] is True
+    assert by_field["Capacitance"]["shown"] == "10uF"
+    assert by_field["Voltage Rating"]["ok"] is False
+    assert by_field["Voltage Rating"]["shown"] == "25V"   # the cell to paint red
+    assert "≥ 50V" in by_field["Voltage Rating"]["why"]
+
+    # the index's number is what Python compared; the catalog's string is what
+    # the engineer reads. Both are true; only one belongs in a table.
+    cap = {p["field"]: p for p in hit["proof"]}["Capacitance"]
+    assert cap["shown"] == "10uF"
+
+    # net params are re-asserted and proven, but they are PLUMBING — no column
+    plumbing = {p["field"]: p for p in hit["proof"]}
+    for field in ("package", "capacitance_farads"):
+        if field in plumbing:
+            assert plumbing[field]["catalog"] is False
+    assert all(p["catalog"] for p in hit["proof"]
+               if p["field"] in ("Capacitance", "Voltage Rating"))
+
+
+def test_an_unverifiable_part_has_no_workings_to_show():
+    class Gone(LyingIndex):
+        def verify(self, refs):
+            return {r: PartFact(ref=r, found=False, provenance="gone")
+                    for r in refs}
+
+    got = run_search(Gone([{"code": "C_GONE", "package": "0805"}]),
+                     {**PLAN, "net": {"package": "0805"}, "sieve": []})
+    [miss] = got["misses"]
+    assert miss["proof"] == []          # nothing was proven — say nothing
+    assert miss["failed"][0]["why"] == "not in the live catalog"

@@ -25,6 +25,7 @@ from typing import Any
 
 from ..domain.model import SpecKey
 from .interpreter import Interpretation
+from .partnotes import note_for
 
 DEFAULT_BIN = "claude"
 TIMEOUT_S = 120
@@ -134,6 +135,15 @@ terms, so that is what makes dropping a term really drop it from the query
 instead of the net quietly re-asserting it. So a typical sieve is: the net's
 params in index names, PLUS everything else in catalog names.
 
+And when the index types a value the ENGINEER judges a part on (capacitance,
+resistance), state it in BOTH vocabularies:
+  {"field": "capacitance_farads", "op": "eq", "value": 1e-5}   ← builds the query
+  {"field": "Capacitance",        "op": "eq", "value": "10uF"} ← the column they read
+The index term is a number Python can filter on; the catalog term is what
+becomes a COLUMN in the results table, in the units an engineer actually reads.
+Neither is redundant. A value the engineer constrained but cannot see is a value
+they cannot compare parts on.
+
 A catalog value is TEXT ("50V", "5.4mm"). To compare it with lte/gte/lt/gt you
 MUST declare its unit, and the unit must be the exact suffix the catalog
 prints:
@@ -144,32 +154,46 @@ to it ("17mA@120Hz" asked for in mA, "-40℃~+105℃") CANNOT be compared
 numerically — use eq or contains for those, or leave them out. NEVER invent a
 unit to force a comparison through.
 
+WHAT THE PART *IS* — never ask the index. The index has no honest column for a
+part's CLASS. Its flags LIE: is_polarized is false on every aluminium
+electrolytic; is_schottky, is_zener and is_tvs are false on every schottky,
+zener and TVS; capacitor_type is "unknown" and diode_type is "general_purpose"
+for all of them. Those columns are NOT listed below and MUST NOT be used — a
+term on one returns ZERO parts while looking like it filtered. The part's class
+is catalog.secondType ("Aluminum Electrolytic Capacitors - SMD", "Schottky
+Barrier Diodes (SBD)", "Chip Resistor - Surface Mount"). Read it there. If you
+need a class you cannot prove, say so in "say" — do not fake it with a flag.
+
 Column traps:
   - resistors.power_watts is MILLIWATTS (0603 = 100, 1206 = 250). 1/4W = 250.
   - tolerance_fraction: 0.01 means ±1%. "1%" means "1% or better" → lte 0.01.
   - capacitance_farads is the row column; "capacitance" is the net param.
+  - Prefer the INDEX column when the catalog's string carries an SI prefix
+    (resistance "1.5kΩ", capacitance "10uF") — the column is already a number
+    and comparable. Prefer the CATALOG for everything the index doesn't type.
 
-Categories and their sieve columns:
+Categories and their sieve columns — this list is MEASURED. A column not named
+here either does not exist or cannot prove anything; either way, do not use it.
   resistors: resistance, tolerance_fraction, power_watts(mW), package,
-    max_overload_voltage, is_surface_mount, is_basic
+    max_overload_voltage, is_basic
   resistor_arrays: resistance, tolerance_fraction, power_watts(mW), package,
     number_of_resistors, number_of_pins, topology
   capacitors: capacitance_farads, tolerance_fraction, voltage_rating,
-    temperature_coefficient(X7R/X5R/C0G/NP0), package, esr_ohms,
-    ripple_current_amps, is_polarized, capacitor_type
-  diodes: forward_voltage, reverse_voltage, forward_current,
-    power_dissipation_watts, recovery_time_ns, diode_type, is_schottky,
-    is_zener, is_tvs, package, configuration
+    temperature_coefficient(X7R/X5R/C0G/NP0 — NULL on electrolytics), package
+  diodes: forward_voltage, reverse_voltage, recovery_time_ns, package,
+    configuration
   leds: color, wavelength_nm, forward_voltage, forward_current,
     luminous_intensity_mcd, viewing_angle_deg, power_dissipation_mw,
-    lens_color, is_rgb, package
+    lens_color, package
   mosfets: drain_source_voltage, continuous_drain_current,
     gate_threshold_voltage, power_dissipation, package
-  fuses: current_rating, voltage_rating, response_time, is_resettable,
-    is_surface_mount, package
-  ldos / voltage_regulators: output_voltage_min, output_voltage_max,
+  fuses: current_rating, voltage_rating, is_resettable, package
+  ldos: output_voltage_min, output_voltage_max, output_current_max,
+    dropout_voltage, input_voltage_min, input_voltage_max, quiescent_current,
+    output_type, package
+  voltage_regulators: output_voltage_min, output_voltage_max,
     output_current_max, dropout_voltage, input_voltage_min,
-    input_voltage_max, quiescent_current, output_type, topology, package
+    input_voltage_max, package
   headers: pitch_mm, num_pins, num_rows, num_pins_per_row, gender,
     is_right_angle, is_shrouded, current_rating_amp, package
   jst_connectors / wire_to_board_connectors: pitch_mm, num_pins, num_rows,
@@ -177,25 +201,30 @@ Categories and their sieve columns:
   usb_c_connectors: number_of_contacts, number_of_ports, current_rating_a,
     gender, mounting_style, package
   switches: switch_type, circuit, current_rating_a, voltage_rating_v,
-    is_latching, pin_count, package
+    pin_count, package
   relays: relay_type, contact_form, coil_voltage, coil_resistance,
     max_switching_current, max_switching_voltage, package
-  potentiometers: max_resistance, pin_variant, is_surface_mount, package
-  microcontrollers / arm_processors / risc_v_processors: cpu_core,
-    cpu_speed_hz, flash_size_bytes, ram_size_bytes, gpio_count,
-    supply_voltage_min, supply_voltage_max, has_uart, has_i2c, has_spi,
-    has_usb, has_can, has_adc, package
-  adcs / dacs: resolution_bits, num_channels, sampling_rate_hz,
-    supply_voltage_min, supply_voltage_max, has_spi, has_i2c, package
+  potentiometers: max_resistance, package
+  microcontrollers: cpu_core, cpu_speed_hz, flash_size_bytes, gpio_count,
+    has_usb, has_adc, package
+  arm_processors / risc_v_processors: cpu_speed_hz, flash_size_bytes,
+    ram_size_bytes, gpio_count, package (arm_processors also: cpu_core)
+  adcs: resolution_bits, num_channels, sampling_rate_hz, supply_voltage_min,
+    supply_voltage_max, has_spi, has_i2c, package
+  dacs: resolution_bits, settling_time_us, supply_voltage_min,
+    supply_voltage_max, package
   io_expanders: num_gpios, has_i2c, has_spi, has_interrupt, package
   led_drivers: output_current_max, channel_count, supply_voltage_min,
     supply_voltage_max, package
   fpc_connectors: pitch_mm, number_of_contacts, contact_type
   battery_holders: battery_type, connector_type, package
   microphones: microphone_type, package
-  accelerometers / gyroscopes: axes, supply_voltage_min, supply_voltage_max,
-    has_i2c, has_spi, package
+  accelerometers: axes, supply_voltage_min, supply_voltage_max, package
+  gyroscopes: axes, supply_voltage_min, supply_voltage_max, has_i2c, has_spi,
+    package
   wifi_modules: core_processor, antenna_type, frequency_ghz, package
+  fpgas / led_with_ic / gas_sensors: package ONLY — the index cannot filter
+    these; prove everything against the catalog's parameters.
   Every category also carries: is_basic, is_preferred, price1, stock.
   These categories are EMPTY — never use them (use mode "fts"):
     bjt_transistors, boost_converters, buck_boost_converters, lcd_display,
@@ -385,6 +414,22 @@ def _term(p: Any) -> dict | None:
     return term
 
 
+def _class_notes(catalog: dict | None, category: str | None = None) -> str:
+    """What this shop knows about THIS class of part (``docs/parts/``).
+
+    Every part class has its own traps, and no prompt can carry them all. The
+    note for the class in front of us is pasted in whole; a class nobody has
+    written up gets nothing, and the agent stays conservative rather than
+    guessing. See ``partnotes.py``.
+    """
+    note = note_for((catalog or {}).get("secondType"), category)
+    if not note:
+        return ""
+    return ("\nWHAT THIS SHOP KNOWS ABOUT THIS CLASS OF PART — measured, and it\n"
+            "outranks the general rules above wherever the two disagree:\n\n"
+            + note + "\n")
+
+
 class ClaudeCLIInterpreter:
     """Interpretation through ``claude -p`` with strict-JSON output."""
 
@@ -426,7 +471,7 @@ class ClaudeCLIInterpreter:
         """Work out what a part IS, from everything known. See the protocol."""
         obj = self._ask(READ_PROMPT.format(
             dossier=json.dumps(dossier, indent=2, ensure_ascii=False),
-            index_facts=INDEX_FACTS))
+            index_facts=INDEX_FACTS + _class_notes(dossier.get("catalog"))))
         if obj is None:
             return None
         spec = obj.get("spec") or {}
@@ -475,11 +520,14 @@ class ClaudeCLIInterpreter:
                 "ITS columns."
                 + (" ('components' is the keyword index — use mode 'fts'.)"
                    if forced == "components" else ""))
+        catalog = ctx.get("catalog")
+        if catalog:
+            design["catalog"] = catalog   # the part they are searching FROM
         obj = self._ask(SEARCH_PROMPT.format(
             context=json.dumps(design, indent=2, ensure_ascii=False),
             terms=json.dumps(str(ctx.get("terms") or ""), ensure_ascii=False),
             instruction=("\n" + "\n".join(told) + "\n") if told else "",
-            index_facts=INDEX_FACTS))
+            index_facts=INDEX_FACTS + _class_notes(catalog, forced or None)))
         if obj is None:
             return None
         plan = self._plan(obj)

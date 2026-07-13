@@ -160,6 +160,12 @@ td { padding:7px 12px 7px 0; border-bottom:1px solid var(--line); font-size:13px
      vertical-align:top; }
 td code, .mono { font:12.5px var(--mono); }
 tr.picked td { background:rgba(217,164,65,.07); }
+/* the comparison table: a rejected part keeps its row and all its numbers —
+   only the ONE value that failed is red. That is the cell you scan for. */
+table.results td.bad { color:var(--err); font-weight:600; }
+table.results tr.reject td { opacity:.66; }
+table.results tr.reject:hover td { opacity:1; }
+table.results th .th-sort { white-space:nowrap; }
 tr.linkrow { cursor:pointer; }
 tr.linkrow:hover td { background:rgba(217,164,65,.06); }
 .num { text-align:right; } th.num { text-align:right; }
@@ -264,7 +270,8 @@ const S = {
   busySearch: null,    // lineKey currently searching
   categories: [],      // the catalog's tables + their filterable columns
   catPick: {},         // lineKey -> the part type YOU chose ("" = auto)
-  showQuery: false,    // the query panel stays open once you open it
+  showQuery: true,     // the criteria ARE the point — open unless you close it
+  showSpecs: false,    // the comparison table's other catalog parameters
   readings: {},        // lineKey -> what the agent read this part to BE
   reading: null,       // lineKey being read right now
   seed: {},            // lineKey -> the seeded terms, as YOU edited them before
@@ -708,20 +715,12 @@ const PART_TABLE_HEAD =
   '<th class="num">unit $</th><th class="num">order $</th>' +
   '<th>class</th><th>why</th></tr>';
 
-/* the alternates table: stock, price, and class headers sort the candidates */
-function sortableHead() {
-  const h = (label, key, num) => {
-    const active = S.altSort.key === key;
-    const arrow = active ? (S.altSort.dir === 1 ? " ▲" : " ▼") : "";
-    return '<th' + (num ? ' class="num"' : "") +
-      '><button class="th-sort" data-sortkey="' + key +
-      '">' + label + arrow + "</button></th>";
-  };
-  return '<tr><th></th><th>alt</th><th>lcsc</th><th>manufacturer</th>' +
-    '<th>mpn</th><th>package</th>' +
-    h("live stock", "stock", true) + '<th class="num">need</th>' +
-    h("unit $", "price", true) + '<th class="num">order $</th>' +
-    h("class", "class", false) + '<th>why</th></tr>';
+function lcscLink(code) {
+  return code
+    ? '<a href="https://www.lcsc.com/product-detail/' +
+      encodeURIComponent(code) + '.html" target="_blank" rel="noopener">' +
+      "<code>" + esc(code) + "</code></a>"
+    : "<code>—</code>";
 }
 
 function partRow(o) {
@@ -738,15 +737,10 @@ function partRow(o) {
       (o.check.on ? " checked" : "") + ' aria-label="alt ' + esc(o.code) +
       '">'
     : "";
-  const lcsc = o.code
-    ? '<a href="https://www.lcsc.com/product-detail/' +
-      encodeURIComponent(o.code) + '.html" target="_blank" rel="noopener">' +
-      '<code>' + esc(o.code) + '</code></a>'
-    : '<code>—</code>';
   return '<tr' + (o.checked ? ' class="picked"' : "") + '>' +
     '<td class="pick">' + radio + '</td>' +
     '<td class="pick">' + check + '</td>' +
-    '<td>' + lcsc + '</td>' +
+    '<td>' + lcscLink(o.code) + '</td>' +
     '<td>' + esc(o.maker || "—") + '</td>' +
     '<td class="mono">' + esc(o.mpn || "") + '</td>' +
     '<td class="mono">' + esc(o.pkg || "—") + '</td>' +
@@ -819,8 +813,11 @@ function recordedHtml(i) {
     "</span> — search again and pick to change it</p>";
 }
 
-/* the schematic names an exact part; any pick from the search box below is
-   order-only (the schematic stays authoritative) */
+/* The schematic names an exact part. That is the DEFAULT, not a lock: tick this
+   row and the ones you approve below, press Update, and the agent names the
+   requirement — the pinned part becomes rank 1 of its own approved list, and a
+   future run can substitute down it when this part goes short. Until you do
+   that, the pin stands alone and a short part blocks the order. */
 function pinnedBody(i) {
   const l = S.resolution.lines[i];
   const e = escFor(i);
@@ -829,10 +826,14 @@ function pinnedBody(i) {
   const schematicCode = (rl.providerRefs || {}).jlcpcb || "";
   const code = l.ref || (e && e.ref) || schematicCode;
   const row = partRow({
-    radio: false, checked: !e, code: code, mpn: l.mpn, maker: l.manufacturer,
+    radio: !!code, checked: effRadio(i) === code, code: code, mpn: l.mpn,
+    maker: l.manufacturer,
     pkg: l.footprint, cls: l.offerClass,
     stock: l.liveStock, stockCls: e ? "short-num" : "ok-num",
     need: l.requiredQty, unit: l.unitPrice,
+    // the schematic's own part can be approved onto the list it heads —
+    // without this it could never be rank 1 of its own AVL
+    check: code ? {show: true, on: effCheck(i, code)} : undefined,
     why: over ? "your pick — this order only"
       : schematicCode ? "schematic LCSC attribute"
       : "schematic MPN attribute “" + esc(rl.mpn || "") + "” only",
@@ -1078,54 +1079,180 @@ const OPS = {eq: "=", ne: "≠", lte: "≤", gte: "≥", lt: "<", gt: ">",
 const NET_COL = {package: "package", resistance: "resistance",
                  capacitance: "capacitance_farads"};
 
-/* Results. Every row here was fetched by the agent's query AND proven against
-   every one of your terms; the ones that failed are kept, with the reason, so
-   "no parts" is never a mystery. */
+/* THE COMPARISON TABLE.
+
+   Every part the query found, in ONE table, with its ACTUAL values under the
+   criteria you searched on. This is how a part gets picked: you read down a
+   column. A part that fails a term keeps its row and all its numbers — only the
+   cell that failed goes red — because "35V" in a column you can scan beats a
+   sentence saying "is 35, not ≥ 50V" at the far right of a row, and it beats
+   opening fifty datasheets one at a time. */
+
+function allRows(r) {
+  return (r.candidates || []).concat(r.misses || []);
+}
+
+/* The columns worth comparing: the terms the CATALOG names. `package` and
+   `capacitance_farads` are how the QUERY was built, not what you judge a part
+   on — they are already on screen, in "the actual search". */
+function specCols(r) {
+  const rows = allRows(r);
+  return (r.proved || []).filter(t => rows.some(
+    row => (row.proof || []).some(p => p.field === t.field && p.catalog)));
+}
+
+/* Everything else the catalog publishes for these parts — ripple current, ESR,
+   lifetime. Not searched on, but often what decides it. */
+function extraCols(r, criteria) {
+  const named = new Set(criteria.map(t => t.field));
+  const out = [];
+  for (const row of allRows(r))
+    for (const p of (row.parameters || []))
+      if (!named.has(p.parameterName) && out.indexOf(p.parameterName) < 0)
+        out.push(p.parameterName);
+  return out;
+}
+
+function proofOf(c) {
+  const m = {};
+  for (const p of (c.proof || [])) m[p.field] = p;
+  return m;
+}
+function paramsOf(c) {
+  const m = {};
+  for (const p of (c.parameters || [])) m[p.parameterName] = p.parameterValue;
+  return m;
+}
+function cellOf(c, field) {
+  const p = proofOf(c)[field];
+  if (p) return {text: p.shown, bad: !p.ok, why: p.why || ""};
+  const v = paramsOf(c)[field];
+  return {text: v === undefined ? "—" : v, bad: false, why: ""};
+}
+
+const SORT_VAL = {
+  stock: c => c.liveStock || 0,
+  price: c => (c.unitPrice1 == null ? Infinity : c.unitPrice1),
+  class: c => c.libraryType || "",
+};
+
+/* the headers actually sort now — a column you can't order is a column you
+   can't pick from */
+function sortRows(rows) {
+  const k = S.altSort.key;
+  if (!k) return rows;
+  const get = SORT_VAL[k] || (c => {
+    const raw = cellOf(c, k).text;
+    const n = parseFloat(raw);
+    return isNaN(n) ? String(raw) : n;
+  });
+  return rows.slice().sort((a, b) => {
+    const x = get(a), y = get(b);
+    if (x < y) return -S.altSort.dir;
+    if (x > y) return S.altSort.dir;
+    return 0;
+  });
+}
+
+function compareHead(criteria, extras) {
+  const h = (label, key, num) => {
+    const active = S.altSort.key === key;
+    const arrow = active ? (S.altSort.dir === 1 ? " ▲" : " ▼") : "";
+    return "<th" + (num ? ' class="num"' : "") +
+      '><button class="th-sort" data-sortkey="' + esc(key) + '">' +
+      esc(label) + arrow + "</button></th>";
+  };
+  // the header IS the criterion: "Voltage Rating ≥ 50V"
+  const crit = t => t.field + " " + (OPS[t.op] || t.op) +
+    (t.value === undefined ? "" : " " + String(t.value) + (t.unit || ""));
+  return "<tr><th></th><th>alt</th><th>lcsc</th><th>manufacturer</th>" +
+    "<th>mpn</th><th>package</th>" +
+    criteria.map(t => h(crit(t), t.field, false)).join("") +
+    extras.map(f => h(f, f, false)).join("") +
+    h("live stock", "stock", true) + '<th class="num">need</th>' +
+    h("unit $", "price", true) + '<th class="num">order $</th>' +
+    h("class", "class", false) + "</tr>";
+}
+
+function compareRow(i, c, criteria, extras, need) {
+  const cover = (c.liveStock || 0) >= need;
+  const bad = (c.failed || []).length > 0;
+  const mine = i != null && effRadio(i) === c.code;
+  // EVERY row is pickable, rejects included: you are the engineer, and 35 V may
+  // be fine on your rail. The cell says what it fails; picking it says so too,
+  // and the requirement gets named from the part you ACTUALLY picked.
+  const flag = bad ? ' data-bad="1"' : "";
+  const radio = '<input type="radio" name="pick"' + (mine ? " checked" : "") +
+    ' data-stage="' + esc(c.code) + '"' + flag +
+    ' aria-label="mount ' + esc(c.code) + '">';
+  const check = i == null ? "" :
+    '<input type="checkbox" data-check="' + esc(c.code) + '"' +
+    (effCheck(i, c.code) ? " checked" : "") + flag +
+    ' aria-label="approve ' + esc(c.code) + ' as an alternate">';
+  const td = field => {
+    const cell = cellOf(c, field);
+    return '<td class="mono' + (cell.bad ? " bad" : "") + '"' +
+      (cell.why ? ' title="' + esc(cell.why) + '"' : "") + ">" +
+      esc(cell.text) + "</td>";
+  };
+  return '<tr class="' + (mine ? "picked " : "") + (bad ? "reject" : "") + '">' +
+    '<td class="pick">' + radio + "</td>" +
+    '<td class="pick">' + check + "</td>" +
+    "<td>" + lcscLink(c.code) + "</td>" +
+    "<td>" + esc(c.manufacturer || "—") + "</td>" +
+    '<td class="mono">' + esc(c.model || "") + "</td>" +
+    '<td class="mono">' + esc(c.package || "—") + "</td>" +
+    criteria.map(t => td(t.field)).join("") +
+    extras.map(f => td(f)).join("") +
+    '<td class="num ' + (cover ? "ok-num" : "short-num") + '">' +
+    fmt(c.liveStock) + "</td>" +
+    '<td class="num">' + fmt(need) + "</td>" +
+    '<td class="num">' + esc(unitStr(c.unitPrice1)) + "</td>" +
+    '<td class="num">' + esc(money(c.unitPrice1, need)) + "</td>" +
+    "<td>" + esc(c.libraryType ? offerLabel(c.libraryType) : "—") + "</td>" +
+    "</tr>";
+}
+
 function resultsHtml(i, key) {
   const r = S.results[key];
   if (!r) return "";
   const need = i == null ? 1 : S.resolution.lines[i].requiredQty;
-  const rl = i == null ? null : S.requirements.lines[i];
-  const covers = c => (c.liveStock || 0) >= need;
-  const hits = (r.candidates || []).filter(covers);
-  const shortStock = (r.candidates || []).filter(c => !covers(c));
-  const misses = r.misses || [];
-
-  const row = (c, radio, why) => partRow({
-    radio: radio, checked: i != null && effRadio(i) === c.code, code: c.code,
-    mpn: c.model, maker: c.manufacturer, pkg: c.package, cls: c.libraryType,
-    check: (i != null && rl.spec) ? {show: true, on: effCheck(i, c.code)}
-                                  : undefined,
-    stock: c.liveStock, stockCls: covers(c) ? "ok-num" : "short-num",
-    need: need, unit: c.unitPrice1, why: why || ""});
+  const criteria = specCols(r);
+  const others = extraCols(r, criteria);
+  const extras = S.showSpecs ? others : [];
+  const hits = r.candidates || [];
+  const rejects = r.misses || [];
+  // matched parts first — then the rejects, still sorted, still comparable
+  const rows = sortRows(hits).concat(sortRows(rejects));
 
   const say = '<p class="say">' + esc(r.planned.say || r.terms) +
-    ' <span class="count">' + r.scanned + " looked at · " +
-    (r.candidates || []).length + " matched" +
+    ' <span class="count">' + r.scanned + " looked at · " + hits.length +
+    " matched · " + rejects.length + " rejected" +
     (r.truncated ? " · the index stops at the 100 best-stocked — narrow it "
                  + "down if what you want isn’t here" : "") + "</span></p>" +
     queryHtml(i, key);
 
-  const block = (list, summary, mk) => list.length
-    ? '<details class="unconf"><summary>' + esc(summary) + "</summary>" +
-      '<div class="tablewrap"><table>' + PART_TABLE_HEAD +
-      list.map(mk).join("") + "</table></div></details>"
+  if (!rows.length)
+    return say + '<p class="alert">the query came back empty — nothing in the ' +
+      "catalog matched even the request. Loosen a term, or change the part " +
+      "type, and search again.</p>";
+
+  const toggle = others.length
+    ? ' <button class="btn mini" id="show-specs">' +
+      (S.showSpecs ? "hide the other specs" : "show all " + others.length +
+       " specs") + "</button>"
     : "";
+  const lead = hits.length
+    ? "read down a column to compare; a red cell is the one thing that part " +
+      "fails, and you can still pick it."
+    : "nothing passed every term — but every part is here with its numbers, so " +
+      "you can see what to loosen (or take one anyway).";
 
-  const missBlock = block(misses.slice(0, 40),
-    misses.length + " didn’t match your terms",
-    c => row(c, false, "✗ " + esc((c.failed || []).map(f => f.why).join(" · "))));
-  const shortBlock = block(shortStock, shortStock.length + " can’t cover " + need,
-    c => row(c, false, ""));
-
-  if (!hits.length) {
-    return say + '<p class="alert">nothing in stock matched every term. ' +
-      "Open the list below to see what was rejected and why — then loosen a " +
-      "term and search again.</p>" + missBlock + shortBlock;
-  }
-  return say + '<div class="sect"><div class="tablewrap"><table>' +
-    sortableHead() + hits.map(c => row(c, true, candWhy(c))).join("") +
-    "</table></div></div>" + shortBlock + missBlock;
+  return say + '<div class="sect"><p class="note">' + lead + toggle + "</p>" +
+    '<div class="tablewrap"><table class="results">' +
+    compareHead(criteria, extras) +
+    rows.map(c => compareRow(i, c, criteria, extras, need)).join("") +
+    "</table></div></div>";
 }
 
 /* a spec line: the single list — your part(s) first, then search results */
@@ -1235,17 +1362,6 @@ function offerLabel(v) {
     : t === "base" || t === "basic" ? "Basic" : String(v);
 }
 
-/* the why column carries only judgments the columns don't already show —
-   stock and price restatements are dropped by their score factor */
-function candWhy(c) {
-  const bits = [];
-  for (const x of (c.scoreContributions || [])) {
-    // stock/price restatements and the fee class have their own columns
-    if (["stock-margin", "price", "offer-class"].includes(x.factor)) continue;
-    bits.push(x.why);
-  }
-  return bits.map(esc).join(" · ");
-}
 
 /* rotation / placement — JLCPCB CPL only */
 function placementHtml(i) {
@@ -1284,18 +1400,31 @@ function wireMain() {
       el.onclick = () => select(parseInt(el.dataset.line, 10));
   });
   // radios and backup checkboxes STAGE; the Update button commits
+  // Picking a part that FAILS a term is allowed — you are the engineer, and 35 V
+  // may be fine on your rail. But it is never silent: you are told what it fails,
+  // and Update names the requirement from the part you actually picked, so the
+  // approved list records what you chose rather than what you searched for.
+  const warnBad = (el, what) => {
+    if (!el.dataset.bad || !el.checked) return;
+    msg(what + " fails a term you searched for — see the red cell. It will be " +
+        "recorded as what it IS, not as what you asked for.", "warn");
+  };
   document.querySelectorAll('#main input[type=radio][data-stage]').forEach(r => {
     r.onchange = () => {
       stagedFor(S.selected).radio = r.dataset.stage;
+      warnBad(r, r.dataset.stage);
       render();
     };
   });
   document.querySelectorAll('#main input[type=checkbox][data-check]').forEach(cb => {
     cb.onchange = () => {
       stagedFor(S.selected).checks[cb.dataset.check] = cb.checked;
+      warnBad(cb, cb.dataset.check);
       render();
     };
   });
+  const specs = $("show-specs");
+  if (specs) specs.onclick = () => { S.showSpecs = !S.showSpecs; render(); };
   const upd = $("update-btn");
   if (upd) upd.onclick = () => {
     if (upd.getAttribute("aria-disabled") === "true") return;
@@ -1539,33 +1668,41 @@ async function applyStaged(i) { await run("saving", async () => {
   // an already-approved part never re-names anything.
   const found = (S.results[key] || {}).candidates || [];
   const fromSearch = !!st.radio && found.some(c => c.code === st.radio);
+  // What MOUNTS: the part you picked, else the one already mounted. On a line
+  // the schematic pinned, that is the schematic's own part — so approving an
+  // alternate is enough to bring the requirement into being, with the pinned
+  // part at the head of it. Without this, ticking alternates on a pinned line
+  // was silently dropped and the approved list could never be built at all.
+  const pick = st.radio || committedRadio(i);
+  const approving = Object.keys(st.checks).some(c => st.checks[c]);
+  const needsKey = rl.spec
+    ? (!!st.radio && unnamed(i) && fromSearch)
+    : (!!pick && (!!st.radio || approving));
   let rekeyed = false;
-  if (st.radio && (!rl.spec || (unnamed(i) && fromSearch))) {
+  if (needsKey) {
     msg("naming this requirement …");
     const named = await api("/api/key", {
       lineIndex: i, requirements: S.requirements,
       terms: S.typed[key] || S.searches[key] || "",   // YOUR words, if any
-      part: candFor(i, st.radio) || {code: st.radio}});
+      part: candFor(i, pick) || {code: pick}});
     rekeyed = JSON.stringify(named.spec) !== JSON.stringify(rl.spec);
     rl.spec = named.spec;
     delete rl.mpn; delete rl.manufacturer; delete rl.providerRefs;
     S.uninterpreted = S.uninterpreted.filter(x => x.lineIndex !== i);
   }
-  // a fresh key has no approved list yet, so this pick is its rank 1
+  // a fresh key has no approved list yet, so whatever mounts is its rank 1
   const firstPick = !!rl.spec && (rekeyed ||
     ((!e || e.reason === "no-part-choices") && !committedRadio(i)));
   const com = committedChecks(i);
   const approvals = [];
   let overrideSet = false;
-  if (st.radio !== undefined && st.radio && st.radio !== committedRadio(i)) {
-    if (firstPick) {
-      approvals.push({spec: rl.spec, lcsc: st.radio,
-        mpn: modelFor(i, st.radio) || undefined, rank: 1,
-        design: S.design || undefined, note: "picked in the app"});
-    } else {
-      S.overrides[key] = {code: st.radio};
-      overrideSet = true;
-    }
+  if (firstPick && pick) {
+    approvals.push({spec: rl.spec, lcsc: pick,
+      mpn: modelFor(i, pick) || undefined, rank: 1,
+      design: S.design || undefined, note: "picked in the app"});
+  } else if (st.radio && st.radio !== committedRadio(i)) {
+    S.overrides[key] = {code: st.radio};
+    overrideSet = true;
   }
   const removals = [];
   if (rl.spec) {
@@ -1575,6 +1712,7 @@ async function applyStaged(i) { await run("saving", async () => {
     const ordered = [].concat(
       q ? (q.candidates || []).map(c => c.code) : [],
       (r.candidates || []).map(c => c.code),
+      (r.misses || []).map(c => c.code),   // you may deliberately take a reject
       Object.keys(st.checks));
     const seen = new Set();
     for (const code of ordered) {
@@ -1582,7 +1720,7 @@ async function applyStaged(i) { await run("saving", async () => {
       seen.add(code);
       if (!(code in st.checks) || st.checks[code] === com.has(code)) continue;
       if (st.checks[code]) {
-        if (firstPick && code === st.radio) continue;  // rank 1 covers it
+        if (firstPick && code === pick) continue;      // rank 1 covers it
         approvals.push({spec: rl.spec, lcsc: code,
           mpn: modelFor(i, code) || undefined, rank: 999,  // clamps to end
           design: S.design || undefined,

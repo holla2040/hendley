@@ -184,3 +184,50 @@ def test_env_binary_override(monkeypatch):
     assert ClaudeCLIInterpreter().binary == "/opt/claude"
     with pytest.raises(TypeError):
         ClaudeCLIInterpreter(binary="x").interpret_part()  # ctx is required
+
+
+def test_the_class_note_reaches_the_agent(monkeypatch, tmp_path):
+    """Every part class has its own traps and no prompt can carry them all.
+
+    The note for the class in front of the agent is pasted in whole — keyed on
+    the CATALOG's own class name, because the index has no honest column for
+    what a part IS (its `is_polarized` is false on every electrolytic).
+    """
+    from hendley.ai.claude_cli import _class_notes
+
+    (tmp_path / "cans.md").write_text(
+        "# Cans\n\n```applies-to\n"
+        "catalogType: Aluminum Electrolytic Capacitors - SMD\n"
+        "category: capacitors\n```\n\n"
+        "The can size IS the package string.\n", encoding="utf-8")
+    monkeypatch.setenv("HENDLEY_PART_NOTES", str(tmp_path))
+
+    note = _class_notes({"secondType": "Aluminum Electrolytic Capacitors - SMD"})
+    assert "The can size IS the package string." in note
+    assert "outranks the general rules" in note   # it wins where they disagree
+
+    # the CATALOG's class decides, not a coarse slug: a 0603 MLCC is also
+    # "capacitors", and must NOT be handed the electrolytic note
+    assert _class_notes({"secondType": "Multilayer Ceramic Capacitors MLCC - SMD/SMT"},
+                        "capacitors") == ""
+    # with no catalog record to key on, the slug is the honest fallback
+    assert "package string" in _class_notes(None, "capacitors")
+    # a class nobody has written up gets NOTHING — never a guess
+    assert _class_notes({"secondType": "Schottky Barrier Diodes (SBD)"}) == ""
+
+
+def test_no_notes_directory_is_silence_not_an_error(monkeypatch, tmp_path):
+    from hendley.ai.claude_cli import _class_notes
+
+    monkeypatch.setenv("HENDLEY_PART_NOTES", str(tmp_path / "nope"))
+    assert _class_notes({"secondType": "Aluminum Electrolytic Capacitors - SMD"}) == ""
+
+
+def test_the_shipped_electrolytic_note_is_wired_up():
+    """The real docs/parts/ note, keyed on the real catalog class string."""
+    from hendley.ai.partnotes import note_for
+
+    note = note_for("Aluminum Electrolytic Capacitors - SMD")
+    assert note and "SMD,D5xL5.4mm" in note
+    assert "is_polarized" in note          # names the poison
+    assert "Tolerance" in note             # and the ±20%-rejects-±10% trap

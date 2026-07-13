@@ -81,14 +81,17 @@ def run_search(datasource: DataSource, plan: dict,
     misses: list[dict] = []
     for c in cands:
         if not c["verified"]:
-            misses.append({**c, "failed": [
+            misses.append({**c, "proof": [], "failed": [
                 {"field": "stock", "why": "not in the live catalog"}]})
             continue
-        failed = _sift(sieve, by_code.get(c["code"], {}), c)
+        proof = _sift(sieve, by_code.get(c["code"], {}), c)
+        failed = [p for p in proof if not p["ok"]]
+        row = {**c, "proof": proof}
         if failed:
-            misses.append({**c, "failed": failed})
+            misses.append({**row, "failed": [
+                {"field": p["field"], "why": p["why"]} for p in failed]})
         else:
-            candidates.append(c)
+            candidates.append(row)
     return {"candidates": candidates, "misses": misses, "query": query,
             "proved": sieve, "scanned": len(cands), "truncated": truncated}
 
@@ -122,24 +125,46 @@ def _full_sieve(plan: dict) -> list[dict]:
 
 
 def _sift(sieve: list[dict], row: dict, cand: dict) -> list[dict]:
-    """Prove one candidate against every term. Returns the terms it failed —
-    including the ones that CANNOT be checked, which are failures too: an
-    unprovable part is not a match, it is an unknown."""
-    failed = []
+    """Prove one candidate against every term — and KEEP THE WORKINGS.
+
+    One entry per term, pass AND fail, because an engineer picks a part by
+    reading a column, not by reading a sentence about why some other part was
+    rejected. A term that cannot be checked is a failure like any other: an
+    unprovable part is not a match, it is an unknown.
+
+    - ``have``    what was actually compared (the index's number where it has
+                  one, else the catalog's string)
+    - ``shown``   what the ENGINEER should read: the catalog's own published
+                  string when it publishes this field. The index column says
+                  ``1e-05``; the catalog says ``10uF``. Both are true; only one
+                  is worth putting in a table.
+    - ``catalog`` the catalog names this field — which is exactly what makes it
+                  worth a column. ``package`` and ``capacitance_farads`` are
+                  query plumbing and do not earn one.
+    """
+    published = {p.get("parameterName"): p.get("parameterValue")
+                 for p in (cand.get("parameters") or [])}
+    proof = []
     for term in sieve:
         field = str(term.get("field"))
         op = str(term.get("op"))
         want = term.get("value")
         unit = str(term.get("unit") or "")
         have = _field(field, row, cand)
+        catalog = next((v for k, v in published.items() if _same(k, field)), None)
+        entry: dict[str, Any] = {"field": field, "op": op, "unit": unit,
+                                 "catalog": catalog is not None}
+        if want is not None:
+            entry["value"] = want
         if have is None:
-            failed.append({"field": field,
-                           "why": f"{field} is not published for this part"})
-            continue
-        ok, why = _compare(have, op, want, unit)
-        if not ok:
-            failed.append({"field": field, "why": why})
-    return failed
+            entry.update(ok=False, have=None, shown="—",
+                         why=f"{field} is not published for this part")
+        else:
+            ok, why = _compare(have, op, want, unit)
+            entry.update(ok=ok, have=have, why="" if ok else why,
+                         shown=str(catalog if catalog is not None else have))
+        proof.append(entry)
+    return proof
 
 
 STRUCTURAL = ("parameters", "keyParams", "verified", "code")

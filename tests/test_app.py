@@ -732,3 +732,66 @@ def test_a_search_with_no_agent_says_so_rather_than_pretending(tmp_path):
     assert src.queries[-1] == {"category": "components",
                                "params": {"search": "10uF 0805 25V"}}
     assert "isn't available" in got["planned"]["say"]
+
+
+def test_a_pinned_line_can_be_given_an_approved_list_that_survives_a_refresh(tmp_path):
+    """The schematic's LCSC attribute is a DEFAULT, not a lock.
+
+    C4 is pinned to C72487 in Fusion. Until now that line could never hold an
+    approved list at all: no checkbox was ever rendered for it, the pinned part
+    could not be ranked, and even the house part `/api/key` created was orphaned
+    on the next Refresh — `_interpret_lines` skipped pinned lines *before* it
+    ever looked at what the engineer had recorded.
+
+    So: name the requirement, approve the pinned part at rank 1 and an alternate
+    below it, and the next Refresh must resolve the line against that list —
+    which is the only way a short pinned part can substitute down to the alternate.
+    """
+    from hendley.domain.model import RequirementsBom
+
+    interp = PlanningInterpreter()
+    app, _ = _searching_app(tmp_path, interp)
+    intake = app.api_intake({"productionQuantity": 5})
+    reqs = intake["requirements"]
+
+    # the line the schematic pinned — no spec, just a part number
+    reqs["lines"][0].pop("spec", None)
+    reqs["lines"][0]["providerRefs"] = {"jlcpcb": "C_OK"}
+
+    # Update: the agent names the requirement from the part actually mounted
+    named = app.api_key({"lineIndex": 0, "requirements": reqs,
+                         "terms": "10uF 0805 25V",
+                         "part": {"code": "C_OK", "package": "0805"}})
+    spec = named["spec"]
+    app.api_approve({"approvals": [
+        {"spec": spec, "lcsc": "C_OK", "rank": 1, "note": "the pinned part"},
+        {"spec": spec, "lcsc": "C_LOW", "rank": 999, "note": "approved alt"}]})
+
+    # ---- the next Refresh: the line still comes back PINNED from the schematic
+    fresh = RequirementsBom.from_dict(json.loads(json.dumps(reqs)))
+    assert fresh.lines[0].provider_refs == {"jlcpcb": "C_OK"}
+    app._interpret_lines(fresh, consult_interpreter=False)
+
+    # the recorded key converts it to spec-driven, so it resolves against the
+    # approved list instead of hard-mounting the pin
+    assert fresh.lines[0].spec.to_dict() == spec
+    assert not fresh.lines[0].provider_refs
+    house = app._store().lookup(fresh.lines[0].spec)
+    assert [c["lcscCode"] for c in house["choices"]] == ["C_OK", "C_LOW"]
+
+
+def test_an_unrecorded_pin_is_still_a_pin(tmp_path):
+    """No approved list means the schematic is still the whole answer — a
+    pinned line the engineer never named must not start resolving against
+    somebody else's key."""
+    from hendley.domain.model import RequirementsBom
+
+    app, _ = _searching_app(tmp_path, PlanningInterpreter())
+    reqs = app.api_intake({"productionQuantity": 5})["requirements"]
+    reqs["lines"][0].pop("spec", None)
+    reqs["lines"][0]["providerRefs"] = {"jlcpcb": "C_OK"}
+
+    fresh = RequirementsBom.from_dict(reqs)
+    app._interpret_lines(fresh, consult_interpreter=False)
+    assert fresh.lines[0].provider_refs == {"jlcpcb": "C_OK"}   # untouched
+    assert fresh.lines[0].spec is None

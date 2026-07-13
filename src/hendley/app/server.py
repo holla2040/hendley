@@ -314,13 +314,29 @@ class HendleyApp:
         interpreter_dead = not consult_interpreter
         out: list[dict] = []
         for i, line in enumerate(requirements.lines):
-            # the schematic names an exact part: nothing to judge
-            if line.dnp or line.mpn or line.provider_refs:
+            if line.dnp:
                 continue
             hint = _kind_hint(line.designators[0])
             raw_value = line.comment or ""
             footprint = line.footprint or ""
             cached = store.get_interpretation("part", hint, raw_value, footprint)
+            pinned = bool(line.mpn or line.provider_refs)
+            if pinned:
+                # The schematic names an exact part, and that is normally the end
+                # of it — nothing to judge. But if the engineer has NAMED a
+                # requirement for this line and approved a list against it, the
+                # pin is their DEFAULT, not a lock: honour the recorded key so the
+                # line resolves against its approved list and a short pinned part
+                # substitutes down it. Without this the house part they just built
+                # is orphaned the moment they hit Refresh.
+                recorded = cached if (cached or {}).get("source") == "user" else None
+                if not (recorded and (recorded["result"] or {}).get("spec")):
+                    continue
+                line.spec = SpecKey.from_dict(recorded["result"]["spec"])
+                line.mpn = None
+                line.manufacturer = None
+                line.provider_refs = {}
+                continue
             if cached and (cached["result"] or {}).get("spec"):
                 # what was RECORDED for this line outranks any spec already on
                 # it (a read-time guess, or one cached with the last design):
@@ -491,6 +507,13 @@ class HendleyApp:
             "package": d.get("componentSpecification"),
             "libraryType": d.get("libraryType"),
             "describe": d.get("describe"),
+            # the part's CLASS, from the catalog itself. The index has no honest
+            # column for it (its is_polarized is false on every electrolytic,
+            # its is_schottky false on every schottky) — this is the only place
+            # that knows a TVS from a zener, and it is what a part-class note
+            # keys on.
+            "firstType": d.get("firstTypeName"),
+            "secondType": d.get("secondTypeName"),
             "parameters": {p.get("parameterName"): p.get("parameterValue")
                            for p in (d.get("parameters") or [])},
         }

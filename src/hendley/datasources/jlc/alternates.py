@@ -95,38 +95,82 @@ CATEGORIES: tuple[str, ...] = (
     "wire_to_board_connectors",
 )
 
+# Columns the index publishes that CANNOT PROVE ANYTHING — measured live
+# (2026-07-13: 100+ rows per category, then re-probed across distinct packages so
+# a stock-skewed sample could not fool us). Each is constant, always null, or so
+# sparsely populated that a term on it rejects nearly everything.
+#
+# These are the most dangerous thing in the index, because they LOOK like the
+# answer. ``capacitors.is_polarized`` is ``false`` on every aluminium
+# electrolytic; ``diodes.is_schottky`` is ``false`` on every schottky. A plan that
+# trusts them returns ZERO parts while looking like it filtered — that is not a
+# hypothetical, it is what shipped a wall of "✗ False is not true" against a
+# perfectly good 10uF 50V can.
+#
+# They are deliberately ABSENT from CATEGORY_COLUMNS (and so from the agent's
+# menu and the engineer's field list). Never re-add one. The class of a part
+# comes from the CATALOG's ``secondTypeName``; its specs come from the catalog's
+# ``parameters``. Kept here, named, so the knowledge is not lost and a test can
+# hold the line.
+UNPROVABLE_COLUMNS: dict[str, tuple[str, ...]] = {
+    "accelerometers": ("has_i2c", "has_spi"),
+    "analog_multiplexers": ("channel_type",),
+    "analog_switches": ("channel_type",),
+    "capacitors": ("esr_ohms", "ripple_current_amps", "is_polarized",
+                   "capacitor_type"),
+    "dacs": ("num_channels",),
+    "diodes": ("forward_current", "power_dissipation_watts", "diode_type",
+               "is_schottky", "is_zener", "is_tvs"),
+    "fpgas": ("logic_elements", "embedded_ram_bits", "supply_voltage_min",
+              "supply_voltage_max"),
+    "fuses": ("response_time", "is_surface_mount"),
+    "gas_sensors": ("sensor_type", "measures_co2", "measures_air_quality"),
+    "ldos": ("topology",),
+    "led_with_ic": ("forward_voltage", "forward_current", "color", "protocol"),
+    "leds": ("is_rgb",),
+    "microcontrollers": ("ram_size_bytes", "supply_voltage_min",
+                         "supply_voltage_max", "has_uart", "has_i2c", "has_spi",
+                         "has_can"),
+    "potentiometers": ("pin_variant", "is_surface_mount"),
+    "resistors": ("is_surface_mount",),
+    "risc_v_processors": ("cpu_core",),
+    "switches": ("is_latching",),
+    "voltage_regulators": ("quiescent_current", "topology"),
+}
+
 # The filterable columns each category publishes, as MEASURED from the index
-# (probed live, 2026-07-13). These are what a search term can be PROVEN against
-# — the engineer picks from them when editing a query, so nobody has to guess a
-# field name. Traps worth knowing: ``power_watts`` is milliwatts (0603 = 100),
-# ``tolerance_fraction`` 0.01 means ±1%. Categories absent here publish nothing
-# beyond ``package`` (or are empty in the index — use keyword search).
+# (probed live, 2026-07-13), with every UNPROVABLE_COLUMNS entry stripped out.
+# These are what a search term can be PROVEN against — the engineer picks from
+# them when editing a query, so nobody has to guess a field name. Traps worth
+# knowing: ``power_watts`` is milliwatts (0603 = 100), ``tolerance_fraction``
+# 0.01 means ±1%. Categories absent here publish nothing beyond ``package`` (or
+# are empty in the index — use keyword search).
+#
+# A category can end up with only ``package``: that is an honest answer, not a
+# gap. It means the index cannot filter this part type, and everything the
+# engineer asks for must be proven against the catalog's own parameters instead.
 CATEGORY_COLUMNS: dict[str, tuple[str, ...]] = {
     "resistors": ("resistance", "tolerance_fraction", "power_watts", "package",
-                  "max_overload_voltage", "is_surface_mount", "is_basic"),
+                  "max_overload_voltage", "is_basic"),
     "resistor_arrays": ("resistance", "tolerance_fraction", "power_watts",
                         "package", "number_of_resistors", "number_of_pins",
                         "topology"),
     "capacitors": ("capacitance_farads", "tolerance_fraction", "voltage_rating",
-                   "temperature_coefficient", "package", "esr_ohms",
-                   "ripple_current_amps", "is_polarized", "capacitor_type"),
-    "diodes": ("forward_voltage", "reverse_voltage", "forward_current",
-               "power_dissipation_watts", "recovery_time_ns", "diode_type",
-               "is_schottky", "is_zener", "is_tvs", "package", "configuration"),
+                   "temperature_coefficient", "package"),
+    "diodes": ("forward_voltage", "reverse_voltage", "recovery_time_ns",
+               "package", "configuration"),
     "leds": ("color", "wavelength_nm", "forward_voltage", "forward_current",
              "luminous_intensity_mcd", "viewing_angle_deg",
-             "power_dissipation_mw", "lens_color", "is_rgb", "package"),
+             "power_dissipation_mw", "lens_color", "package"),
     "mosfets": ("drain_source_voltage", "continuous_drain_current",
                 "gate_threshold_voltage", "power_dissipation", "package"),
-    "fuses": ("current_rating", "voltage_rating", "response_time",
-              "is_resettable", "is_surface_mount", "package"),
+    "fuses": ("current_rating", "voltage_rating", "is_resettable", "package"),
     "ldos": ("output_voltage_min", "output_voltage_max", "output_current_max",
              "dropout_voltage", "input_voltage_min", "input_voltage_max",
-             "quiescent_current", "output_type", "topology", "package"),
+             "quiescent_current", "output_type", "package"),
     "voltage_regulators": ("output_voltage_min", "output_voltage_max",
                            "output_current_max", "dropout_voltage",
-                           "input_voltage_min", "input_voltage_max",
-                           "quiescent_current", "topology", "package"),
+                           "input_voltage_min", "input_voltage_max", "package"),
     "headers": ("pitch_mm", "num_pins", "num_rows", "num_pins_per_row", "gender",
                 "is_right_angle", "is_shrouded", "current_rating_amp", "package"),
     "jst_connectors": ("pitch_mm", "num_pins", "num_rows", "reference_series",
@@ -139,49 +183,42 @@ CATEGORY_COLUMNS: dict[str, tuple[str, ...]] = {
                          "current_rating_a", "gender", "mounting_style",
                          "package"),
     "switches": ("switch_type", "circuit", "current_rating_a", "voltage_rating_v",
-                 "is_latching", "pin_count", "package"),
+                 "pin_count", "package"),
     "relays": ("relay_type", "contact_form", "coil_voltage", "coil_resistance",
                "max_switching_current", "max_switching_voltage", "package"),
-    "potentiometers": ("max_resistance", "pin_variant", "is_surface_mount",
-                       "package"),
+    "potentiometers": ("max_resistance", "package"),
     "battery_holders": ("battery_type", "connector_type", "package"),
     "microcontrollers": ("cpu_core", "cpu_speed_hz", "flash_size_bytes",
-                         "ram_size_bytes", "gpio_count", "supply_voltage_min",
-                         "supply_voltage_max", "has_uart", "has_i2c", "has_spi",
-                         "has_usb", "has_can", "has_adc", "package"),
+                         "gpio_count", "has_usb", "has_adc", "package"),
     "arm_processors": ("cpu_core", "cpu_speed_hz", "flash_size_bytes",
                        "ram_size_bytes", "gpio_count", "package"),
-    "risc_v_processors": ("cpu_core", "cpu_speed_hz", "flash_size_bytes",
-                          "ram_size_bytes", "gpio_count", "package"),
+    "risc_v_processors": ("cpu_speed_hz", "flash_size_bytes", "ram_size_bytes",
+                          "gpio_count", "package"),
     "adcs": ("resolution_bits", "num_channels", "sampling_rate_hz",
              "supply_voltage_min", "supply_voltage_max", "has_spi", "has_i2c",
              "package"),
-    "dacs": ("resolution_bits", "num_channels", "settling_time_us",
-             "supply_voltage_min", "supply_voltage_max", "package"),
+    "dacs": ("resolution_bits", "settling_time_us", "supply_voltage_min",
+             "supply_voltage_max", "package"),
     "io_expanders": ("num_gpios", "has_i2c", "has_spi", "has_interrupt",
                      "package"),
     "led_drivers": ("output_current_max", "channel_count", "supply_voltage_min",
                     "supply_voltage_max", "package"),
     "analog_switches": ("num_channels", "on_resistance_ohms",
-                        "supply_voltage_min", "supply_voltage_max",
-                        "channel_type", "package"),
+                        "supply_voltage_min", "supply_voltage_max", "package"),
     "analog_multiplexers": ("num_channels", "num_bits", "on_resistance_ohms",
                             "supply_voltage_min", "supply_voltage_max",
-                            "channel_type", "package"),
+                            "package"),
     "accelerometers": ("axes", "supply_voltage_min", "supply_voltage_max",
-                       "has_i2c", "has_spi", "package"),
+                       "package"),
     "gyroscopes": ("axes", "supply_voltage_min", "supply_voltage_max", "has_i2c",
                    "has_spi", "package"),
     "microphones": ("microphone_type", "package"),
     "wifi_modules": ("core_processor", "antenna_type", "frequency_ghz",
                      "operating_voltage", "package"),
-    "fpgas": ("logic_elements", "embedded_ram_bits", "supply_voltage_min",
-              "supply_voltage_max", "package"),
+    "fpgas": ("package",),
     "led_segment_display": ("positions", "type", "size", "color", "package"),
-    "led_with_ic": ("forward_voltage", "forward_current", "color", "protocol",
-                    "package"),
-    "gas_sensors": ("sensor_type", "measures_co2", "measures_air_quality",
-                    "package"),
+    "led_with_ic": ("package",),
+    "gas_sensors": ("package",),
     "pcie_m2_connectors": ("key", "is_right_angle"),
     "components": ("package", "category", "subcategory", "is_basic"),
 }

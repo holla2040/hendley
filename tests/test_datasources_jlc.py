@@ -49,3 +49,32 @@ def test_verify_fills_manufacturer_from_the_slug():
     facts = JLCDataSource(client=_FakeClient()).verify(["C19077482"])
     fact = facts["C19077482"]
     assert fact.found and fact.manufacturer == "hongjiacheng"
+
+
+def test_a_column_that_cannot_prove_anything_is_never_offered():
+    """The index's flags LIE, and the agent trusts the menu it is handed.
+
+    `is_polarized` is false on every aluminium electrolytic; `is_schottky`,
+    `is_zener` and `is_tvs` are false on every schottky, zener and TVS. A plan
+    that sieves on one returns ZERO parts while looking like it filtered — that
+    is not hypothetical, it is what rejected all 36 candidates for a 10uF 50V
+    can with a wall of "False is not true". Measured, and held here.
+    """
+    from hendley.datasources.jlc.alternates import (
+        CATEGORY_COLUMNS,
+        UNPROVABLE_COLUMNS,
+    )
+
+    for category, dead in UNPROVABLE_COLUMNS.items():
+        offered = set(CATEGORY_COLUMNS.get(category, ()))
+        leaked = offered & set(dead)
+        assert not leaked, (
+            f"{category}: {sorted(leaked)} cannot prove anything and must not "
+            "be offered to the agent or the engineer")
+
+    # the specific ones that cost us a search
+    assert "is_polarized" not in CATEGORY_COLUMNS["capacitors"]
+    assert "is_schottky" not in CATEGORY_COLUMNS["diodes"]
+    # a category stripped to `package` alone is an HONEST answer, not a gap: the
+    # index cannot filter it, so the catalog's parameters must do the proving
+    assert CATEGORY_COLUMNS["fpgas"] == ("package",)
