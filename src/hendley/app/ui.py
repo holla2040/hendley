@@ -172,11 +172,6 @@ table.results th { letter-spacing:.04em; vertical-align:bottom; }
 table.results th .th-sort { white-space:nowrap; line-height:1.35; }
 table.results th .cond { display:block; font-weight:400; letter-spacing:0;
   text-transform:none; color:var(--pad); }
-/* already on the approved list above: it says so, instead of carrying a second
-   radio — two radios for one part means the lower one steals the selection */
-table.results tr.onlist td { background:rgba(217,164,65,.05); }
-table.results .listed { font:11px var(--mono); color:var(--pad);
-  white-space:nowrap; }
 tr.linkrow { cursor:pointer; }
 tr.linkrow:hover td { background:rgba(217,164,65,.06); }
 .num { text-align:right; } th.num { text-align:right; }
@@ -730,6 +725,15 @@ const PART_TABLE_HEAD =
   '<th class="num">unit $</th><th class="num">order $</th>' +
   '<th>class</th><th>why</th></tr>';
 
+/* Some makers publish a name like "CX-Dongguan-Chengxing-Elec", and one of them
+   sets the width of the whole column. Cap it: the full name is in the title, and
+   the LCSC link is one click away if it matters. */
+function makerCell(name) {
+  const full = name || "—";
+  if (full.length <= 20) return "<td>" + esc(full) + "</td>";
+  return '<td title="' + esc(full) + '">' + esc(full.slice(0, 19)) + "…</td>";
+}
+
 function lcscLink(code) {
   return code
     ? '<a href="https://www.lcsc.com/product-detail/' +
@@ -756,7 +760,7 @@ function partRow(o) {
     '<td class="pick">' + radio + '</td>' +
     '<td class="pick">' + check + '</td>' +
     '<td>' + lcscLink(o.code) + '</td>' +
-    '<td>' + esc(o.maker || "—") + '</td>' +
+    makerCell(o.maker) +
     '<td class="mono">' + esc(o.mpn || "") + '</td>' +
     '<td class="mono">' + esc(o.pkg || "—") + '</td>' +
     '<td class="num ' + (o.stockCls || "") + '">' +
@@ -1128,36 +1132,6 @@ function extraCols(r, criteria) {
   return out;
 }
 
-/* The codes the panel ALREADY lists above the search results — the mounted part
-   and its approved list.
-
-   The radio group is one per line, because only one part can mount. So a code
-   must never emit a SECOND radio: a browser keeps only the LAST checked input in
-   a group, and the duplicate down here would silently steal the selection from
-   the row above it — which is exactly why the top table's radio kept going blank.
-   Down here that part shows its RANK instead. Its checkbox stays live, so you can
-   still prune it from the list from either table. */
-function shownAbove(i) {
-  const out = new Map();
-  if (i == null) return out;
-  const l = S.resolution.lines[i];
-  const rl = S.requirements.lines[i];
-  const house = rl.spec ? S.avlCache[JSON.stringify(rl.spec)] : null;
-  for (const c of ((house && house.choices) || []))
-    if (c.lcscCode) out.set(c.lcscCode, "alternate");
-  const e = escFor(i);
-  for (const c of ((e && e.choices) || []))
-    if (c.ref) out.set(c.ref, "alternate");
-  const pinned = (rl.providerRefs || {}).jlcpcb;
-  if (pinned && !out.has(pinned)) out.set(pinned, "schematic");
-  // The order of the approved list is bookkeeping — the engineer never asked for
-  // a numbered list, they asked for alternates. So a part is either the one they
-  // CHOSE (the radio above says so) or one of its alternates. Nothing is numbered
-  // at them.
-  if (l.ref) out.set(l.ref, "chosen");
-  return out;
-}
-
 function proofOf(c) {
   const m = {};
   for (const p of (c.proof || [])) m[p.field] = p;
@@ -1245,27 +1219,22 @@ function compareHead(criteria, extras) {
     h("class", "class", false) + "</tr>";
 }
 
-function compareRow(i, c, criteria, extras, need, above) {
+function compareRow(i, c, criteria, extras, need) {
   const cover = (c.liveStock || 0) >= need;
   const bad = (c.failed || []).length > 0;
   const mine = i != null && effRadio(i) === c.code;
-  const listed = above.get(c.code);
-  // A failed TERM is a judgment call — 35 V may be fine on your rail — so those
-  // rows stay pickable and say what they fail. Short STOCK is not a judgment
-  // call: there are 174 of them and you need 400, and no opinion changes that.
-  // It cannot mount, so it offers no radio. The checkbox stays, because stock
-  // recovers and the approved list outlives this order.
   const flag = bad ? ' data-bad="1"' : "";
-  const radio = listed
-    ? '<span class="listed" title="already on the approved list above — choose ' +
-      'it there">' + esc(listed) + "</span>"
-    : !cover
-      ? '<span class="listed short-num" title="only ' + fmt(c.liveStock) +
-        " in stock — it cannot cover " + fmt(need) +
-        ', so it cannot mount this run">short</span>'
-      : '<input type="radio" name="pick"' + (mine ? " checked" : "") +
-        ' data-stage="' + esc(c.code) + '"' + flag +
-        ' aria-label="mount ' + esc(c.code) + '">';
+  // A radio is the part you chose. A checkbox is a part on the approved list.
+  // Nothing else goes in these two columns.
+  //
+  // The group is "found", NOT the "pick" group the table above uses: the same
+  // part appears in both tables, and a browser keeps only the LAST checked input
+  // in a group — one shared group meant this table silently unchecked the one
+  // above it on every render. Two groups, both driven by effRadio(), so they
+  // mirror each other and neither can steal from the other.
+  const radio = '<input type="radio" name="found"' + (mine ? " checked" : "") +
+    ' data-stage="' + esc(c.code) + '"' + flag +
+    ' aria-label="mount ' + esc(c.code) + '">';
   const check = i == null ? "" :
     '<input type="checkbox" data-check="' + esc(c.code) + '"' +
     (effCheck(i, c.code) ? " checked" : "") + flag +
@@ -1276,12 +1245,12 @@ function compareRow(i, c, criteria, extras, need, above) {
       (cell.why ? ' title="' + esc(cell.why) + '"' : "") + ">" +
       esc(cell.text) + "</td>";
   };
-  return '<tr class="' + (mine ? "picked " : "") + (listed ? "onlist " : "") +
+  return '<tr class="' + (mine ? "picked " : "") +
     (bad || !cover ? "reject" : "") + '">' +
     '<td class="pick">' + radio + "</td>" +
     '<td class="pick">' + check + "</td>" +
     "<td>" + lcscLink(c.code) + "</td>" +
-    "<td>" + esc(c.manufacturer || "—") + "</td>" +
+    makerCell(c.manufacturer) +
     '<td class="mono">' + esc(c.model || "") + "</td>" +
     '<td class="mono">' + esc(c.package || "—") + "</td>" +
     criteria.map(t => td(t.field)).join("") +
@@ -1339,16 +1308,14 @@ function resultsHtml(i, key) {
     : "nothing you can order passed every term — but every part is here with " +
       "its numbers, so you can see what to loosen.") +
     (shortStock.length
-      ? " A part marked <b>short</b> matches, but there are too few in stock " +
-        "to fill " + fmt(need) + " — it can’t mount, though you can still " +
-        "approve it as an alternate."
+      ? " The last " + shortStock.length + " match, but their stock is red: " +
+        "too few to fill " + fmt(need) + " this run."
       : "");
 
-  const above = shownAbove(i);
   return say + '<div class="sect"><p class="note">' + lead + toggle + "</p>" +
     '<div class="tablewrap"><table class="results">' +
     compareHead(criteria, extras) +
-    rows.map(c => compareRow(i, c, criteria, extras, need, above)).join("") +
+    rows.map(c => compareRow(i, c, criteria, extras, need)).join("") +
     "</table></div></div>";
 }
 
