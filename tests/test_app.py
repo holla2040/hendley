@@ -795,3 +795,36 @@ def test_an_unrecorded_pin_is_still_a_pin(tmp_path):
     app._interpret_lines(fresh, consult_interpreter=False)
     assert fresh.lines[0].provider_refs == {"jlcpcb": "C_OK"}   # untouched
     assert fresh.lines[0].spec is None
+
+
+def test_a_plan_that_sieves_on_a_lying_column_is_thrown_away(tmp_path):
+    """Judgments are cached forever — but not a judgment made against a lie.
+
+    A plan carrying `is_polarized isTrue` was cached BEFORE we measured that the
+    column is false on every aluminium electrolytic. Replaying it would keep
+    rejecting all 36 good parts long after the bug was fixed, and the engineer
+    would have no way to know why. The DB has to heal itself.
+    """
+    interp = PlanningInterpreter()
+    app, _ = _searching_app(tmp_path, interp)
+    store = app._store()
+
+    poisoned = {"mode": "parametric", "category": "capacitors",
+                "net": {"package": "0805"},
+                "sieve": [{"field": "voltage_rating", "op": "gte", "value": 25},
+                          {"field": "is_polarized", "op": "isTrue"}],
+                "say": "stale", "confidence": 0.9}
+    assert app._stale_plan(poisoned) is True
+    assert app._stale_plan({"sieve": [{"field": "voltage_rating", "op": "gte",
+                                       "value": 25}]}) is False
+
+    store.put_interpretation("search", poisoned, "llm", kind_hint="C",
+                             raw_value="10uF 0805 25V\x1f\x1f", footprint="C-0603")
+    intake = app.api_intake({"productionQuantity": 5})
+    got = app.api_search({"terms": "10uF 0805 25V", "lineIndex": 0,
+                          "requirements": intake["requirements"]})
+
+    # the stale plan was NOT replayed — the agent was asked again
+    assert interp.plans == 1
+    assert not any(t["field"] == "is_polarized" for t in got["planned"]["sieve"])
+    assert [c["code"] for c in got["candidates"]] == ["C_OK"]

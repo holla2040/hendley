@@ -166,6 +166,11 @@ table.results td.bad { color:var(--err); font-weight:600; }
 table.results tr.reject td { opacity:.66; }
 table.results tr.reject:hover td { opacity:1; }
 table.results th .th-sort { white-space:nowrap; }
+/* already on the approved list above: it shows its RANK, not a second radio —
+   two radios for one part means the lower one steals the selection */
+table.results tr.onlist td { background:rgba(217,164,65,.05); }
+table.results .rank { font:11px var(--mono); color:var(--pad);
+  white-space:nowrap; }
 tr.linkrow { cursor:pointer; }
 tr.linkrow:hover td { background:rgba(217,164,65,.06); }
 .num { text-align:right; } th.num { text-align:right; }
@@ -1113,6 +1118,32 @@ function extraCols(r, criteria) {
   return out;
 }
 
+/* The codes the panel ALREADY lists above the search results — the mounted part
+   and its approved list.
+
+   The radio group is one per line, because only one part can mount. So a code
+   must never emit a SECOND radio: a browser keeps only the LAST checked input in
+   a group, and the duplicate down here would silently steal the selection from
+   the row above it — which is exactly why the top table's radio kept going blank.
+   Down here that part shows its RANK instead. Its checkbox stays live, so you can
+   still prune it from the list from either table. */
+function shownAbove(i) {
+  const out = new Map();
+  if (i == null) return out;
+  const l = S.resolution.lines[i];
+  const rl = S.requirements.lines[i];
+  const house = rl.spec ? S.avlCache[JSON.stringify(rl.spec)] : null;
+  for (const c of ((house && house.choices) || []))
+    if (c.lcscCode) out.set(c.lcscCode, "rank " + c.rank);
+  const e = escFor(i);
+  for (const c of ((e && e.choices) || []))
+    if (c.ref && !out.has(c.ref)) out.set(c.ref, "approved");
+  if (l.ref && !out.has(l.ref)) out.set(l.ref, "mounted");
+  const pinned = (rl.providerRefs || {}).jlcpcb;
+  if (pinned && !out.has(pinned)) out.set(pinned, "schematic");
+  return out;
+}
+
 function proofOf(c) {
   const m = {};
   for (const p of (c.proof || [])) m[p.field] = p;
@@ -1174,17 +1205,21 @@ function compareHead(criteria, extras) {
     h("class", "class", false) + "</tr>";
 }
 
-function compareRow(i, c, criteria, extras, need) {
+function compareRow(i, c, criteria, extras, need, above) {
   const cover = (c.liveStock || 0) >= need;
   const bad = (c.failed || []).length > 0;
   const mine = i != null && effRadio(i) === c.code;
+  const listed = above.get(c.code);
   // EVERY row is pickable, rejects included: you are the engineer, and 35 V may
   // be fine on your rail. The cell says what it fails; picking it says so too,
   // and the requirement gets named from the part you ACTUALLY picked.
   const flag = bad ? ' data-bad="1"' : "";
-  const radio = '<input type="radio" name="pick"' + (mine ? " checked" : "") +
-    ' data-stage="' + esc(c.code) + '"' + flag +
-    ' aria-label="mount ' + esc(c.code) + '">';
+  const radio = listed
+    ? '<span class="rank" title="already on the approved list above — mount it ' +
+      'from there">' + esc(listed) + "</span>"
+    : '<input type="radio" name="pick"' + (mine ? " checked" : "") +
+      ' data-stage="' + esc(c.code) + '"' + flag +
+      ' aria-label="mount ' + esc(c.code) + '">';
   const check = i == null ? "" :
     '<input type="checkbox" data-check="' + esc(c.code) + '"' +
     (effCheck(i, c.code) ? " checked" : "") + flag +
@@ -1195,7 +1230,8 @@ function compareRow(i, c, criteria, extras, need) {
       (cell.why ? ' title="' + esc(cell.why) + '"' : "") + ">" +
       esc(cell.text) + "</td>";
   };
-  return '<tr class="' + (mine ? "picked " : "") + (bad ? "reject" : "") + '">' +
+  return '<tr class="' + (mine ? "picked " : "") + (listed ? "onlist " : "") +
+    (bad ? "reject" : "") + '">' +
     '<td class="pick">' + radio + "</td>" +
     '<td class="pick">' + check + "</td>" +
     "<td>" + lcscLink(c.code) + "</td>" +
@@ -1244,14 +1280,16 @@ function resultsHtml(i, key) {
     : "";
   const lead = hits.length
     ? "read down a column to compare; a red cell is the one thing that part " +
-      "fails, and you can still pick it."
+      "fails, and you can still pick it. Ticking a box saves it — there is " +
+      "nothing to press."
     : "nothing passed every term — but every part is here with its numbers, so " +
       "you can see what to loosen (or take one anyway).";
 
+  const above = shownAbove(i);
   return say + '<div class="sect"><p class="note">' + lead + toggle + "</p>" +
     '<div class="tablewrap"><table class="results">' +
     compareHead(criteria, extras) +
-    rows.map(c => compareRow(i, c, criteria, extras, need)).join("") +
+    rows.map(c => compareRow(i, c, criteria, extras, need, above)).join("") +
     "</table></div></div>";
 }
 
@@ -1331,14 +1369,15 @@ function specBody(i) {
 
 /* the acknowledgement: staged selections write to the database (or the
    order draft) only when this button is pressed */
+/* Picks and approvals SAVE THEMSELVES — tick a box and it is recorded, in the
+   list you ticked it in. So the only thing left for a button is the one act
+   that is not a selection at all: confirming an UNNAMED part, where looking at
+   it IS the act. Nothing else needs pressing, so nothing else is offered. */
 function updateBtnHtml(i) {
-  // an unnamed part waiting to be confirmed has nothing staged — pressing
-  // Update IS the confirmation, so the button has to be live
-  const live = stagedDirty(i) || lineState(i) === "conf";
-  return '<button class="btn solid mini" id="update-btn" ' +
-    'data-line="' + i + '"' +
-    (live ? "" : ' aria-disabled="true" title="no changes to save"') +
-    ">Update</button>";
+  if (lineState(i) !== "conf") return "";
+  return '<button class="btn solid mini" id="update-btn" data-line="' + i +
+    '" title="this part has no value and no part number — confirm you have ' +
+    'looked at what it will mount">I’ve looked at this</button>';
 }
 
 /* the title-line actions: search alternates + Update, right side */
@@ -1413,23 +1452,20 @@ function wireMain() {
     r.onchange = () => {
       stagedFor(S.selected).radio = r.dataset.stage;
       warnBad(r, r.dataset.stage);
-      render();
+      applyStaged(S.selected);       // the pick IS the act — it saves itself
     };
   });
   document.querySelectorAll('#main input[type=checkbox][data-check]').forEach(cb => {
     cb.onchange = () => {
       stagedFor(S.selected).checks[cb.dataset.check] = cb.checked;
       warnBad(cb, cb.dataset.check);
-      render();
+      applyStaged(S.selected);       // approving and pruning save themselves too
     };
   });
   const specs = $("show-specs");
   if (specs) specs.onclick = () => { S.showSpecs = !S.showSpecs; render(); };
   const upd = $("update-btn");
-  if (upd) upd.onclick = () => {
-    if (upd.getAttribute("aria-disabled") === "true") return;
-    applyStaged(parseInt(upd.dataset.line, 10));
-  };
+  if (upd) upd.onclick = () => applyStaged(parseInt(upd.dataset.line, 10), true);
   const terms = $("terms-search");
   if (terms) {
     const n = parseInt(terms.dataset.line, 10);
@@ -1643,23 +1679,24 @@ function modelFor(i, code) {
   return c ? c.model : null;
 }
 
-/* commit the staged diff in one act: first pick -> rank 1; checked backups
-   append to the approved list in table order; unchecked members are removed
-   (audited); an overriding radio pins this order only */
-async function applyStaged(i) { await run("saving", async () => {
+/* SAVE THE SELECTION YOU JUST MADE. Fires on the tick itself, not on a button:
+   first pick -> rank 1; a checked part joins the approved list; an unchecked one
+   is pruned from it (audited); an overriding radio pins this order only.
+
+   ``ack`` is the OTHER act — confirming an unnamed part — and it is deliberate,
+   so it never rides along on a checkbox. */
+async function applyStaged(i, ack) { await run("saving", async () => {
   const rl = S.requirements.lines[i];
   const key = lineKey(rl);
   const st = S.staged[key];
-  const acking = lineState(i) === "conf";
-  if ((!st || !stagedDirty(i)) && !acking) return;
-  // an unnamed part resolved from memory: looking at it IS the act
-  if (acking && (!st || !stagedDirty(i))) {
+  if (ack && (!st || !stagedDirty(i))) {
     S.acks[key] = true;
     saveDraft();
     render();
     msg("confirmed for this design", "ok");
     return;
   }
+  if (!st || !stagedDirty(i)) return;
   const e = escFor(i);
   // The AGENT names the requirement — from this design line, the words you
   // searched, and the part you picked. You never fill in database fields.
@@ -1737,7 +1774,9 @@ async function applyStaged(i) { await run("saving", async () => {
                                 ? "removed in the app"
                                 : "alt removed in the app"});
   if (rl.spec) delete S.avlCache[JSON.stringify(rl.spec)];
-  S.acks[key] = true;   // you just looked at it and pressed the button
+  // the selection is committed: nothing is "staged" any more, and the tables
+  // must now read their state from the DB, not from a diff against it
+  delete S.staged[key];
   await resolveNow();
   const done = [];
   if (approvals.length) done.push(approvals.length + " approved");

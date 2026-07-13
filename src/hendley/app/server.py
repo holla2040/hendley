@@ -457,7 +457,10 @@ class HendleyApp:
         # A reading carries the spec table its terms are written in ("catalog",
         # even when null). One that doesn't predates that vocabulary, so its plan
         # can't seed anything — re-read the part rather than seed the box from it.
-        if result.get("search") and "catalog" in result:
+        # And a reading whose plan sieves on a column we have since MEASURED to be
+        # a lie is worse than none: it would reject every good part, for ever.
+        if (result.get("search") and "catalog" in result
+                and not self._stale_plan(result.get("plan"))):
             return {"reading": result, "cached": True}
 
         dossier = {
@@ -487,6 +490,49 @@ class HendleyApp:
         store.put_interpretation("read", reading, "llm",
                                  confidence=reading.get("confidence"), **key)
         return {"reading": reading, "cached": False}
+
+    def _stale_plan(self, plan: dict | None) -> bool:
+        """Was this plan written against a column we now know is a lie?
+
+        Judgments are cached forever, and that is right — but a cached plan that
+        sieves on ``is_polarized`` was cached BEFORE we measured that the column
+        is ``false`` on every aluminium electrolytic. Replaying it would keep
+        rejecting all 36 good parts long after the bug was fixed, and the
+        engineer would have no way to know why. So a plan naming a column that
+        cannot prove anything is not a plan: throw it away and read the part
+        again. Costs one judgment, once, and the DB heals itself.
+        """
+        from ..datasources.jlc.alternates import UNPROVABLE_COLUMNS
+
+        dead = {c for cols in UNPROVABLE_COLUMNS.values() for c in cols}
+        return any(str(t.get("field")) in dead
+                   for t in ((plan or {}).get("sieve") or []))
+
+    def _reading_spec(self, line: dict) -> dict | None:
+        """The SpecKey the READ already produced for this line, if it can stand
+        as the requirement's name.
+
+        It usually can. The read is the same agent, and it ran with the catalog
+        record in front of it — it knows more about this part than a second
+        judgment would. The one case it cannot answer is a line the schematic
+        never named at all (no value, no part number): there, the engineer's
+        search words are the only thing that knows what the part IS ("zener 10V"
+        for a diode the design left blank), and only the agent can weigh them.
+        """
+        if not (line.get("value") or line.get("code")):
+            return None                 # the schematic said nothing — must ask
+        read = (self._store().get_interpretation(
+            "read",
+            kind_hint=_kind_hint(line.get("designator") or ""),
+            raw_value=f"{line.get('value') or ''}\x1f{line.get('code') or ''}",
+            footprint=line.get("footprint") or "",
+        ) or {}).get("result") or {}
+        spec = read.get("spec")
+        if not spec:
+            return None
+        return {"spec": spec,
+                "rationale": read.get("rationale")
+                or "named from the catalog record when the part was opened"}
 
     def _catalog_record(self, code: str) -> dict | None:
         """The part's own record from the live catalog — the ground truth we
@@ -630,7 +676,8 @@ class HendleyApp:
                "raw_value": "\x1f".join([terms, category or "", code]),
                "footprint": line.get("footprint") or ""}
         cached = store.get_interpretation("search", **key)
-        if cached and (cached["result"] or {}).get("mode"):
+        if (cached and (cached["result"] or {}).get("mode")
+                and not self._stale_plan(cached["result"])):
             return cached["result"], True
         interpreter = self._interpreter_factory()
         planner = getattr(interpreter, "plan_search", None)
@@ -689,11 +736,22 @@ class HendleyApp:
 
     def api_key(self, body: dict) -> dict:
         """Name the requirement a pick satisfies — the AVL's key for it, in
-        every future design. The AGENT decides it, from the design line, the
-        engineer's own search words, and the picked part's verified facts; the
-        engineer is never asked to fill in database fields (that is how a
-        "1000V" once landed in a diode's value). Recorded user-provenance,
-        because the pick is the engineer's act — and a later pick re-keys it.
+        every future design. The AGENT decides it; the engineer is never asked
+        to fill in database fields (that is how a "1000V" once landed in a
+        diode's value). Recorded user-provenance, because the pick is the
+        engineer's act — and a later pick re-keys it.
+
+        It is answered WITHOUT waking the agent wherever the answer is already
+        known, because this sits behind a checkbox and a checkbox must not stall:
+
+        1. a key already recorded for this line — it stands;
+        2. the READING the panel made when the part was opened. That is the same
+           agent, with MORE to go on (it had the catalog record in front of it),
+           and it already produced a SpecKey. Asking a second time spends a
+           second judgment to reach the same answer in different words;
+        3. only when the schematic never named the part — no value, no part
+           number — are the engineer's own search words the only thing that
+           knows what it is. THEN ask, because nothing else can say.
 
         ``{lineIndex, requirements, terms, part}`` → ``{spec, rationale}``."""
         line = self._search_line(body)
@@ -711,6 +769,10 @@ class HendleyApp:
             return {"spec": cached_spec,
                     "rationale": remembered.get("rationale") or "",
                     "cached": True}
+        named = self._reading_spec(line)
+        if named:
+            store.put_interpretation("part", named, "user", **key)
+            return {**named, "cached": True}
         interpreter = self._interpreter_factory()
         namer = getattr(interpreter, "derive_key", None)
         judged = namer({**line, "terms": terms, "remembered": remembered,
