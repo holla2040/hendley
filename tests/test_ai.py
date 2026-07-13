@@ -104,6 +104,32 @@ def test_plan_search_rejects_an_unknown_mode(monkeypatch):
                      _cli_envelope(json.dumps(bad))).plan_search({}) is None
 
 
+def test_a_sieve_term_carries_the_unit_the_catalog_prints(monkeypatch):
+    # the catalog says "50V", not 50 — the agent declares the unit so Python can
+    # compare it. Without that, "50 V or better" is uncheckable and every part
+    # misses, which is how the engineer gets forced back to exact-match.
+    plan = {"mode": "parametric", "category": "capacitors",
+            "net": {"package": "SMD,D5xL5.4mm", "capacitance": 1e-5},
+            "sieve": [{"field": "Voltage Rating", "op": "gte", "value": 50,
+                       "unit": "V"},
+                      {"field": "Height - Seated (Max)", "op": "lte",
+                       "value": 5.4, "unit": "mm"},
+                      {"field": "Diameter", "op": "eq", "value": "5mm"},
+                      # no value: it can pass nothing, so it is dropped rather
+                      # than left to fail every candidate and blame the catalog
+                      {"field": "Tolerance", "op": "eq"},
+                      {"field": "Lifetime", "op": "wat", "value": 1}],  # bad op
+            "say": "10uF 50V+ electrolytic, D5 x 5.4mm", "confidence": 0.9}
+    out = _run_with(monkeypatch, _cli_envelope(json.dumps(plan))).plan_search(
+        {"designator": "C4", "value": "10uF", "footprint": "C-E-5",
+         "terms": "10uF 50V electrolytic"})
+    assert out["sieve"] == [
+        {"field": "Voltage Rating", "op": "gte", "value": 50, "unit": "V"},
+        {"field": "Height - Seated (Max)", "op": "lte", "value": 5.4,
+         "unit": "mm"},
+        {"field": "Diameter", "op": "eq", "value": "5mm"}]
+
+
 def test_derive_key_names_the_requirement(monkeypatch):
     answer = {"spec": {"kind": "Diode", "value": "", "package": "SOD-323",
                        "qualifier": "zener 10V"},

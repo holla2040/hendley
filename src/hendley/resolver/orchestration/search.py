@@ -10,20 +10,32 @@ so. So a search that trusts its own query ships the wrong part.
 Hence: the agent's plan carries a **net** (the few params the index really
 honours — a way to fetch fewer rows) and a **sieve** (EVERY constraint,
 including the net's own). Python fires the net, then proves each candidate
-against the sieve using data it holds: the index row's typed columns, the
-row's ``attributes`` JSON, and the live-verified ``parameters``. A candidate
-that cannot be PROVEN to satisfy a term is not a result — it goes to
-``misses`` with the reason, where the engineer can see it and judge.
+against the sieve using data it holds: the live-verified fact, the index
+row's typed columns, and the catalog's own ``parameters``. A candidate that
+cannot be PROVEN to satisfy a term is not a result — it goes to ``misses``
+with the reason, where the engineer can see it and judge.
+
+**The sieve speaks the CATALOG's language, not the index's.** The official
+API publishes a part's specs as normalized name/value pairs — ``Capacitance``,
+``Voltage Rating``, ``Diameter``, ``Height - Seated (Max)`` — and the SAME
+names come back for every manufacturer. The index's ``attributes`` blob is a
+scrape of the raw datasheet keys and they drift wildly (across 680 sampled
+electrolytics, diameter is ``φD`` on 583 rows, ``Diameter`` on 62, absent on
+35), so it is NOT consulted: it can only ever answer worse than the parameters
+we already fetched, and a key it happens to miss would be recorded as an
+honest-looking miss on a part that in fact matches.
 
 Python composes nothing and parses no names (ADR-0006): the agent wrote the
-terms, this module only compares. The one thing it adds is re-asserting the
-agent's own net params as sieve terms (``NET_COLUMNS``), so a param the
-index quietly dropped still cannot leak a wrong part through.
+terms, this module only compares. It adds exactly two things — re-asserting
+the agent's own net params as sieve terms (``NET_COLUMNS``), so a param the
+index quietly dropped cannot leak a wrong part through; and coercing a
+catalog string against a unit **the agent declared** (``"63V"`` + ``unit:
+"V"`` → 63), so "50 V or better" is expressible at all. Python never guesses
+a unit — it only checks the string conforms to the one it was handed.
 """
 
 from __future__ import annotations
 
-import json
 import math
 from typing import Any
 
@@ -118,12 +130,13 @@ def _sift(sieve: list[dict], row: dict, cand: dict) -> list[dict]:
         field = str(term.get("field"))
         op = str(term.get("op"))
         want = term.get("value")
+        unit = str(term.get("unit") or "")
         have = _field(field, row, cand)
         if have is None:
             failed.append({"field": field,
                            "why": f"{field} is not published for this part"})
             continue
-        ok, why = _compare(have, op, want)
+        ok, why = _compare(have, op, want, unit)
         if not ok:
             failed.append({"field": field, "why": why})
     return failed
@@ -147,15 +160,18 @@ def _same(a: str, b: str) -> bool:
 def _field(field: str, row: dict, cand: dict) -> Any:
     """Resolve a term's field over everything we hold, in order of authority:
     the LIVE-verified fact first (the catalog is truth; the index is a
-    snapshot), then the index row's typed column, its attributes JSON, and
-    finally the verified parameter list. None means nothing we hold can prove
-    it — and unprovable is a miss, never a pass."""
+    snapshot), then the index row's typed column — worth reaching for because
+    it is a NUMBER where the catalog publishes a string — and finally the
+    catalog's own parameter list, which is the vocabulary the agent writes in.
+
+    The index's ``attributes`` blob is deliberately not consulted; see the
+    module docstring. None means nothing we hold can prove the term — and
+    unprovable is a miss, never a pass."""
     if field not in STRUCTURAL and cand.get(field) is not None:
         return cand[field]
-    if row.get(field) is not None:
-        return row[field]
-    for key, value in _attributes(row).items():
-        if _same(key, field):
+    for key, value in row.items():
+        # the catalog's "Voltage Rating" IS the index's typed voltage_rating
+        if key != "attributes" and value is not None and _same(key, field):
             return value
     for p in (cand.get("parameters") or []):
         if _same(p.get("parameterName") or "", field):
@@ -163,30 +179,20 @@ def _field(field: str, row: dict, cand: dict) -> Any:
     return None
 
 
-def _attributes(row: dict) -> dict:
-    raw = row.get("attributes")
-    if isinstance(raw, dict):
-        return raw
-    if isinstance(raw, str) and raw.strip():
-        try:
-            got = json.loads(raw)
-        except json.JSONDecodeError:
-            return {}
-        return got if isinstance(got, dict) else {}
-    return {}
-
-
-def _compare(have: Any, op: str, want: Any) -> tuple[bool, str]:
-    """Compare, never parse. A numeric term against an unparsed catalog string
-    ("±1%", "100mW") is NOT quietly coerced — it is reported as uncheckable,
-    because guessing at units is how the wrong part gets shipped."""
+def _compare(have: Any, op: str, want: Any, unit: str = "") -> tuple[bool, str]:
+    """Compare, never parse. A catalog value is a string ("50V", "5.4mm"), and
+    it is coerced to a number ONLY against a ``unit`` the AGENT declared. A
+    string that does not conform to that unit ("17mA@120Hz" asked for in mA)
+    is reported uncheckable, not guessed at — guessing at units is how the
+    wrong part gets shipped."""
     if op == "isTrue":
         return bool(have) is True, f"{have!r} is not true"
     if op == "isFalse":
         return bool(have) is False, f"{have!r} is not false"
+    h, w = _numeric(have, unit), _numeric(want, unit)
     if op in ("eq", "ne"):
-        if _numeric(have) is not None and _numeric(want) is not None:
-            same = math.isclose(_numeric(have), _numeric(want), rel_tol=1e-6)
+        if h is not None and w is not None:
+            same = math.isclose(h, w, rel_tol=1e-6)
         else:
             same = str(have).strip().casefold() == str(want).strip().casefold()
         if op == "eq":
@@ -196,20 +202,37 @@ def _compare(have: Any, op: str, want: Any) -> tuple[bool, str]:
         return (str(want).casefold() in str(have).casefold(),
                 f"{have!r} does not contain {want!r}")
     if op in NUMERIC_OPS:
-        h, w = _numeric(have), _numeric(want)
         if h is None or w is None:
-            return False, f"{have!r} can't be compared numerically"
+            return False, _uncheckable(have, unit)
         ok = {"lte": h <= w, "gte": h >= w, "lt": h < w, "gt": h > w}[op]
         sign = {"lte": "≤", "gte": "≥", "lt": "<", "gt": ">"}[op]
-        return ok, f"is {have}, not {sign} {want}"
+        return ok, f"is {have!r}, not {sign} {want}{unit}"
     return False, f"unknown test {op!r}"
 
 
-def _numeric(v: Any) -> float | None:
-    """A number is a number. A string is NOT coerced — '100mW' must not become
-    100 (the catalog's power column is milliwatts and its text is not)."""
+def _uncheckable(have: Any, unit: str) -> str:
+    if unit:
+        return f"{have!r} is not a plain number in {unit}"
+    return f"{have!r} can't be compared numerically — no unit was declared"
+
+
+def _numeric(v: Any, unit: str = "") -> float | None:
+    """A number is a number. A string is coerced ONLY against the unit the
+    agent declared: "63V" with unit "V" is 63; "17mA@120Hz" asked for in "mA"
+    is nothing at all, and neither is anything when no unit was declared
+    ('100mW' must not become 100 — the index's power column is milliwatts and
+    the catalog's text is not). Python checks the string conforms to the unit
+    it was handed; it never picks the unit."""
     if isinstance(v, bool):
         return None
     if isinstance(v, (int, float)):
         return float(v)
-    return None
+    if not unit or not isinstance(v, str):
+        return None
+    text = v.strip()
+    if len(text) <= len(unit) or not text.endswith(unit):
+        return None
+    try:
+        return float(text[: -len(unit)].strip())
+    except ValueError:
+        return None

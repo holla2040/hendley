@@ -21,6 +21,7 @@ import json
 import os
 import re
 import subprocess
+from typing import Any
 
 from ..domain.model import SpecKey
 from .interpreter import Interpretation
@@ -112,11 +113,36 @@ that LOOK filtered):
   - search         keywords  (ONLY on the "components" endpoint)
 Any category endpoint returns at most 100 rows, sorted by STOCK DESCENDING.
 
-SIEVE — the truth. Every row carries typed columns (below). The sieve is
-compared in Python against those columns, so it CANNOT be ignored. Any
-constraint you put in the net you MUST also put in the sieve; anything the
-net cannot express goes in the sieve alone. A column the row does not
-carry sends that row to the "couldn't check" list, never to the results.
+SIEVE — the truth. Python proves EVERY candidate against EVERY sieve term, so
+the sieve cannot be ignored. Any constraint you put in the net you MUST also
+put in the sieve; anything the net cannot express goes in the sieve alone. A
+term nothing can prove sends that row to the "couldn't check" list, never to
+the results.
+
+A term's "field" may name EITHER of two vocabularies:
+  - an INDEX column (listed below) — already a number, so it needs no unit;
+  - a CATALOG parameter, spelled exactly as the catalog spells it
+    ("Capacitance", "Voltage Rating", "Diameter", "Height - Seated (Max)").
+    The catalog publishes the SAME names for every manufacturer, and it
+    publishes far more than the index types — the capacitors table has no
+    diameter or height column at all. When a catalog record is in front of
+    you, ITS parameter names are the vocabulary: copy them VERBATIM.
+
+The net's OWN params must appear in the sieve under their INDEX names
+(package, capacitance_farads, resistance) — the request is rebuilt from the
+terms, so that is what makes dropping a term really drop it from the query
+instead of the net quietly re-asserting it. So a typical sieve is: the net's
+params in index names, PLUS everything else in catalog names.
+
+A catalog value is TEXT ("50V", "5.4mm"). To compare it with lte/gte/lt/gt you
+MUST declare its unit, and the unit must be the exact suffix the catalog
+prints:
+  {"field": "Voltage Rating", "op": "gte", "value": 50, "unit": "V"}
+  {"field": "Height - Seated (Max)", "op": "lte", "value": 5.4, "unit": "mm"}
+Python strips exactly that suffix and compares. A value that does not conform
+to it ("17mA@120Hz" asked for in mA, "-40℃~+105℃") CANNOT be compared
+numerically — use eq or contains for those, or leave them out. NEVER invent a
+unit to force a comparison through.
 
 Column traps:
   - resistors.power_watts is MILLIWATTS (0603 = 100, 1206 = 250). 1/4W = 250.
@@ -219,6 +245,17 @@ WHAT TO HAND BACK
 - "plan": the query that finds more of this part, ready to fire (same rules as
   below: only package + one value param actually filter; everything you demand
   must ALSO be in the sieve).
+  When "catalog" is present, build the SIEVE FROM catalog.parameters — one term
+  per parameter that genuinely constrains the part, each field spelled VERBATIM
+  as the catalog spells it, each unit declared. The engineer sees these terms
+  before they search and drops the ones they don't want, so ask for what the
+  part actually IS — with "or better" wherever an engineer would take better:
+      Voltage Rating        → gte   (a 63 V part drops into a 50 V slot)
+      Height - Seated (Max) → lte   (a shorter can still fits the board)
+      Capacitance, Diameter, Tolerance, dielectric → eq (these must match)
+  LEAVE OUT what merely DESCRIBES the part rather than constraining it
+  (Lifetime, Operating Temperature, an ESR of "-"). A term nobody asked for
+  only throws good parts away.
 
 {index_facts}
 Answer with ONLY this JSON object, no prose, no code fences:
@@ -228,7 +265,7 @@ Answer with ONLY this JSON object, no prose, no code fences:
   "search": "...",
   "plan": {{"category": "...", "net": {{}}, "sieve": [
       {{"field": "...", "op": "eq|ne|lte|gte|lt|gt|contains|isTrue|isFalse",
-        "value": 0}}]}},
+        "value": 0, "unit": ""}}]}},
   "rationale": "one short sentence — say if you read it from the catalog",
   "confidence": 0.0}}
 """
@@ -259,6 +296,8 @@ Choose a mode:
 sieve ops: eq, ne, lte, gte, lt, gt, contains, isTrue, isFalse.
 An "or better" reading is your job: 1% → tolerance lte 0.01; 25V → voltage
 gte 25; 1/4W → power_watts gte 250.
+If "catalog" is present it is the part they are searching FROM — its parameter
+names are the vocabulary for the sieve, spelled verbatim, with units declared.
 
 lookingFor: your reading of what they want, for the screen — NOT a database
 key, so leave a field "" rather than inventing it.
@@ -270,7 +309,7 @@ Answer with ONLY this JSON object, no prose, no code fences:
 {{"mode": "parametric|fts|code", "category": "...",
   "net": {{"package": "...", "resistance": 0}},
   "sieve": [{{"field": "...", "op": "eq|ne|lte|gte|lt|gt|contains|isTrue|isFalse",
-              "value": 0}}],
+              "value": 0, "unit": ""}}],
   "lookingFor": {{"kind": "...", "value": "...", "package": "...",
                   "qualifier": "..."}},
   "say": "...", "confidence": 0.0}}
@@ -314,6 +353,36 @@ Answer with ONLY this JSON object, no prose, no code fences:
             "qualifier": "..."}},
   "rationale": "one short sentence", "confidence": 0.0}}
 """
+
+SIEVE_OPS = ("eq", "ne", "lte", "gte", "lt", "gt", "contains",
+             "isTrue", "isFalse")
+TRUTH_OPS = ("isTrue", "isFalse")
+
+
+def _term(p: Any) -> dict | None:
+    """One sieve term, or nothing at all.
+
+    A term is a PROMISE that Python can check the part against: a field, an op,
+    and — unless the op is a bare truth test — something to compare with. A term
+    with no ``value`` cannot pass anything, so it would quietly fail every
+    candidate and read on screen as if the catalog had let the engineer down.
+    Drop it instead; a malformed predicate is never guessed at.
+    """
+    if not isinstance(p, dict):
+        return None
+    field = str(p.get("field") or "").strip()
+    op = str(p.get("op") or "").strip()
+    if not field or op not in SIEVE_OPS:
+        return None
+    term = {"field": field, "op": op}
+    if op not in TRUTH_OPS:
+        if p.get("value") is None or p.get("value") == "":
+            return None
+        term["value"] = p["value"]
+    unit = str(p.get("unit") or "").strip()
+    if unit:                    # the unit the CATALOG prints, so "50V" compares
+        term["unit"] = unit
+    return term
 
 
 class ClaudeCLIInterpreter:
@@ -434,8 +503,9 @@ class ClaudeCLIInterpreter:
             "category": str(obj.get("category") or "").strip(),
             "net": dict(net) if isinstance(net, dict) else {},
             # a malformed predicate is dropped, never guessed at
-            "sieve": [p for p in (sieve if isinstance(sieve, list) else [])
-                      if isinstance(p, dict) and p.get("field") and p.get("op")],
+            "sieve": [t for t in map(_term,
+                                     sieve if isinstance(sieve, list) else [])
+                      if t],
             "lookingFor": {k: str(looking.get(k) or "").strip()
                            for k in ("kind", "value", "package", "qualifier")}
             if isinstance(looking, dict) else {},

@@ -122,6 +122,7 @@ table.terms td { padding:3px 12px 3px 0; border:none; font-size:12.5px; }
 table.terms td.op { color:var(--pad); text-align:center; }
 .form.addterm { margin-top:8px; gap:8px; }
 .form.addterm input { font:12px var(--mono); max-width:180px; }
+.form.addterm input.unit { max-width:64px; }
 .form.addterm select { font:12px var(--mono); }
 
 /* ---- main / detail --------------------------------------------------------- */
@@ -266,6 +267,8 @@ const S = {
   showQuery: false,    // the query panel stays open once you open it
   readings: {},        // lineKey -> what the agent read this part to BE
   reading: null,       // lineKey being read right now
+  seed: {},            // lineKey -> the seeded terms, as YOU edited them before
+                       // searching (unset = the reading's own plan stands)
   typed: {},           // lineKey -> what YOU typed in the box (session only —
                        // the app's own seed is never stored as if you typed it)
   staged: {},          // lineKey -> {radio, checks:{code:bool}} — UNSAVED
@@ -953,6 +956,10 @@ function searchHtml(i) {
     (busy || reading ? ' aria-disabled="true"' : "") + ">" + label +
     "</button></div>" +
     noTypeHintHtml(i, key) + readingHtml(i, key) +
+    // before you search, the terms the agent read off THIS part are already on
+    // screen — the search is never a black box you fire and hope. After a
+    // search, the results section carries the same panel, showing what it PROVED.
+    (S.results[key] ? "" : queryHtml(i, key)) +
     (i == null ? "" : recordedHtml(i)) +
     "</div>" + resultsHtml(i, key);
 }
@@ -972,44 +979,94 @@ function readingHtml(i, key) {
     (r.rationale ? " — " + esc(r.rationale) : "") + "</p>";
 }
 
-/* THE QUERY, laid out exactly as it was sent, and every part of it yours to
-   change. A search you can't see is a search you can't correct. */
+/* The terms that WILL be sent: the ones you staged, else the reading's own plan
+   — the part's spec table, straight from the catalog. (This is LCSC's "show
+   similar products" checkboxes, except every box here is one Python can PROVE.) */
+function seedTerms(key) {
+  if (S.seed[key]) return S.seed[key];
+  const r = S.readings[key];
+  return (r && r.plan && r.plan.sieve) || [];
+}
+
+/* The seeded terms speak for the words the AGENT read off this part. Retype the
+   box and they no longer describe what you're asking — so they neither show nor
+   fire, and the agent reads your words afresh. */
+function seedApplies(key, text) {
+  const r = S.readings[key];
+  if (!r || !r.plan || !(r.plan.sieve || []).length) return false;
+  const box = text !== undefined ? text
+    : S.typed[key] !== undefined ? S.typed[key] : (r.search || "");
+  return box.trim() === (r.search || "").trim();
+}
+
+/* The request a set of terms produces — rebuilt from the terms EXACTLY as the
+   server rebuilds it, so what you read here is what gets sent. */
+function requestFor(cat, terms, words) {
+  if (!cat || cat === "components")
+    return "components?search=" + esc(words);
+  const params = [];
+  Object.entries(NET_COL).forEach(([param, column]) => {
+    const t = terms.find(x => x.op === "eq" && x.field === column);
+    if (t) params.push(esc(param) + "=" + esc(String(t.value)));
+  });
+  return esc(cat) + "?" + params.join("&");
+}
+
+/* THE QUERY, laid out exactly as it was sent — or exactly as it is about to be
+   — and every part of it yours to change. A search you can't see is a search you
+   can't correct. */
 function queryHtml(i, key) {
   const r = S.results[key];
-  if (!r || !r.planned) return "";
-  const q = r.query;
-  const req = q
-    ? esc(q.category) + "?" + Object.entries(q.params || {})
-        .map(([k, v]) => esc(k) + "=" + esc(v)).join("&")
-    : r.planned.mode === "code"
-      ? "the part number, looked up directly"
-      : "nothing — no query was sent";
-  const terms = (r.proved || []).map((t, n) =>
+  const seeded = !r && seedApplies(key);
+  if ((!r || !r.planned) && !seeded) return "";
+  const words = S.typed[key] !== undefined ? S.typed[key] : seedFor(i);
+  const plan = r ? r.planned : S.readings[key].plan;
+  const shown = r ? (r.proved || []) : seedTerms(key);
+  const cat = r ? ((r.query || {}).category || "") : (plan.category || "");
+  const req = r
+    ? (r.query
+        ? esc(r.query.category) + "?" + Object.entries(r.query.params || {})
+            .map(([k, v]) => esc(k) + "=" + esc(v)).join("&")
+        : plan.mode === "code"
+          ? "the part number, looked up directly"
+          : "nothing — no query was sent")
+    : requestFor(cat, shown, words);
+  const terms = shown.map((t, n) =>
     '<tr><td class="mono">' + esc(t.field) + "</td>" +
     '<td class="mono op">' + esc(OPS[t.op] || t.op) + "</td>" +
-    '<td class="mono">' + esc(String(t.value)) + "</td>" +
+    '<td class="mono">' + esc(String(t.value)) + esc(t.unit || "") + "</td>" +
     '<td><button class="btn mini" data-drop="' + n + '">drop</button></td></tr>')
     .join("");
-  const cols = (S.categories.find(c => c.slug === (q || {}).category) || {})
-    .columns || [];
+  const cols = (S.categories.find(c => c.slug === cat) || {}).columns || [];
+  // the catalog's OWN parameter names — the vocabulary this part is published
+  // in, and the only one that spans manufacturers (one datasheet says "Diameter",
+  // the next says "φD"; the catalog says "Diameter" for both)
+  const cr = (S.readings[key] || {}).catalog || {};
+  const catalogCols = Object.keys(cr.parameters || {});
   return '<details class="query"' + (S.showQuery ? " open" : "") + ">" +
     "<summary>the actual search — change any of it</summary>" +
-    '<p class="req">asked the catalog for <span class="mono">' + req +
-    "</span></p>" +
+    '<p class="req">' + (r ? "asked" : "will ask") +
+    ' the catalog for <span class="mono">' + req + "</span></p>" +
     (terms
-      ? '<p class="note">then proved every part against these — a part that ' +
-        "fails one, or can’t be checked against it, is not a result:</p>" +
+      ? '<p class="note">' + (r ? "then proved every part against these"
+                                : "then every part must be proven against these") +
+        " — a part that fails one, or can’t be checked against it, is not a " +
+        "result:</p>" +
         '<div class="tablewrap"><table class="terms">' + terms + "</table></div>"
       : '<p class="note">nothing further was demanded of the results</p>') +
     '<div class="form addterm">' +
     '<input id="qt-field" list="qt-cols" placeholder="field" class="mono">' +
     '<datalist id="qt-cols">' +
-    cols.map(c => "<option>" + esc(c) + "</option>").join("") + "</datalist>" +
+    catalogCols.concat(cols).map(c => "<option>" + esc(c) + "</option>").join("") +
+    "</datalist>" +
     '<select id="qt-op">' + Object.entries(OPS).map(([k, v]) =>
       '<option value="' + esc(k) + '">' + esc(v) + "</option>").join("") +
     "</select>" +
     '<input id="qt-val" placeholder="value" class="mono">' +
+    '<input id="qt-unit" placeholder="unit" class="mono unit">' +
     '<button class="btn mini" id="qt-add">add this term</button></div>' +
+    '<p class="note">a catalog value is text ("50V") — give the unit and “' +
+    esc(OPS.gte) + ' 50 V” compares; leave it off and only “=” can.</p>' +
     "</details>";
 }
 
@@ -1270,10 +1327,20 @@ function wireMain() {
     // the query panel: drop a term, add a term — fired exactly as edited
     const q = document.querySelector("#main details.query");
     if (q) q.ontoggle = () => { S.showQuery = q.open; };
-    const proved = ((S.results[key] || {}).proved || []);
+    // the terms on screen: what a search PROVED, or — before you've searched —
+    // what it WILL prove. Editing either is the same gesture; the difference is
+    // that one re-fires and the other just waits for you to press Search.
+    const shown = S.results[key] ? ((S.results[key] || {}).proved || [])
+                                 : seedTerms(key);
+    const restage = next => {
+      if (S.results[key]) { rerun(line, next); return; }
+      S.seed[key] = next;
+      S.showQuery = true;
+      render();
+    };
     document.querySelectorAll("#main [data-drop]").forEach(btn => {
-      btn.onclick = () => rerun(line,
-        proved.filter((_, n2) => n2 !== parseInt(btn.dataset.drop, 10)));
+      btn.onclick = () => restage(
+        shown.filter((_, n2) => n2 !== parseInt(btn.dataset.drop, 10)));
     });
     const add = $("qt-add");
     if (add) add.onclick = () => {
@@ -1282,8 +1349,11 @@ function wireMain() {
                     "type publishes", "warn"); return; }
       const raw = $("qt-val").value.trim();
       const num = raw !== "" && !isNaN(Number(raw));
-      rerun(line, proved.concat([{field: f, op: $("qt-op").value,
-                                  value: num ? Number(raw) : raw}]));
+      const term = {field: f, op: $("qt-op").value,
+                    value: num ? Number(raw) : raw};
+      const unit = $("qt-unit") ? $("qt-unit").value.trim() : "";
+      if (unit) term.unit = unit;   // "50V" is text: the unit is what compares it
+      restage(shown.concat([term]));
     };
   }
   const rot = $("rot-select");
@@ -1380,6 +1450,13 @@ async function doSearch(i, override) { await run("searching", async () => {
   if (!t) throw new Error("type what you want, then Search");
   const key = i == null ? "" : lineKey(S.requirements.lines[i]);
   const cat = $("sf-cat") ? $("sf-cat").value : "";
+  // The terms shown ARE the search. If they still speak for what's in the box,
+  // fire them exactly as they stand — no second judgment call, and no chance of
+  // the agent quietly answering a question different from the one on screen.
+  let extra = override;
+  if (!extra && !S.results[key] && seedApplies(key, t))
+    extra = {category: cat || S.readings[key].plan.category,
+             sieve: seedTerms(key)};
   S.catPick[key] = cat;
   S.typed[key] = t;          // you fired these words: the box keeps them
   S.busySearch = key;
@@ -1390,7 +1467,7 @@ async function doSearch(i, override) { await run("searching", async () => {
       terms: t, lineIndex: i == null ? undefined : i,
       requirements: S.requirements,
       category: cat || undefined,
-      ...(override || {})});
+      ...(extra || {})});
   } finally {
     S.busySearch = null;
   }

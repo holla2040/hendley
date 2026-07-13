@@ -437,8 +437,12 @@ class HendleyApp:
                "raw_value": f"{line.get('value') or ''}\x1f{code}",
                "footprint": line.get("footprint") or ""}
         cached = store.get_interpretation("read", **key)
-        if cached and (cached["result"] or {}).get("search"):
-            return {"reading": cached["result"], "cached": True}
+        result = (cached or {}).get("result") or {}
+        # A reading carries the spec table its terms are written in ("catalog",
+        # even when null). One that doesn't predates that vocabulary, so its plan
+        # can't seed anything — re-read the part rather than seed the box from it.
+        if result.get("search") and "catalog" in result:
+            return {"reading": result, "cached": True}
 
         dossier = {
             "schematic": {
@@ -459,6 +463,11 @@ class HendleyApp:
             # the agent is unavailable: say so, and let the box keep the
             # schematic's own words rather than block the panel
             return {"reading": None, "cached": False}
+        # the spec table it read the part FROM travels with the reading: it is
+        # the vocabulary the terms are written in, and the list of every other
+        # thing this part publishes that the engineer could still ask about.
+        # Specs don't go stale the way stock does — cache it with the reading.
+        reading["catalog"] = dossier["catalog"]
         store.put_interpretation("read", reading, "llm",
                                  confidence=reading.get("confidence"), **key)
         return {"reading": reading, "cached": False}
@@ -567,7 +576,10 @@ class HendleyApp:
         return (row or {}).get("result") or {}
 
     def _search_line(self, body: dict) -> dict:
-        """The design context the engineer typed against (empty on overview)."""
+        """The design context the engineer typed against (empty on overview).
+        ``code`` is the part the search is ANCHORED on — the one the schematic
+        pins or the app has mounted — and its catalog record is what lets the
+        agent write terms in the catalog's own vocabulary."""
         idx = body.get("lineIndex")
         lines = (body.get("requirements") or {}).get("lines") or []
         if idx is None or not isinstance(idx, int) or not (0 <= idx < len(lines)):
@@ -575,7 +587,10 @@ class HendleyApp:
         ln = lines[idx]
         return {"designator": (ln.get("designators") or [""])[0],
                 "value": ln.get("comment") or "",
-                "footprint": ln.get("footprint") or ""}
+                "footprint": ln.get("footprint") or "",
+                "code": str(body.get("code") or
+                            (ln.get("providerRefs") or {}).get("jlcpcb")
+                            or "").strip()}
 
     def _plan(self, terms: str, line: dict,
               category: str | None = None) -> tuple[dict, bool]:
@@ -584,10 +599,12 @@ class HendleyApp:
         search when the agent is unavailable, and says so rather than
         pretending the terms were understood."""
         store = self._store()
+        code = line.get("code") or ""
         key = {"kind_hint": _kind_hint(line.get("designator") or ""),
-               # the forced category is part of the question, so a different
-               # answer to it never returns a stale plan
-               "raw_value": f"{terms}\x1f{category}" if category else terms,
+               # both belong in the question: a forced category changes the
+               # answer, and so does the part the search is anchored on — its
+               # catalog record IS the vocabulary the terms are written in
+               "raw_value": "\x1f".join([terms, category or "", code]),
                "footprint": line.get("footprint") or ""}
         cached = store.get_interpretation("search", **key)
         if cached and (cached["result"] or {}).get("mode"):
@@ -595,7 +612,8 @@ class HendleyApp:
         interpreter = self._interpreter_factory()
         planner = getattr(interpreter, "plan_search", None)
         ctx = {**line, "terms": terms, "category": category,
-               "convention": self._convention(line.get("designator") or "")}
+               "convention": self._convention(line.get("designator") or ""),
+               "catalog": self._catalog_record(code)}
         plan = planner(ctx) if planner else None
         if plan is None:
             return ({"mode": "fts", "category": "components",

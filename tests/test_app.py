@@ -574,6 +574,47 @@ def test_search_plans_proves_and_caches(tmp_path):
     assert interp.plans == 1
 
 
+def test_the_search_on_screen_is_the_search_that_fires(tmp_path):
+    """The panel seeds its terms from the part's own catalog spec table — the
+    C4/C12/C13/C14 case: a 10uF 50V electrolytic in a D5 x 5.4mm can. Pressing
+    Search fires EXACTLY those terms: the index-named ones rebuild the request,
+    the catalog-named ones are proven per part. The 63 V part is a strictly
+    better drop-in, and until the unit could be declared it was uncheckable —
+    which meant invisible."""
+    from test_search_executor import LyingIndex
+
+    rows = [{"code": c, "package": "SMD,D5xL5.4mm", "capacitance_farads": 1e-5}
+            for c in ("C_50", "C_63", "C_25")]
+    src = LyingIndex(rows, catalog={
+        "C_50": {"Voltage Rating": "50V", "Diameter": "5mm"},
+        "C_63": {"Voltage Rating": "63V", "Diameter": "5mm"},
+        "C_25": {"Voltage Rating": "25V", "Diameter": "5mm"}})
+    app = HendleyApp(db_path=tmp_path / "parts.db", outdir=tmp_path / "out",
+                     datasource_factory=lambda: src,
+                     bridge_factory=lambda host: MysteryBridge(),
+                     interpreter_factory=lambda: PlanningInterpreter(),
+                     draft_path=tmp_path / "draft.json",
+                     cache_path=tmp_path / "cache.json")
+    intake = app.api_intake({"productionQuantity": 5})
+    got = app.api_search({
+        "terms": "10uF 50V electrolytic", "lineIndex": 0,
+        "requirements": intake["requirements"], "category": "capacitors",
+        "sieve": [
+            {"field": "package", "op": "eq", "value": "SMD,D5xL5.4mm"},
+            {"field": "capacitance_farads", "op": "eq", "value": 1e-5},
+            {"field": "Voltage Rating", "op": "gte", "value": 50, "unit": "V"},
+            {"field": "Diameter", "op": "eq", "value": "5mm"}]})
+    # the request is REBUILT from the terms — only the index-named ones can be
+    # query params, so a term you drop cannot come back as one
+    assert got["query"] == {"category": "capacitors",
+                            "params": {"package": "SMD,D5xL5.4mm",
+                                       "capacitance": 1e-5}}
+    assert got["judged"] is False        # edited terms fire verbatim: no agent
+    assert sorted(c["code"] for c in got["candidates"]) == ["C_50", "C_63"]
+    [miss] = got["misses"]
+    assert miss["code"] == "C_25" and "≥ 50V" in miss["failed"][0]["why"]
+
+
 def test_the_agent_names_the_key_the_engineer_never_does(tmp_path):
     interp = PlanningInterpreter()
     app, _ = _searching_app(tmp_path, interp)
