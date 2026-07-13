@@ -8,7 +8,8 @@ Maps what the design states — explicitly or implicitly:
   canonical value from the part value, package from the footprint name
   (:mod:`hendley.requirements.specs`) — so a plain "82k / R-0402" resistor
   resolves against the House Parts DB with zero hand-editing
-- ``DNP`` attribute or an unpopulated board placement → ``dnp: true``
+- ``DNP`` attribute, a part value of ``DNP``, or an unpopulated board
+  placement → ``dnp: true``
 - identical lines merge (designators grouped, natural-sorted)
 
 Parts that state nothing confidently (no id, no inferable spec) surface as

@@ -17,9 +17,9 @@ Extraction rules (verified live, documented in ``docs/fusion-notes.md``):
   matters; 3D models are irrelevant to this tool (a real part whose device
   has no 3D model, e.g. a fresh library variant, must never be filtered).
 - Parts marked do-not-populate — the schematic ``DNP`` attribute set to
-  anything but ``0`` (test points, mount holes, programming pads), or the
-  board element's ``populate`` flag off — are carried but flagged via
-  :func:`is_dnp` / ``Placement.populate``.
+  anything but ``0`` (test points, mount holes, programming pads), a part
+  VALUE of literally ``DNP``, or the board element's ``populate`` flag off —
+  are carried but flagged via :func:`is_dnp` / ``Placement.populate``.
 - The JLC code is the ``LCSC`` attribute; MPN is ``MPN`` (fallback ``MP``).
 - Board entities read empty until the board is the engine's current drawing;
   ``BOARD;`` switches it (without raising the board window). There is no
@@ -73,12 +73,16 @@ def is_pseudo_part(part_row: dict, attrs: dict[str, str], has_footprint: bool) -
 
 
 def is_dnp(part: DesignPart) -> bool:
-    """True when the schematic marks the part do-not-populate (``DNP`` attribute).
+    """True when the schematic marks the part do-not-populate.
 
-    Any value other than empty or ``0`` counts as set, matching the loose way
-    libraries fill it in (``1``, ``true``, ``yes``).
+    Two spellings count: the ``DNP`` attribute set to anything other than
+    empty or ``0`` (matching the loose way libraries fill it in — ``1``,
+    ``true``, ``yes``), or the part's VALUE being literally ``DNP`` (a common
+    schematic shorthand, e.g. a resistor whose value reads ``DNP``).
     """
-    return (part.attributes or {}).get("DNP", "").strip() not in ("", "0")
+    if (part.attributes or {}).get("DNP", "").strip() not in ("", "0"):
+        return True
+    return (part.value or "").strip().upper() == "DNP"
 
 
 def part_from_row(part_row: dict, attrs: dict[str, str]) -> DesignPart:

@@ -115,8 +115,9 @@ on out-of-stock / not-found parts so it can gate a submission. `--no-verify`
 skips the check and needs no credentials.
 
 Parts marked **do-not-populate** — the schematic `DNP` attribute set to anything
-but `0` (test points, mount holes, programming pads), or the board element's
-populate flag off — are excluded from both files and from the stock check (the
+but `0` (test points, mount holes, programming pads), a part value of literally
+`DNP` (case-insensitive), or the board element's populate flag off — are
+excluded from both files and from the stock check (the
 excluded designators are listed on stderr). Parts with no `LCSC` attribute that
 *are* populated (e.g. connectors you solder yourself) are kept in both files but
 flagged; JLC's uploader lists them unmatched and you leave them unselected.

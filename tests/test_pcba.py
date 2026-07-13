@@ -91,6 +91,16 @@ def test_is_dnp_reads_the_schematic_attribute():
     assert not is_dnp(DesignPart("R1"))
 
 
+def test_is_dnp_reads_a_dnp_value():
+    # a VALUE of literally "DNP" is the other schematic spelling
+    assert is_dnp(DesignPart("R3", value="DNP"))
+    assert is_dnp(DesignPart("R4", value="dnp"))
+    assert is_dnp(DesignPart("R5", value=" DNP "))
+    # only the exact word — real values that merely contain it still populate
+    assert not is_dnp(DesignPart("R6", value="10k"))
+    assert not is_dnp(DesignPart("R7", value="DNP 10k"))
+
+
 def test_dnp_attribute_excludes_part_from_bom_and_cpl():
     p1, pl1 = _r("R1", "C1")
     p2, pl2 = _r("M+", None, value="", footprint="TPTHRU-SLOT-1-3")
