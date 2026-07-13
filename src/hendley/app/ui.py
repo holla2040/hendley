@@ -165,7 +165,13 @@ tr.picked td { background:rgba(217,164,65,.07); }
 table.results td.bad { color:var(--err); font-weight:600; }
 table.results tr.reject td { opacity:.66; }
 table.results tr.reject:hover td { opacity:1; }
-table.results th .th-sort { white-space:nowrap; }
+/* the spec columns are scanned DOWN, so they are kept narrow: a short header,
+   the constraint stacked under it, and no letter-spacing padding it out */
+table.results th, table.results td { padding-right:9px; }
+table.results th { letter-spacing:.04em; vertical-align:bottom; }
+table.results th .th-sort { white-space:nowrap; line-height:1.35; }
+table.results th .cond { display:block; font-weight:400; letter-spacing:0;
+  text-transform:none; color:var(--pad); }
 /* already on the approved list above: it says so, instead of carrying a second
    radio — two radios for one part means the lower one steals the selection */
 table.results tr.onlist td { background:rgba(217,164,65,.05); }
@@ -1193,21 +1199,47 @@ function sortRows(rows) {
   });
 }
 
+/* The catalog's parameter names are its own, and they are long: a column headed
+   "Temperature Coefficient" is mostly header. These are the shop's words for the
+   same field — DISPLAY ONLY. The field name underneath is untouched, because it
+   is what the sieve proves against, what the sort keys off, and what goes back
+   to the catalog when you edit a term. */
+const HEAD_LABEL = {
+  "Capacitance": "value",
+  "Resistance": "value",
+  "Voltage Rating": "voltage",
+  "Temperature Coefficient": "tempco",
+  "Tolerance": "tol",
+  "Height - Seated (Max)": "height",
+  "Diameter": "dia",
+  "Equivalent Series Resistance(ESR)": "esr",
+  "Ripple Current": "ripple",
+  "Operating Temperature": "temp",
+  "Lifetime": "life",
+};
+const headLabel = field => HEAD_LABEL[field] || field;
+
 function compareHead(criteria, extras) {
-  const h = (label, key, num) => {
+  const h = (html, key, num) => {
     const active = S.altSort.key === key;
     const arrow = active ? (S.altSort.dir === 1 ? " ▲" : " ▼") : "";
     return "<th" + (num ? ' class="num"' : "") +
       '><button class="th-sort" data-sortkey="' + esc(key) + '">' +
-      esc(label) + arrow + "</button></th>";
+      html + arrow + "</button></th>";
   };
-  // the header IS the criterion: "Voltage Rating ≥ 50V"
-  const crit = t => t.field + " " + (OPS[t.op] || t.op) +
-    (t.value === undefined ? "" : " " + String(t.value) + (t.unit || ""));
+  // The criterion stacks: the field on top, what it must satisfy underneath.
+  //   voltage      value      dia
+  //   ≥ 50V        = 10uF     = 5mm
+  // One line would make the column as wide as "≥ 50V" plus the name, and the
+  // table is meant to be SCANNED down, not read across.
+  const crit = t => esc(headLabel(t.field)) +
+    (t.value === undefined ? "" :
+      '<span class="cond">' + esc(OPS[t.op] || t.op) + " " +
+      esc(String(t.value) + (t.unit || "")) + "</span>");
   return "<tr><th></th><th>alt</th><th>lcsc</th><th>manufacturer</th>" +
     "<th>mpn</th><th>package</th>" +
     criteria.map(t => h(crit(t), t.field, false)).join("") +
-    extras.map(f => h(f, f, false)).join("") +
+    extras.map(f => h(esc(headLabel(f)), f, false)).join("") +
     h("live stock", "stock", true) + '<th class="num">need</th>' +
     h("unit $", "price", true) + '<th class="num">order $</th>' +
     h("class", "class", false) + "</tr>";
