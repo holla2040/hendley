@@ -1296,23 +1296,15 @@ function resultsHtml(i, key) {
       "catalog matched even the request. Loosen a term, or change the part " +
       "type, and search again.</p>";
 
+  // no instructions: the table says it itself — a red cell is what a part fails,
+  // red stock is too little of it, and the controls are a radio and a checkbox
   const toggle = others.length
-    ? ' <button class="btn mini" id="show-specs">' +
+    ? '<p class="note"><button class="btn mini" id="show-specs">' +
       (S.showSpecs ? "hide the other specs" : "show all " + others.length +
-       " specs") + "</button>"
+       " specs") + "</button></p>"
     : "";
-  const lead = (hits.length
-    ? "read down a column to compare; a red cell is the one thing that part " +
-      "fails, and you can still pick it. Ticking a box saves it — there is " +
-      "nothing to press."
-    : "nothing you can order passed every term — but every part is here with " +
-      "its numbers, so you can see what to loosen.") +
-    (shortStock.length
-      ? " The last " + shortStock.length + " match, but their stock is red: " +
-        "too few to fill " + fmt(need) + " this run."
-      : "");
 
-  return say + '<div class="sect"><p class="note">' + lead + toggle + "</p>" +
+  return say + '<div class="sect">' + toggle +
     '<div class="tablewrap"><table class="results">' +
     compareHead(criteria, extras) +
     rows.map(c => compareRow(i, c, criteria, extras, need)).join("") +
