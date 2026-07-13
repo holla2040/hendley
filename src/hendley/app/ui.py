@@ -175,6 +175,9 @@ table.results th .cond { display:block; font-weight:400; letter-spacing:0;
 tr.linkrow { cursor:pointer; }
 tr.linkrow:hover td { background:rgba(217,164,65,.06); }
 .num { text-align:right; } th.num { text-align:right; }
+.alt-link { font:10.5px var(--mono); color:var(--tin); text-decoration:none;
+  border-bottom:1px dotted var(--tin); }
+.alt-link:hover { color:var(--pad); border-bottom-color:var(--pad); }
 .short-num { color:var(--err); font-weight:600; }
 .ok-num { color:var(--ok); }
 .dimtd { color:var(--tin); }
@@ -734,12 +737,21 @@ function makerCell(name) {
   return '<td title="' + esc(full) + '">' + esc(full.slice(0, 19)) + "…</td>";
 }
 
+/* Two pages, two different questions. The CODE goes to JLCPCB — the assembly
+   side: Basic or Extended, what they actually have on hand for PCBA. The small
+   `lcsc` beside it goes to the catalog page — the datasheet, the full spec table,
+   the photograph. You want one or the other depending on what you're deciding. */
 function lcscLink(code) {
-  return code
-    ? '<a href="https://www.lcsc.com/product-detail/' +
-      encodeURIComponent(code) + '.html" target="_blank" rel="noopener">' +
-      "<code>" + esc(code) + "</code></a>"
-    : "<code>—</code>";
+  if (!code) return "<code>—</code>";
+  const q = encodeURIComponent(code);
+  const link = (href, label, why) =>
+    ' <a class="alt-link" href="' + href + '" target="_blank" rel="noopener"' +
+    ' title="' + esc(code) + " " + why + '">' + label + "</a>";
+  return "<code>" + esc(code) + "</code>" +
+    link("https://jlcpcb.com/parts/componentSearch?searchTxt=" + q, "jlc",
+         "on JLCPCB — assembly stock, Basic/Extended") +
+    link("https://www.lcsc.com/product-detail/" + q + ".html", "lcsc",
+         "on LCSC — datasheet and full specs");
 }
 
 function partRow(o) {
