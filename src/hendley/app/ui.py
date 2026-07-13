@@ -562,10 +562,14 @@ function railStat(i, state) {
   if (state === "conf") return "confirm";
   if (state === "na") return "unverified";
   if (state === "short") return "short";
-  let tail = "✓";
-  if (isOverridden(i)) tail += " alt";
-  else if (l.substitution) tail += " sub";
-  return tail;
+  // The ✓ goes LAST, always. The rail is read by running your eye down its right
+  // edge: all green, all ticks, and the design is ready to export. A qualifier
+  // ("alt", "sub") pushed the tick out of that column and broke the scan, so it
+  // sits to the LEFT of the tick and the tick stays where the eye expects it.
+  let note = "";
+  if (isOverridden(i)) note = "alt ";
+  else if (l.substitution) note = "sub ";
+  return note + "✓";
 }
 
 /* THE DESIGN'S OWN WORDS, always — read off the REQUIREMENT (what Refresh
