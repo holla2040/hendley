@@ -761,9 +761,9 @@ function lcscLink(code) {
     '<a href="' + href + '" target="_blank" rel="noopener" title="' + esc(code) +
     " " + why + '">' + label + "</a>";
   return '<span class="pn"><code>' + esc(code) + "</code>" +
-    link("https://jlcpcb.com/parts/componentSearch?searchTxt=" + q, "jlc",
+    link("https://jlcpcb.com/parts/componentSearch?searchTxt=" + q, "JLC",
          "on JLCPCB — assembly stock, Basic/Extended") +
-    link("https://www.lcsc.com/product-detail/" + q + ".html", "lcsc",
+    link("https://www.lcsc.com/product-detail/" + q + ".html", "LCSC",
          "on LCSC — datasheet and full specs") + "</span>";
 }
 
