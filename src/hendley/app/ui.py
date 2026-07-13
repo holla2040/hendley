@@ -175,9 +175,14 @@ table.results th .cond { display:block; font-weight:400; letter-spacing:0;
 tr.linkrow { cursor:pointer; }
 tr.linkrow:hover td { background:rgba(217,164,65,.06); }
 .num { text-align:right; } th.num { text-align:right; }
-.alt-link { font:10.5px var(--mono); color:var(--tin); text-decoration:none;
-  border-bottom:1px dotted var(--tin); }
-.alt-link:hover { color:var(--pad); border-bottom-color:var(--pad); }
+/* the code and its two links sit in FIXED slots — codes run C1234..C22387980, so
+   anything flowed after one lands somewhere different on every row */
+.pn { display:grid; grid-template-columns:10ch 3.5ch 4ch; gap:10px;
+      align-items:baseline; }
+.pn code { font:12.5px var(--mono); }
+.pn a { font:11px var(--mono); color:var(--tin); text-decoration:none;
+        border-bottom:1px dotted var(--tin); justify-self:start; }
+.pn a:hover { color:var(--pad); border-bottom-color:var(--pad); }
 .short-num { color:var(--err); font-weight:600; }
 .ok-num { color:var(--ok); }
 .dimtd { color:var(--tin); }
@@ -722,7 +727,8 @@ function exportCardHtml() {
 /* ---- detail panel ------------------------------------------------------------ */
 
 const PART_TABLE_HEAD =
-  '<tr><th></th><th>alt</th><th>lcsc</th><th>manufacturer</th><th>mpn</th>' +
+  '<tr><th></th><th>alt</th><th>Distributor</th><th>manufacturer</th>' +
+  '<th>mpn</th>' +
   '<th>package</th>' +
   '<th class="num">live stock</th><th class="num">need</th>' +
   '<th class="num">unit $</th><th class="num">order $</th>' +
@@ -741,17 +747,24 @@ function makerCell(name) {
    side: Basic or Extended, what they actually have on hand for PCBA. The small
    `lcsc` beside it goes to the catalog page — the datasheet, the full spec table,
    the photograph. You want one or the other depending on what you're deciding. */
+/* One column, three fixed slots: the code, then JLC, then LCSC. A grid, not
+   spaces — codes run from C1234 to C22387980, so anything flowed after the code
+   lands somewhere different on every row, and links you have to hunt for down a
+   ragged edge are links you don't use.
+
+   JLCPCB answers the ASSEMBLY question (Basic or Extended, what they hold for
+   PCBA); LCSC answers the CATALOG one (datasheet, full spec table, photo). */
 function lcscLink(code) {
   if (!code) return "<code>—</code>";
   const q = encodeURIComponent(code);
   const link = (href, label, why) =>
-    ' <a class="alt-link" href="' + href + '" target="_blank" rel="noopener"' +
-    ' title="' + esc(code) + " " + why + '">' + label + "</a>";
-  return "<code>" + esc(code) + "</code>" +
+    '<a href="' + href + '" target="_blank" rel="noopener" title="' + esc(code) +
+    " " + why + '">' + label + "</a>";
+  return '<span class="pn"><code>' + esc(code) + "</code>" +
     link("https://jlcpcb.com/parts/componentSearch?searchTxt=" + q, "jlc",
          "on JLCPCB — assembly stock, Basic/Extended") +
     link("https://www.lcsc.com/product-detail/" + q + ".html", "lcsc",
-         "on LCSC — datasheet and full specs");
+         "on LCSC — datasheet and full specs") + "</span>";
 }
 
 function partRow(o) {
@@ -1223,7 +1236,7 @@ function compareHead(criteria, extras) {
     (t.value === undefined ? "" :
       '<span class="cond">' + esc(OPS[t.op] || t.op) + " " +
       esc(String(t.value) + (t.unit || "")) + "</span>");
-  return "<tr><th></th><th>alt</th><th>lcsc</th><th>manufacturer</th>" +
+  return "<tr><th></th><th>alt</th><th>Distributor</th><th>manufacturer</th>" +
     "<th>mpn</th><th>package</th>" +
     criteria.map(t => h(crit(t), t.field, false)).join("") +
     extras.map(f => h(esc(headLabel(f)), f, false)).join("") +
