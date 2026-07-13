@@ -99,6 +99,14 @@ def _kind_hint(designator: str) -> str:
     return (m.group(1) if m else "").upper()
 
 
+def _library_type(fact) -> str | None:
+    """Basic or Extended, off a live-verified fact. It is an ORDER-level fee
+    attribute, not part policy, so it is never stored — only reported."""
+    if fact is None or not fact.found:
+        return None
+    return (fact.raw or {}).get("libraryType")
+
+
 class HendleyApp:
     """The API surface — every method is a thin wrapper over the library."""
 
@@ -179,6 +187,17 @@ class HendleyApp:
                                 code, fact.stock, _tier_price_at(fact, 1),
                                 mpn=fact.mpn, manufacturer=fact.manufacturer)
                     house = store.lookup(spec)
+                    # Basic/Extended is an ORDER-level fee attribute, not part
+                    # policy, so it is deliberately not in the DB — but we just
+                    # verified every choice and the answer is in the fact. Carry
+                    # it on the response rather than leave the column blank on
+                    # exactly the parts the engineer approved.
+                    if house:
+                        house = dict(house)
+                        house["choices"] = [
+                            {**c, "libraryType": _library_type(
+                                facts.get(c["providerRefs"].get("jlcpcb") or ""))}
+                            for c in house["choices"]]
         return {"housePart": house, "history": store.history(spec)}
 
     def api_record(self, body: dict) -> dict:

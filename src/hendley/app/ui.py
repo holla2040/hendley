@@ -1406,6 +1406,7 @@ function specBody(i) {
           radio: canPick, checked: effRadio(i) === c.lcscCode,
           code: c.lcscCode, mpn: c.mpn,
           maker: c.manufacturer, pkg: rl.spec ? rl.spec.package : null,
+          cls: c.libraryType,     // live-verified with the rest of the row
           check: {show: true, on: effCheck(i, c.lcscCode)},
           unknown: c.stockUnknown,
           stock: stock, stockCls: canPick ? "" : "short-num",
