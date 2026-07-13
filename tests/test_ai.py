@@ -54,9 +54,74 @@ def test_garbage_output_returns_none(monkeypatch):
     assert _run_with(monkeypatch, "", returncode=1).interpret_part(CTX) is None
 
 
-def test_incomplete_spec_returns_none(monkeypatch):
-    bad = dict(GOOD, value="")  # SpecKey requires kind/value/package
-    assert _run_with(monkeypatch, _cli_envelope(json.dumps(bad))).interpret_part(CTX) is None
+def test_a_part_with_no_value_reads_as_a_spec_with_no_value(monkeypatch):
+    # a diode with no schematic VALUE is still fully read: diode, SOD-323.
+    # An empty value is the honest answer, never a reason to fabricate one.
+    answer = {"kind": "diode", "value": "", "package": "SOD-323",
+              "qualifier": "", "envelope": {"mount": "smd", "maxLenMm": 2.7},
+              "confidence": 0.9, "rationale": "no value in the design"}
+    out = _run_with(monkeypatch,
+                    _cli_envelope(json.dumps(answer))).interpret_part(CTX)
+    assert out is not None            # None is reserved for "interpreter dead"
+    assert out.spec.kind == "diode" and out.spec.package == "SOD-323"
+    assert out.spec.value == ""
+    assert out.envelope == {"mount": "smd", "maxLenMm": 2.7}
+
+
+def test_unreadable_package_is_a_partial_not_a_dead_interpreter(monkeypatch):
+    # kind read, package not: real knowledge, kept — and the interpreter lives
+    answer = {"kind": "diode", "value": "", "package": "", "qualifier": "",
+              "confidence": 0.5, "rationale": "can't place the footprint"}
+    out = _run_with(monkeypatch,
+                    _cli_envelope(json.dumps(answer))).interpret_part(CTX)
+    assert out is not None and out.spec is None
+    assert out.partial == {"kind": "diode"}
+
+
+def test_plan_search_shapes_the_query(monkeypatch):
+    plan = {"mode": "parametric", "category": "resistors",
+            "net": {"package": "0603", "resistance": 22000},
+            "sieve": [{"field": "tolerance_fraction", "op": "lte", "value": 0.01},
+                      {"field": "bogus"},            # malformed: dropped
+                      "junk"],                        # not even a dict: dropped
+            "lookingFor": {"kind": "resistor", "value": "22k",
+                           "package": "0603", "qualifier": "1%"},
+            "say": "22k 0603, 1% or better", "confidence": 3}
+    out = _run_with(monkeypatch, _cli_envelope(json.dumps(plan))).plan_search(
+        {"designator": "R7", "value": "22k", "footprint": "R-0603",
+         "terms": "22k 0603 1%"})
+    assert out["mode"] == "parametric" and out["category"] == "resistors"
+    assert out["net"] == {"package": "0603", "resistance": 22000}
+    assert out["sieve"] == [{"field": "tolerance_fraction", "op": "lte",
+                             "value": 0.01}]
+    assert out["confidence"] == 1.0          # clamped
+    assert out["lookingFor"]["value"] == "22k"
+
+
+def test_plan_search_rejects_an_unknown_mode(monkeypatch):
+    bad = {"mode": "vibes", "category": "resistors"}
+    assert _run_with(monkeypatch,
+                     _cli_envelope(json.dumps(bad))).plan_search({}) is None
+
+
+def test_derive_key_names_the_requirement(monkeypatch):
+    answer = {"spec": {"kind": "Diode", "value": "", "package": "SOD-323",
+                       "qualifier": "zener 10V"},
+              "rationale": "the engineer searched for a 10V zener",
+              "confidence": 0.9}
+    out = _run_with(monkeypatch, _cli_envelope(json.dumps(answer))).derive_key(
+        {"designator": "D6", "value": "", "footprint": "D-SOD323",
+         "terms": "zener 10V SOD-323", "part": {"code": "C1", "mpn": "BZT52C10"}})
+    assert out["spec"] == {"kind": "diode", "value": "", "package": "SOD-323",
+                           "qualifier": "zener 10V"}   # kind lowercased, no
+                                                       # value invented
+    assert "zener" in out["rationale"]
+
+
+def test_derive_key_without_a_package_is_no_key(monkeypatch):
+    bad = {"spec": {"kind": "diode", "value": "", "package": ""}}
+    assert _run_with(monkeypatch,
+                     _cli_envelope(json.dumps(bad))).derive_key({}) is None
 
 
 def test_missing_binary_and_timeout_return_none(monkeypatch):

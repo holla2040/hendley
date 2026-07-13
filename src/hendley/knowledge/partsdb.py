@@ -573,7 +573,9 @@ def record(
     arguments) rather than duplicated. Out-of-range ranks clamp to the end of
     the list.
     """
-    for name, val in (("kind", kind), ("value", value), ("package", package)):
+    # 'value' may be empty: a general-purpose diode has none, and demanding one
+    # only ever gets a fabricated answer (see SpecKey)
+    for name, val in (("kind", kind), ("package", package)):
         if not val or not str(val).strip():
             raise ValueError(f"record() requires a non-empty {name!r}")
     refs = dict(provider_refs or {})

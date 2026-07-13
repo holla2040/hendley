@@ -11,12 +11,23 @@ from hendley.domain import (
 )
 
 
-def test_spec_key_requires_kind_value_package():
+def test_spec_key_requires_kind_and_package():
     with pytest.raises(ValueError):
-        SpecKey(kind="resistor", value="", package="0603")
+        SpecKey(kind="", value="22k", package="0603")
+    with pytest.raises(ValueError):
+        SpecKey(kind="resistor", value="22k", package="")
     s = SpecKey.from_dict({"kind": "resistor", "value": "22k", "package": "0603"})
     assert s.qualifier == ""
     assert s.to_dict()["package"] == "0603"
+
+
+def test_spec_key_value_may_be_empty():
+    # a general-purpose diode HAS no value; a key that demands one only gets a
+    # fabricated answer, which is how a "1000V" once landed in a diode's value
+    s = SpecKey(kind="diode", value="", package="SOD-323")
+    assert s.value == ""
+    assert SpecKey.from_dict(s.to_dict()) == s
+    assert SpecKey.from_dict({"kind": "diode", "package": "SOD-323"}).value == ""
 
 
 def test_make_check_validates_names_and_stamps_severity():

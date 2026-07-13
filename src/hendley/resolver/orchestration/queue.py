@@ -73,8 +73,10 @@ def _key_params(parameters: list | None) -> dict:
 
 def _verified_candidates(datasource: DataSource, category: str, spec: SpecKey,
                          exclude: set[str],
-                         search: str | None = None) -> tuple[list[dict], str | None]:
-    """Discover, then verify in one batch. Returns (rows, searchUsed|None).
+                         search: str | None = None) -> tuple[list[dict], dict | None]:
+    """Discover, then verify in one batch. Returns (rows, queryUsed|None) —
+    the query comes back so it can be SHOWN: a lookup the engineer can't see
+    is a lookup they can't correct, even when the app ran it unasked.
 
     Discovery runs automatically ONLY where the query is deterministic: a
     dense value param (R/C) or a chip package. A spec with neither (e.g. a
@@ -88,16 +90,13 @@ def _verified_candidates(datasource: DataSource, category: str, spec: SpecKey,
     params = dict(_value_params(spec))
     if is_chip_package(spec.package):
         params["package"] = spec.package  # library-local names never match jlcsearch
-    used = None
     if params and category:
-        rows = datasource.discover({"category": category, "params": params})
+        query = {"category": category, "params": params}
     elif search:
-        used = search
-        rows = datasource.discover({"category": "components",
-                                    "params": {"search": search}})
+        query = {"category": "components", "params": {"search": search}}
     else:
         return [], None
-    return _verify_rows(datasource, rows, exclude), used
+    return _verify_rows(datasource, datasource.discover(query), exclude), query
 
 
 def explore(datasource: DataSource, search: str) -> list[dict]:
@@ -196,7 +195,9 @@ def build_approval_queue(
                 raw, used = _verified_candidates(
                     datasource, category, spec, avl_refs, search=search)
                 if used:
-                    discovery["search"] = used
+                    discovery["query"] = used          # shown, always
+                    if used["category"] == "components":
+                        discovery["search"] = used["params"]["search"]
                 valid, rejected, unconfirmed = filter_candidates(
                     spec, raw, envelope=envelope)
                 candidates = rank_candidates(

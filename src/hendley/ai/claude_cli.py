@@ -8,6 +8,11 @@ irrelevant (each unique string is judged once, ever).
 Failure of any kind — binary missing, timeout, non-JSON output, refusal —
 returns ``None``: the caller falls back to the one-time confirm card. The
 LLM can lower zero-touch coverage, never break the flow.
+
+A well-formed answer that isn't a COMPLETE spec is not a failure: it comes
+back as an Interpretation with ``spec=None`` and the fields it did read in
+``partial`` (the confirm card's prefill). Only ``None`` means "stop asking
+this interpreter".
 """
 
 from __future__ import annotations
@@ -38,7 +43,10 @@ Rules:
 - value: canonical short form, lowercase suffixes: resistance like "22k",
   "4.7k", "220", "1M"; capacitance like "100n", "47u"; inductance like
   "22u". Extra ratings (voltage, tolerance, dielectric) belong in
-  qualifier, NOT in value.
+  qualifier, NOT in value. When the design states no value and none can be
+  inferred (a diode with no VALUE — which part it is, is the engineer's
+  call), answer "" and say so in the rationale: NEVER invent one. The
+  fields you DID read still reach the engineer.
 - package: normalize the library footprint name to the industry package it
   denotes, in catalog spelling:
   - a standard chip size (0201/0402/0603/0805/1206/1210/2010/2512) → that
@@ -89,6 +97,224 @@ Answer with ONLY this JSON object, no prose, no code fences:
   "confidence": 0.0, "rationale": "..."}}
 """
 
+# The parts index, as MEASURED (not as its column names advertise). Every
+# claim here was verified live against jlcsearch; get this wrong and the
+# tool ships the wrong part while looking like it filtered.
+INDEX_FACTS = """\
+The index (jlcsearch) has one endpoint per category, plus a keyword endpoint.
+
+NET — the query. It honours ONLY these params. It SILENTLY IGNORES every
+other param (an unknown name is not an error: you get 100 unfiltered rows
+that LOOK filtered):
+  - package        exact string, no wildcards ("0603", "SOD-323")
+  - resistance     ohms      (resistors, resistor_arrays)
+  - capacitance    farads    (capacitors; 100n = 1e-7)
+  - search         keywords  (ONLY on the "components" endpoint)
+Any category endpoint returns at most 100 rows, sorted by STOCK DESCENDING.
+
+SIEVE — the truth. Every row carries typed columns (below). The sieve is
+compared in Python against those columns, so it CANNOT be ignored. Any
+constraint you put in the net you MUST also put in the sieve; anything the
+net cannot express goes in the sieve alone. A column the row does not
+carry sends that row to the "couldn't check" list, never to the results.
+
+Column traps:
+  - resistors.power_watts is MILLIWATTS (0603 = 100, 1206 = 250). 1/4W = 250.
+  - tolerance_fraction: 0.01 means ±1%. "1%" means "1% or better" → lte 0.01.
+  - capacitance_farads is the row column; "capacitance" is the net param.
+
+Categories and their sieve columns:
+  resistors: resistance, tolerance_fraction, power_watts(mW), package,
+    max_overload_voltage, is_surface_mount, is_basic
+  resistor_arrays: resistance, tolerance_fraction, power_watts(mW), package,
+    number_of_resistors, number_of_pins, topology
+  capacitors: capacitance_farads, tolerance_fraction, voltage_rating,
+    temperature_coefficient(X7R/X5R/C0G/NP0), package, esr_ohms,
+    ripple_current_amps, is_polarized, capacitor_type
+  diodes: forward_voltage, reverse_voltage, forward_current,
+    power_dissipation_watts, recovery_time_ns, diode_type, is_schottky,
+    is_zener, is_tvs, package, configuration
+  leds: color, wavelength_nm, forward_voltage, forward_current,
+    luminous_intensity_mcd, viewing_angle_deg, power_dissipation_mw,
+    lens_color, is_rgb, package
+  mosfets: drain_source_voltage, continuous_drain_current,
+    gate_threshold_voltage, power_dissipation, package
+  fuses: current_rating, voltage_rating, response_time, is_resettable,
+    is_surface_mount, package
+  ldos / voltage_regulators: output_voltage_min, output_voltage_max,
+    output_current_max, dropout_voltage, input_voltage_min,
+    input_voltage_max, quiescent_current, output_type, topology, package
+  headers: pitch_mm, num_pins, num_rows, num_pins_per_row, gender,
+    is_right_angle, is_shrouded, current_rating_amp, package
+  jst_connectors / wire_to_board_connectors: pitch_mm, num_pins, num_rows,
+    reference_series, gender, mounting_style, package
+  usb_c_connectors: number_of_contacts, number_of_ports, current_rating_a,
+    gender, mounting_style, package
+  switches: switch_type, circuit, current_rating_a, voltage_rating_v,
+    is_latching, pin_count, package
+  relays: relay_type, contact_form, coil_voltage, coil_resistance,
+    max_switching_current, max_switching_voltage, package
+  potentiometers: max_resistance, pin_variant, is_surface_mount, package
+  microcontrollers / arm_processors / risc_v_processors: cpu_core,
+    cpu_speed_hz, flash_size_bytes, ram_size_bytes, gpio_count,
+    supply_voltage_min, supply_voltage_max, has_uart, has_i2c, has_spi,
+    has_usb, has_can, has_adc, package
+  adcs / dacs: resolution_bits, num_channels, sampling_rate_hz,
+    supply_voltage_min, supply_voltage_max, has_spi, has_i2c, package
+  io_expanders: num_gpios, has_i2c, has_spi, has_interrupt, package
+  led_drivers: output_current_max, channel_count, supply_voltage_min,
+    supply_voltage_max, package
+  fpc_connectors: pitch_mm, number_of_contacts, contact_type
+  battery_holders: battery_type, connector_type, package
+  microphones: microphone_type, package
+  accelerometers / gyroscopes: axes, supply_voltage_min, supply_voltage_max,
+    has_i2c, has_spi, package
+  wifi_modules: core_processor, antenna_type, frequency_ghz, package
+  Every category also carries: is_basic, is_preferred, price1, stock.
+  These categories are EMPTY — never use them (use mode "fts"):
+    bjt_transistors, boost_converters, buck_boost_converters, lcd_display,
+    oled_display, led_dot_matrix_display.
+  There is NO inductors category — inductors use mode "fts".
+"""
+
+READ_PROMPT = """\
+You are the reading step of an electronics BOM tool. The engineer just opened
+one of their design's parts. Work out what it actually IS — and hand back the
+search that would find more of it.
+
+Everything the tool knows about this part:
+{dossier}
+
+HOW TO READ IT
+- If "catalog" is present, it is the part's own record from the live parts
+  catalog, fetched with the part number the schematic pins. It is GROUND
+  TRUTH. Do not guess ANYTHING it already tells you:
+    * the package is catalog.package (componentSpecification) — VERBATIM.
+      It may be Chinese ("插件" = through-hole/plug-in, "贴片" = SMD) and it
+      may carry dimensions ("插件,D5xL11mm"). Copy it exactly; it is the only
+      string the index will match.
+    * the value, voltage, tolerance, dielectric, dimensions, pin pitch are in
+      catalog.parameters. Read them off.
+    * confidence should be HIGH (>0.9): you are not guessing, you are reading.
+- The schematic's own words are how the ENGINEER describes the part
+  ("10uF@50V"), and its footprint is a LIBRARY name ("C-E-5", "R-0603").
+  A library footprint name is NOT a catalog package. It never goes in a
+  query — it would match nothing. Use the catalog package if you have one;
+  otherwise normalize the footprint if it plainly denotes a standard package
+  ("R-0603" → "0603", "D-SOD323" → "SOD-323"), and if it does not, leave the
+  package OUT of the query entirely and say what it implies as sieve terms
+  instead (is_polarized, is_surface_mount, mounting_style ...).
+- With no catalog record, read what you can from the designator, the value and
+  the footprint, and be honest about confidence.
+
+WHAT TO HAND BACK
+- "is": one plain-English line naming the part, as an engineer would say it
+  ("10 uF 50 V aluminium electrolytic, through-hole, D5 x 11 mm, 2 mm pitch").
+- "spec": the canonical key — kind, value, package (CATALOG package),
+  qualifier (the ratings: "50V", "X7R", "1%"). Leave value "" if the part
+  genuinely has none (a general-purpose diode); never invent one.
+- "search": the words that go in the search box — what an engineer would type
+  to find this part again. Keep them few and searchable. NEVER put a library
+  footprint name ("C-E-5") or the schematic's punctuation ("10uF@50V") in it.
+- "plan": the query that finds more of this part, ready to fire (same rules as
+  below: only package + one value param actually filter; everything you demand
+  must ALSO be in the sieve).
+
+{index_facts}
+Answer with ONLY this JSON object, no prose, no code fences:
+{{"is": "...",
+  "spec": {{"kind": "...", "value": "...", "package": "...",
+            "qualifier": "..."}},
+  "search": "...",
+  "plan": {{"category": "...", "net": {{}}, "sieve": [
+      {{"field": "...", "op": "eq|ne|lte|gte|lt|gt|contains|isTrue|isFalse",
+        "value": 0}}]}},
+  "rationale": "one short sentence — say if you read it from the catalog",
+  "confidence": 0.0}}
+"""
+
+SEARCH_PROMPT = """\
+You are the search step of an electronics BOM tool. An engineer typed words
+into a parts search box. Turn their words into a query plan.
+
+The design line they typed it against (verbatim from the schematic):
+{context}
+
+What they typed (VERBATIM — this is what they want, it outranks the design
+line if the two disagree; empty means "use the design line"):
+{terms}
+{instruction}
+{index_facts}
+Choose a mode:
+- "code"       they gave a JLC part code (C12345). net {{}}, sieve [].
+- "fts"        they gave a manufacturer part number or a name, or nothing
+               in the catalog's parametric vocabulary fits. category is
+               "components", net is {{"search": "<the words to match>"}}.
+               Keep the words FEW — this index ANDs tokens against part
+               NAMES, so extra words ("resistor", "1%") find nothing.
+- "parametric" the normal case for passives and any part with a category.
+               Put package + the one value param in the net; put EVERY
+               constraint (including those two) in the sieve.
+
+sieve ops: eq, ne, lte, gte, lt, gt, contains, isTrue, isFalse.
+An "or better" reading is your job: 1% → tolerance lte 0.01; 25V → voltage
+gte 25; 1/4W → power_watts gte 250.
+
+lookingFor: your reading of what they want, for the screen — NOT a database
+key, so leave a field "" rather than inventing it.
+say: one short line naming what you searched for, in the engineer's words
+("22k 0603, 1% or better, 1/4W or better"). It is shown above the results.
+confidence: 0..1, honest.
+
+Answer with ONLY this JSON object, no prose, no code fences:
+{{"mode": "parametric|fts|code", "category": "...",
+  "net": {{"package": "...", "resistance": 0}},
+  "sieve": [{{"field": "...", "op": "eq|ne|lte|gte|lt|gt|contains|isTrue|isFalse",
+              "value": 0}}],
+  "lookingFor": {{"kind": "...", "value": "...", "package": "...",
+                  "qualifier": "..."}},
+  "say": "...", "confidence": 0.0}}
+"""
+
+KEY_PROMPT = """\
+You are the bookkeeping step of an electronics BOM tool. The engineer just
+approved a part for a design line. Name the REQUIREMENT that part satisfies
+— the key this shop's approved-parts database (the AVL) files it under, and
+looks it up by in every future design.
+
+The design line (verbatim from the schematic):
+{context}
+
+What the engineer searched for: {terms}
+What the app had remembered for this line: {remembered}
+The part they approved (verified from the catalog):
+{part}
+
+Rules for the key:
+- kind: the lowercase category noun (resistor, capacitor, diode, led, ...).
+- value: the part's defining value — "22k", "100n", "10u". A resistor or a
+  capacitor always has one. A general-purpose diode, a test point, a
+  connector may have NONE: then leave value "". NEVER INVENT ONE — an empty
+  value is a correct answer, a fabricated one poisons every future design.
+  A part number is not a value (that is what the approved part records).
+- package: the catalog package ("0603", "SOD-323"), not the library
+  footprint name ("R-0603", "D-SOD323") — unless nothing standard is
+  recognizable, in which case keep the library name verbatim.
+- qualifier: the RATINGS and requirements that make this need distinct from
+  the same kind/value/package with different demands — "1%", "X7R 50V",
+  "1/4W", "zener 10V", "schottky". If the engineer's search asked for it, it
+  belongs here. Empty when there is nothing to distinguish.
+
+Think about the NEXT design that hits this same requirement: too loose a key
+mounts the wrong part silently; too tight a key makes the shop re-approve
+the same thing forever. Key what the DESIGN needs, not what this one part is.
+
+Answer with ONLY this JSON object, no prose, no code fences:
+{{"spec": {{"kind": "...", "value": "...", "package": "...",
+            "qualifier": "..."}},
+  "rationale": "one short sentence", "confidence": 0.0}}
+"""
+
 
 class ClaudeCLIInterpreter:
     """Interpretation through ``claude -p`` with strict-JSON output."""
@@ -127,6 +353,126 @@ class ClaudeCLIInterpreter:
             "rationale": str(obj.get("rationale") or ""),
         }
 
+    def read_part(self, dossier: dict) -> dict | None:
+        """Work out what a part IS, from everything known. See the protocol."""
+        obj = self._ask(READ_PROMPT.format(
+            dossier=json.dumps(dossier, indent=2, ensure_ascii=False),
+            index_facts=INDEX_FACTS))
+        if obj is None:
+            return None
+        spec = obj.get("spec") or {}
+        try:
+            key = SpecKey(
+                kind=str(spec.get("kind") or "").strip().lower(),
+                value=str(spec.get("value") or "").strip(),
+                package=str(spec.get("package") or "").strip(),
+                qualifier=str(spec.get("qualifier") or "").strip(),
+            ).to_dict()
+        except (ValueError, TypeError):
+            key = None      # couldn't place it — the reading still stands
+        try:
+            confidence = max(0.0, min(1.0, float(obj.get("confidence") or 0.0)))
+        except (TypeError, ValueError):
+            confidence = 0.0
+        return {
+            "is": str(obj.get("is") or "").strip(),
+            "spec": key,
+            "search": str(obj.get("search") or "").strip(),
+            "plan": self._plan({**(obj.get("plan") or {}), "mode": "parametric"}),
+            "rationale": str(obj.get("rationale") or ""),
+            "confidence": confidence,
+        }
+
+    def plan_search(self, ctx: dict) -> dict | None:
+        """Plan a catalog query from the engineer's words. See the protocol."""
+        design = {k: ctx.get(k) for k in ("designator", "value", "footprint")}
+        told: list[str] = []
+        # the engineer's own corrections are ORDERS, not hints: a designator
+        # letter means whatever this shop's library says it means (X is a
+        # connector in one house and a socket in another — you cannot know)
+        convention = ctx.get("convention") or {}
+        if convention.get("kind"):
+            told.append(
+                f"THIS SHOP'S CONVENTION: designator '{convention.get('prefix')}' "
+                f"means a {convention['kind']}"
+                + (f" (category '{convention['category']}')"
+                   if convention.get("category") else "")
+                + " — they told you so; do not second-guess it.")
+        forced = str(ctx.get("category") or "").strip()
+        if forced:
+            told.append(
+                f"THE ENGINEER HAS CHOSEN THE CATEGORY: '{forced}'. Use it, "
+                "exactly. Do not pick another. Build the net and sieve from "
+                "ITS columns."
+                + (" ('components' is the keyword index — use mode 'fts'.)"
+                   if forced == "components" else ""))
+        obj = self._ask(SEARCH_PROMPT.format(
+            context=json.dumps(design, indent=2, ensure_ascii=False),
+            terms=json.dumps(str(ctx.get("terms") or ""), ensure_ascii=False),
+            instruction=("\n" + "\n".join(told) + "\n") if told else "",
+            index_facts=INDEX_FACTS))
+        if obj is None:
+            return None
+        plan = self._plan(obj)
+        if plan and forced and plan["category"] != forced:
+            plan["category"] = forced      # their choice stands, always
+        return plan
+
+    def _plan(self, obj: dict) -> dict | None:
+        mode = str(obj.get("mode") or "").strip().lower()
+        if mode not in ("parametric", "fts", "code"):
+            return None
+        net = obj.get("net")
+        sieve = obj.get("sieve")
+        looking = obj.get("lookingFor") or {}
+        try:
+            confidence = max(0.0, min(1.0, float(obj.get("confidence") or 0.0)))
+        except (TypeError, ValueError):
+            confidence = 0.0
+        return {
+            "mode": mode,
+            "category": str(obj.get("category") or "").strip(),
+            "net": dict(net) if isinstance(net, dict) else {},
+            # a malformed predicate is dropped, never guessed at
+            "sieve": [p for p in (sieve if isinstance(sieve, list) else [])
+                      if isinstance(p, dict) and p.get("field") and p.get("op")],
+            "lookingFor": {k: str(looking.get(k) or "").strip()
+                           for k in ("kind", "value", "package", "qualifier")}
+            if isinstance(looking, dict) else {},
+            "say": str(obj.get("say") or "").strip(),
+            "confidence": confidence,
+        }
+
+    def derive_key(self, ctx: dict) -> dict | None:
+        """Name the requirement a pick satisfies. See the protocol."""
+        design = {k: ctx.get(k) for k in ("designator", "value", "footprint")}
+        obj = self._ask(KEY_PROMPT.format(
+            context=json.dumps(design, indent=2, ensure_ascii=False),
+            terms=json.dumps(str(ctx.get("terms") or ""), ensure_ascii=False),
+            remembered=json.dumps(ctx.get("remembered") or {}, ensure_ascii=False),
+            part=json.dumps(ctx.get("part") or {}, indent=2, ensure_ascii=False)))
+        if obj is None:
+            return None
+        spec = obj.get("spec")
+        if not isinstance(spec, dict):
+            return None
+        try:
+            key = SpecKey(
+                kind=str(spec.get("kind") or "").strip().lower(),
+                value=str(spec.get("value") or "").strip(),
+                package=str(spec.get("package") or "").strip(),
+                qualifier=str(spec.get("qualifier") or "").strip(),
+            )
+        except (ValueError, TypeError):
+            return None   # kind or package missing: no key, the caller says so
+        try:
+            confidence = max(0.0, min(1.0, float(obj.get("confidence") or 0.0)))
+        except (TypeError, ValueError):
+            confidence = 0.0
+        return {"spec": key.to_dict(),
+                "rationale": str(obj.get("rationale") or ""),
+                "confidence": confidence}
+
     def _ask(self, prompt: str) -> dict | None:
         """Run ``claude -p`` and return the extracted JSON object, or None."""
         try:
@@ -148,22 +494,30 @@ class ClaudeCLIInterpreter:
         return _extract_json_object(text)
 
     def _parse(self, obj: dict) -> Interpretation | None:
-        try:
-            spec = SpecKey(
-                kind=str(obj["kind"]).strip().lower(),
-                value=str(obj["value"]).strip(),
-                package=str(obj["package"]).strip(),
-                qualifier=str(obj.get("qualifier") or "").strip(),
-            )
-        except (KeyError, ValueError, TypeError):
-            return None
+        fields = {
+            "kind": str(obj.get("kind") or "").strip().lower(),
+            "value": str(obj.get("value") or "").strip(),
+            "package": str(obj.get("package") or "").strip(),
+            "qualifier": str(obj.get("qualifier") or "").strip(),
+        }
         env = obj.get("envelope") or {}
-        return Interpretation(
-            spec=spec,
+        try:
+            confidence = max(0.0, min(1.0, float(obj.get("confidence") or 0.0)))
+        except (TypeError, ValueError):
+            confidence = 0.0
+        out = Interpretation(
             envelope={k: v for k, v in env.items() if v not in (None, 0, "")},
-            confidence=max(0.0, min(1.0, float(obj.get("confidence") or 0.0))),
+            confidence=confidence,
             rationale=str(obj.get("rationale") or ""),
         )
+        try:
+            out.spec = SpecKey(**fields)
+        except (ValueError, TypeError):
+            # an incomplete reading is knowledge, not failure (a diode with no
+            # schematic VALUE): it prefills the confirm card, and the
+            # interpreter stays alive for every other part
+            out.partial = {k: v for k, v in fields.items() if v}
+        return out
 
 
 def _extract_json_object(text: str) -> dict | None:

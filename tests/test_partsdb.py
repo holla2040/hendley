@@ -414,6 +414,24 @@ def test_interpretation_user_beats_llm_never_reverse(db):
     assert hit["source"] == "user" and hit["result"]["note"] == "user says"
 
 
+def test_interpretation_user_overwrites_user(db):
+    from hendley.knowledge.partsdb import get_interpretation, put_interpretation
+
+    # the Edit spec cure leans on this: a fresh user answer replaces the
+    # previous user answer (only weaker sources are blocked)
+    key = dict(kind_hint="D", raw_value="", footprint="D-SOD323")
+    put_interpretation(db, "part",
+                       {"spec": {"kind": "diode", "value": "1n4148",
+                                 "package": "D-SOD323", "qualifier": ""}},
+                       "user", **key)
+    assert put_interpretation(db, "part",
+                              {"spec": {"kind": "diode", "value": "1n4148",
+                                        "package": "SOD-323", "qualifier": ""}},
+                              "user", **key)
+    hit = get_interpretation(db, "part", **key)
+    assert hit["result"]["spec"]["package"] == "SOD-323"
+
+
 def test_interpretation_bad_source_rejected(db):
     from hendley.knowledge.partsdb import put_interpretation
 

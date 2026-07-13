@@ -18,9 +18,20 @@ Endpoints (all JSON):
 - ``POST /api/intake``            — read the open Fusion design → Requirements BOM
 - ``GET  /api/intake-cache``      — the last intake, interpretation cache re-applied
 - ``POST /api/resolve``           — resolve a Requirements BOM (+ approval queue;
-  ``searches={lineIndex: terms}`` fires the engineer's searches verbatim)
-- ``POST /api/explore``           — free search for a pinned part's alternates,
-  live-verified, plus the agent-judged package for its footprint
+  deterministic auto-discovery only — the engineer's searches are their own act)
+- ``GET  /api/categories``        — every catalog table + the columns a term can
+  be proven against (the search line's part-type popup; no magic words)
+- ``POST /api/search``            — THE search box:
+  ``{terms, lineIndex?, category?, net?, sieve?}``. The agent plans the query
+  from the engineer's words; Python fires it and proves every result against
+  every term (misses come back with the reason), returning the query it sent
+  and the terms it proved. A ``category`` overrides the agent's choice (and is
+  remembered as this shop's convention for that designator letter); a ``sieve``
+  replaces the terms outright — the engineer's query always outranks the
+  agent's. No line = a free catalog search from the overview.
+- ``POST /api/key``               — the agent names the requirement a pick
+  satisfies (the AVL's key), from the design line + the search words + the
+  picked part. The engineer never fills in database fields.
 - ``POST /api/approve``           — record queue answers to the knowledge store
 - ``POST /api/emit``              — gate + export order files (+ snapshot when clean)
 - ``GET  /api/snapshots``         — release snapshots in the output dir
@@ -124,8 +135,9 @@ class HendleyApp:
 
     @staticmethod
     def _spec(params: dict) -> SpecKey:
-        try:
-            return SpecKey(kind=params["kind"], value=params["value"],
+        try:   # 'value' is optional — an unnamed part genuinely has none
+            return SpecKey(kind=params["kind"],
+                           value=params.get("value") or "",
                            package=params["package"],
                            qualifier=params.get("qualifier") or "")
         except (KeyError, ValueError) as exc:
@@ -302,15 +314,22 @@ class HendleyApp:
         interpreter_dead = not consult_interpreter
         out: list[dict] = []
         for i, line in enumerate(requirements.lines):
-            if line.dnp or line.mode is not None:
+            # the schematic names an exact part: nothing to judge
+            if line.dnp or line.mpn or line.provider_refs:
                 continue
             hint = _kind_hint(line.designators[0])
             raw_value = line.comment or ""
             footprint = line.footprint or ""
             cached = store.get_interpretation("part", hint, raw_value, footprint)
             if cached and (cached["result"] or {}).get("spec"):
+                # what was RECORDED for this line outranks any spec already on
+                # it (a read-time guess, or one cached with the last design):
+                # the record is what the approved-parts list is keyed by, so a
+                # line carrying a staler spec would look up nothing at all
                 line.spec = SpecKey.from_dict(cached["result"]["spec"])
                 continue
+            if line.spec is not None:
+                continue        # the normalizer's own reading, nothing recorded
             guess = None
             if not interpreter_dead:
                 if interpreter is None:
@@ -334,34 +353,33 @@ class HendleyApp:
                     continue
                 else:
                     guess = interp
-            out.append({
+            entry = {
                 "lineIndex": i,
                 "designators": line.designators,
                 "kindHint": hint,
                 "value": raw_value,
                 "footprint": footprint,
                 "guess": (guess or Interpretation()).to_dict(),
-            })
+            }
+            # the card must never seed a raw library footprint name as the
+            # package — downstream (seed, package equality, envelope key)
+            # trusts spec.package to be the catalog form. The part judgment
+            # usually read it already; only ask again when it didn't.
+            read_package = bool(
+                guess and ((guess.spec and guess.spec.package)
+                           or guess.partial.get("package")))
+            if footprint and not read_package:
+                judged = self._judged_package(footprint,
+                                              consult=not interpreter_dead)
+                if judged:
+                    entry["judgedPackage"] = judged
+                    row = store.get_interpretation("footprint",
+                                                   footprint=footprint)
+                    env = ((row or {}).get("result") or {}).get("envelope")
+                    if env:
+                        entry["judgedEnvelope"] = env
+            out.append(entry)
         return out
-
-    def api_confirm_spec(self, body: dict) -> dict:
-        """The engineer's one-time answer for an ad-hoc string — authoritative,
-        cached forever, never asked again."""
-        spec = self._spec(body.get("spec") or {})
-        result = {"spec": spec.to_dict()}
-        envelope = body.get("envelope") or {}
-        if envelope:
-            result["envelope"] = envelope
-        store = self._store()
-        store.put_interpretation(
-            "part", result, "user",
-            kind_hint=str(body.get("kindHint") or ""),
-            raw_value=str(body.get("value") or ""),
-            footprint=str(body.get("footprint") or ""))
-        if envelope:
-            store.put_interpretation("footprint", {"envelope": envelope}, "user",
-                                     footprint=spec.package)
-        return result
 
     def api_resolve(self, body: dict) -> dict:
         from ..resolver.orchestration.queue import build_approval_queue
@@ -381,48 +399,226 @@ class HendleyApp:
             result["placements"] = body["placements"]
         out = {"resolution": result}
         if result["escalations"] and datasource is not None:
-            searches = {}
-            for k, v in (body.get("searches") or {}).items():
-                try:
-                    searches[int(k)] = str(v)
-                except (TypeError, ValueError):
-                    continue
+            # only the deterministic auto-discovery runs here; the engineer's
+            # own searches are their own act, on /api/search
             out["queue"] = build_approval_queue(
                 store, requirements, result,
-                datasource=datasource, strategy=strategy, searches=searches)
+                datasource=datasource, strategy=strategy)
         return out
 
-    def api_explore(self, body: dict) -> dict:
-        """Engineer-fired free search, live-verified — alternates for a
-        schematic-pinned part. The terms come from the user verbatim; when a
-        footprint is supplied, results are filtered to the package the AGENT
-        judged it to be (cached forever) — Python only compares."""
-        from ..resolver.orchestration.queue import explore
+    def api_read(self, body: dict) -> dict:
+        """Work out what a part IS — run when the engineer opens it, for EVERY
+        part, whatever the schematic says or doesn't say about it.
 
-        search = str(body.get("search") or "").strip()
-        if not search:
-            raise ApiError("'search' is required")
-        # an explicit package (a spec's agent-normalized one) wins; otherwise
-        # judge the footprint (pinned parts)
-        package = str(body.get("package") or "").strip() or None
-        footprint = str(body.get("footprint") or "").strip()
-        if package is None and footprint:
-            package = self._judged_package(footprint)
-        # everything verified returns; the page splits by package/coverage so
-        # nothing filtered is ever unreachable
-        return {"search": search,
-                "candidates": explore(self._datasource_factory(), search),
-                "package": package}
+        This is the step that fills the search box. It hands the agent every
+        fact the app holds, and the biggest one it never used before: when the
+        design pins a part number, the CATALOG knows the answer. One
+        ``verify()`` call returns the exact MPN, the manufacturer, the real
+        catalog package (``componentSpecification`` — the only string the index
+        will match, and the only place a library footprint like ``C-E-5``
+        becomes ``插件,D5xL11mm``) and the full parameter list. The app already
+        fetched that record to check stock and threw the specs away.
 
-    def _judged_package(self, footprint: str) -> str | None:
+        ``{lineIndex, requirements, code?}`` → the reading. Judged once per
+        part, ever; cached forever."""
+        line = self._search_line(body)
+        if not line:
+            raise ApiError("'lineIndex' must point at a line to read")
+        lines = (body.get("requirements") or {}).get("lines") or []
+        ln = lines[int(body["lineIndex"])]
+        code = str(body.get("code") or
+                   (ln.get("providerRefs") or {}).get("jlcpcb") or "").strip()
+
+        store = self._store()
+        prefix = _kind_hint(line.get("designator") or "")
+        key = {"kind_hint": prefix,
+               # the part number belongs in the key: change it in the schematic
+               # and this is a different part, which must be read again
+               "raw_value": f"{line.get('value') or ''}\x1f{code}",
+               "footprint": line.get("footprint") or ""}
+        cached = store.get_interpretation("read", **key)
+        if cached and (cached["result"] or {}).get("search"):
+            return {"reading": cached["result"], "cached": True}
+
+        dossier = {
+            "schematic": {
+                "designators": ln.get("designators") or [],
+                "prefix": prefix,
+                "value": line.get("value") or "",
+                "footprint": line.get("footprint") or "",
+                "mpn": ln.get("mpn") or "",
+                "code": code,
+            },
+            "catalog": self._catalog_record(code),
+            "convention": self._convention(line.get("designator") or ""),
+        }
+        interpreter = self._interpreter_factory()
+        reader = getattr(interpreter, "read_part", None)
+        reading = reader(dossier) if reader else None
+        if reading is None:
+            # the agent is unavailable: say so, and let the box keep the
+            # schematic's own words rather than block the panel
+            return {"reading": None, "cached": False}
+        store.put_interpretation("read", reading, "llm",
+                                 confidence=reading.get("confidence"), **key)
+        return {"reading": reading, "cached": False}
+
+    def _catalog_record(self, code: str) -> dict | None:
+        """The part's own record from the live catalog — the ground truth we
+        already fetch (to check stock) and used to throw away."""
+        if not code:
+            return None
+        try:
+            fact = self._datasource_factory().verify([code]).get(code)
+        except ApiError:
+            return None                       # no credentials / offline: fine
+        if fact is None or not fact.found:
+            return None
+        d = fact.raw or {}
+        return {
+            "code": code,
+            "mpn": d.get("componentModel"),
+            "manufacturer": fact.manufacturer,
+            "package": d.get("componentSpecification"),
+            "libraryType": d.get("libraryType"),
+            "describe": d.get("describe"),
+            "parameters": {p.get("parameterName"): p.get("parameterValue")
+                           for p in (d.get("parameters") or [])},
+        }
+
+    def api_search(self, body: dict) -> dict:
+        """The search box. The engineer types anything; the AGENT turns it into
+        a query plan; Python fires it and PROVES every result against every
+        term (see resolver/orchestration/search.py — the index silently ignores
+        params it doesn't know, so the query alone proves nothing).
+
+        ``{terms, lineIndex?}`` — no line means a free catalog search from the
+        design overview. The plan is cached: the same words on the same design
+        line never cost a second judgment."""
+        from ..resolver.orchestration.search import run_search
+
+        terms = str(body.get("terms") or "").strip()
+        if not terms:
+            raise ApiError("'terms' is required — type what you want")
+        line = self._search_line(body)
+        category = str(body.get("category") or "").strip()
+        sieve = body.get("sieve")
+        if isinstance(sieve, list):
+            # The engineer edited the terms themselves: fire exactly that, no
+            # judgment call. The terms are now the WHOLE truth — the query is
+            # rebuilt from them, so dropping a term really drops it instead of
+            # the net quietly re-asserting it.
+            from ..resolver.orchestration.search import NET_COLUMNS
+
+            sieve = [p for p in sieve if isinstance(p, dict) and p.get("field")]
+            fts = category == "components" or not category
+            net = {"search": terms} if fts else {
+                param: t["value"]
+                for param, column in NET_COLUMNS.items()
+                for t in sieve
+                if t.get("op") == "eq" and t.get("field") == column
+            }
+            plan = {"mode": "fts" if fts else "parametric",
+                    "category": category or "components",
+                    "net": net, "sieve": sieve, "lookingFor": {},
+                    "say": str(body.get("say") or terms), "confidence": 1.0}
+            judged = False
+        else:
+            plan, judged = self._plan(terms, line, category or None)
+        if category and line.get("designator"):
+            self._remember_convention(line["designator"], category, plan)
+        found = run_search(self._datasource_factory(), plan)
+        return {"terms": terms, "planned": plan, "judged": judged, **found}
+
+    def api_categories(self, params: dict) -> dict:
+        """Every table the catalog publishes, and the columns a search term can
+        be proven against — so the engineer picks, and never has to guess a
+        magic word."""
+        from ..datasources.jlc.alternates import (
+            CATEGORIES,
+            CATEGORY_COLUMNS,
+            EMPTY_CATEGORIES,
+        )
+
+        return {"categories": [
+            {"slug": c, "columns": list(CATEGORY_COLUMNS.get(c, ("package",))),
+             "empty": c in EMPTY_CATEGORIES}
+            for c in sorted(CATEGORIES)]}
+
+    def _remember_convention(self, designator: str, category: str,
+                             plan: dict) -> None:
+        """The engineer overrode the category: that is this shop's convention
+        for that designator letter, recorded for every design from now on. `X`
+        is a connector in one library and a socket in another — only they know
+        which, so their word is final (and re-overridable)."""
+        prefix = _kind_hint(designator)
+        if not prefix:
+            return
+        kind = ((plan.get("lookingFor") or {}).get("kind") or "").strip()
+        self._store().put_interpretation(
+            "designator", {"category": category, "kind": kind, "prefix": prefix},
+            "user", kind_hint=prefix)
+
+    def _convention(self, designator: str) -> dict:
+        prefix = _kind_hint(designator)
+        if not prefix:
+            return {}
+        row = self._store().get_interpretation("designator", kind_hint=prefix)
+        return (row or {}).get("result") or {}
+
+    def _search_line(self, body: dict) -> dict:
+        """The design context the engineer typed against (empty on overview)."""
+        idx = body.get("lineIndex")
+        lines = (body.get("requirements") or {}).get("lines") or []
+        if idx is None or not isinstance(idx, int) or not (0 <= idx < len(lines)):
+            return {}
+        ln = lines[idx]
+        return {"designator": (ln.get("designators") or [""])[0],
+                "value": ln.get("comment") or "",
+                "footprint": ln.get("footprint") or ""}
+
+    def _plan(self, terms: str, line: dict,
+              category: str | None = None) -> tuple[dict, bool]:
+        """The agent's query plan — cached forever per (terms, design line, and
+        any category the engineer forced). Falls back to a verbatim keyword
+        search when the agent is unavailable, and says so rather than
+        pretending the terms were understood."""
+        store = self._store()
+        key = {"kind_hint": _kind_hint(line.get("designator") or ""),
+               # the forced category is part of the question, so a different
+               # answer to it never returns a stale plan
+               "raw_value": f"{terms}\x1f{category}" if category else terms,
+               "footprint": line.get("footprint") or ""}
+        cached = store.get_interpretation("search", **key)
+        if cached and (cached["result"] or {}).get("mode"):
+            return cached["result"], True
+        interpreter = self._interpreter_factory()
+        planner = getattr(interpreter, "plan_search", None)
+        ctx = {**line, "terms": terms, "category": category,
+               "convention": self._convention(line.get("designator") or "")}
+        plan = planner(ctx) if planner else None
+        if plan is None:
+            return ({"mode": "fts", "category": "components",
+                     "net": {"search": terms}, "sieve": [], "lookingFor": {},
+                     "say": f"“{terms}” matched against part names only — "
+                            "the agent isn't available to read your terms",
+                     "confidence": 0.0}, False)
+        store.put_interpretation("search", plan, "llm",
+                                 confidence=plan.get("confidence"), **key)
+        return plan, True
+
+    def _judged_package(self, footprint: str, consult: bool = True) -> str | None:
         """The catalog package for a library footprint name — cache first,
         else one agent judgment, cached forever. '' (nothing standard) is a
-        valid cached answer; None means no judgment available."""
+        valid cached answer; None means no judgment available. With
+        ``consult=False`` only the cache answers (cache loads)."""
         store = self._store()
         cached = store.get_interpretation("footprint", footprint=footprint)
         result = (cached or {}).get("result") or {}
         if "package" in result:
             return result.get("package") or None
+        if not consult:
+            return None
         interpreter = self._interpreter_factory()
         judge = getattr(interpreter, "interpret_footprint", None)
         if judge is None:
@@ -449,6 +645,45 @@ class HendleyApp:
             return {"recorded": apply_approvals(self._store(), approvals)}
         except (KeyError, ValueError) as exc:
             raise ApiError(str(exc))
+
+    def api_key(self, body: dict) -> dict:
+        """Name the requirement a pick satisfies — the AVL's key for it, in
+        every future design. The AGENT decides it, from the design line, the
+        engineer's own search words, and the picked part's verified facts; the
+        engineer is never asked to fill in database fields (that is how a
+        "1000V" once landed in a diode's value). Recorded user-provenance,
+        because the pick is the engineer's act — and a later pick re-keys it.
+
+        ``{lineIndex, requirements, terms, part}`` → ``{spec, rationale}``."""
+        line = self._search_line(body)
+        part = body.get("part") or {}
+        if not part.get("code"):
+            raise ApiError("'part' (the approved part) is required")
+        store = self._store()
+        key = {"kind_hint": _kind_hint(line.get("designator") or ""),
+               "raw_value": line.get("value") or "",
+               "footprint": line.get("footprint") or ""}
+        terms = str(body.get("terms") or "").strip()
+        remembered = (store.get_interpretation("part", **key) or {}).get("result") or {}
+        cached_spec = (remembered.get("spec") or {}) if not terms else {}
+        if cached_spec:   # nothing new was searched — the recorded key stands
+            return {"spec": cached_spec,
+                    "rationale": remembered.get("rationale") or "",
+                    "cached": True}
+        interpreter = self._interpreter_factory()
+        namer = getattr(interpreter, "derive_key", None)
+        judged = namer({**line, "terms": terms, "remembered": remembered,
+                        "part": part}) if namer else None
+        if judged is None:
+            raise ApiError(
+                "the agent isn't available to name this requirement — the pick "
+                "can't be recorded to the approved list right now", status=503)
+        result = {"spec": judged["spec"], "rationale": judged.get("rationale") or ""}
+        if remembered.get("envelope"):
+            result["envelope"] = remembered["envelope"]
+        store.put_interpretation("part", result, "user",
+                                 confidence=judged.get("confidence"), **key)
+        return {**result, "cached": False}
 
     # -- manufacturing -------------------------------------------------------
 
@@ -622,6 +857,7 @@ GET_ROUTES = {
     "/api/rotations": "api_rotations",
     "/api/draft": "api_draft_get",
     "/api/intake-cache": "api_intake_cache",
+    "/api/categories": "api_categories",
 }
 POST_ROUTES = {
     "/api/record": "api_record",
@@ -629,9 +865,10 @@ POST_ROUTES = {
     "/api/remove": "api_remove",
     "/api/refresh": "api_refresh",
     "/api/intake": "api_intake",
-    "/api/confirm-spec": "api_confirm_spec",
     "/api/resolve": "api_resolve",
-    "/api/explore": "api_explore",
+    "/api/read": "api_read",
+    "/api/search": "api_search",
+    "/api/key": "api_key",
     "/api/approve": "api_approve",
     "/api/emit": "api_emit",
     "/api/rotation": "api_rotation",

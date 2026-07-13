@@ -189,7 +189,12 @@ def test_queue_discovers_verifies_filters_and_ranks(tmp_path):
     assert queue["design"] == "comet" and queue["provider"] == "jlcpcb"
     [entry] = queue["entries"]
     assert entry["reason"] == "avl-exhausted" and entry["requiredQty"] == 100
-    assert entry["discovery"] == {"category": "resistors", "automatic": True}
+    # the query it ran is carried back so the page can SHOW it — a lookup
+    # the engineer cannot see is one they cannot correct
+    assert entry["discovery"] == {
+        "category": "resistors", "automatic": True,
+        "query": {"category": "resistors",
+                  "params": {"resistance": 22000, "package": "0603"}}}
     # AVL live stock rides along to seed the review without a re-query
     assert entry["avlChoices"][0]["ref"] == "C_OLD"
     # wrong-package candidate rejected by the constraint engine, with reason

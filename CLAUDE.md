@@ -29,32 +29,65 @@ concrete `providers/*` or `datasources/jlc` — only the base protocols.
 - `src/hendley/app/` — **the app, the primary interface** (ADR-0003/0004):
   `hendley app` serves a stdlib-only local web UI on 127.0.0.1 (`server.py` =
   JSON API 1:1 over library calls; `ui.py` = the single embedded page). One
-  page (2026-07 redesign): left rail = Refresh + board qty + the design's
-  components colored by stock state (green covers / red short / amber needs a
-  spec search / dashed DNP; app-assigned values — no schematic VALUE — carry
-  an `app` tag); click a component → detail panel (one table:
-  the radio picks what mounts — order-only when overriding an approved
-  part, AVL rank 1 on a new spec's first pick — and an **alt checkbox
-  column** grows/prunes the spec's ranked AVL (every approved choice
-  renders checked, the mounted part included — unchecking is the one
-  audited removal path); radio+checkbox changes STAGE and commit only via
-  **Update** on the title line, both undoable in place; opening a panel live-verifies its whole list, `????` when live
-  access is down — never stale-as-current); searches are human-fired
-  (ADR-0006: seeded from the spec, sent verbatim; auto-discovery only where
-  deterministic) and results split into package-confirmed /
-  other-packages / can't-cover buckets; **Search Alternates** (beside
-  Update) reopens the search on saved parts and serves schematic-pinned
-  parts (`/api/explore`, order-only picks); **DNP this run** (title line,
-  immediate like board qty) sits a part out of the current run only —
-  `DNP · this run` in the rail, excluded from export and its gates, restored
-  by **Populate this run**, schematic DNP untouchable; Placement section edits
-  `data/cpl-rotations.json`;
+  page: left rail = Refresh + board qty + the design's components colored by
+  state (green covers / red short-or-unpicked / amber unnamed-part-needs-a-look
+  / dashed DNP). **The rail and panel titles show the DESIGN'S OWN WORDS** —
+  schematic VALUE + library footprint, verbatim (`D6 D7 D8 D9 · D-SOD323`);
+  what the app worked out lives in the panel's read-only `recorded as` line,
+  never in the title (ADR-0007 — the app quoting its own guess back as fact
+  is how a fabricated `1000V` once became "the design").
+  Click a component → detail panel: **the search box (ADR-0007) is on every
+  panel and the overview** — one line: **[part type ▾] [type anything] [Search]**,
+  seeded from what's remembered. The AGENT plans the query (`/api/search`),
+  Python fires it and PROVES every result against every term, showing the
+  say-line, the counts, and every rejected part **with its reason** (`is 100,
+  not ≥ 250`). **Nothing about the query is hidden or fixed**: the part-type
+  popup shows the table actually used and overrides the agent (`auto` = let it
+  read the part; `— no part type —` = keyword-only, and the page warns that
+  words must then be specific); an overridden type is remembered as the shop's
+  convention for that designator letter (`X → connector` — `X` is a connector
+  in one library and a socket in another); and **"the actual search"** shows
+  the literal request + every proven term, each droppable, plus add-a-term
+  (fields offered from `/api/categories`). An edited query fires EXACTLY as
+  given (no agent call) and the request is rebuilt from the terms, so a dropped
+  term can't sneak back in as a net param. Deterministic R/C lookups still
+  auto-run at Refresh — into the same table, showing their query the same way.
+  One table: the radio picks what mounts (order-only when overriding an
+  approved part, AVL rank 1 on a first pick) and an **alt checkbox column**
+  grows/prunes the ranked AVL (every approved choice renders checked, the
+  mounted part included — unchecking is the one audited removal path);
+  radio+checkbox changes STAGE and commit only via **Update** on the title
+  line; opening a panel live-verifies its whole list, `????` when live access
+  is down — never stale-as-current. On Update the **agent names the
+  requirement** (`/api/key` → the AVL SpecKey) from the design line + your
+  search words + the picked part — the engineer never fills in database
+  fields. An **unnamed part** (no VALUE, no MPN) never mounts silently: amber,
+  says which part and why, one Update per design (draft `acks`).
+  **DNP this run** (title line, immediate like board qty) sits a part out of
+  the current run only — `DNP · this run` in the rail, excluded from export and
+  its gates, restored by **Populate this run**, schematic DNP untouchable;
+  Placement section edits `data/cpl-rotations.json`;
   Export BOM/CPL in the title bar stays disabled until all rows are green
   (Chromium: standard folder picker for the copies). Page load repopulates
   from the last read (`~/.hendley/design-cache.json`) with all corrections
-  re-applied; picks/searches/qty/per-run DNPs persist via the server-side draft
-  (`~/.hendley/draft.json`, cleared on clean export). Zero new dependencies.
-- `src/hendley/domain/model.py` — the canonical vocabulary: `SpecKey`,
+  re-applied; picks/searches/qty/per-run DNPs/acks persist via the server-side
+  draft (`~/.hendley/draft.json`, cleared on clean export). Zero new
+  dependencies.
+- `src/hendley/resolver/orchestration/search.py` — **the search executor
+  (ADR-0007): a coarse net, then an honest sieve.** jlcsearch honours only
+  `package` + one value param (`resistance`/`capacitance`) and **silently
+  ignores every other param** — ask it for X7R/25V and it returns a 100n/50V
+  X5R part with no complaint, so a query proves NOTHING. `run_search()` fires
+  the agent's `net`, live-verifies every hit, then proves each candidate
+  against every `sieve` term by pure comparison over data we hold (index typed
+  columns → `attributes` JSON → verified `parameters`). Unprovable = a
+  **miss** (with the reason), never a pass. Every net param is re-asserted in
+  the sieve (`NET_COLUMNS`) so a dropped param can't leak a wrong part.
+  Python compares; it never parses a value or composes a query.
+- `src/hendley/domain/model.py` — the canonical vocabulary: `SpecKey`
+  (**`kind` + `package` required; `value` OPTIONAL** — a general-purpose diode
+  has none, and a key that demands one only ever gets a fabricated answer,
+  ADR-0007; the agent derives the key, the engineer never types it),
   `RequirementLine` (one selection mode: spec | mpn | provider refs; `dnp`
   carried), `RequirementsBom` (versioned JSON, `requirementsBomVersion: 1`),
   `Check` + the `CHECKS` severity table (error blocks upload / warning /
@@ -64,16 +97,29 @@ concrete `providers/*` or `datasources/jlc` — only the base protocols.
   designator grouping, DNP flag, LCSC/MPN pass-through, and auto-spec for
   generic R/C/L via `specs.py` — deterministic ONLY for the trivially
   unambiguous; do NOT grow its regexes: ambiguity belongs to the AI tier).
-- `src/hendley/ai/` — the interpretation tier (ADR-0005/0006): `Interpreter`
-  protocol + `claude_cli.py` (`claude -p`, rides the subscription,
-  `HENDLEY_CLAUDE_BIN` override). Judges ad-hoc values (`47u/50V` → value
-  `47u`, qualifier `50V`) and footprint names — **normalizing to catalog
-  packages** (`D-SOD323` → `SOD-323`, `C-0603` → `0603`; verbatim only when
-  nothing standard is recognizable, e.g. `C-E-5` → physical envelope).
+- `src/hendley/ai/` — the interpretation tier (ADR-0005/0006/0007):
+  `Interpreter` protocol + `claude_cli.py` (`claude -p`, rides the
+  subscription, `HENDLEY_CLAUDE_BIN` override). Four judgments, all cached:
+  `interpret_part` (ad-hoc values: `47u/50V` → value `47u`, qualifier `50V`),
+  `interpret_footprint` (**normalize to catalog packages**: `D-SOD323` →
+  `SOD-323`, `C-0603` → `0603`; verbatim only when nothing standard is
+  recognizable, e.g. `C-E-5`), **`plan_search`** (the engineer's words → a
+  catalog query plan: `net` + `sieve` + `say`; the prompt carries the MEASURED
+  index facts — which params actually filter, `power_watts` is milliwatts —
+  because a hallucinated param is silently ignored and looks like a filter),
+  and **`derive_key`** (the AVL's SpecKey for a pick, from the design line +
+  search words + the picked part's verified facts; leaves `value` empty when
+  the part has none — never invents one).
   `interpret_footprint()` serves schematic-pinned parts. Every judgment is
   cached in the DB (`interpretations`, provenance user > llm >
   deterministic — user answers are never overwritten or re-asked); failures
   degrade to one-time confirm cards in the app, never break the flow.
+  **An incomplete reading is knowledge, not failure**: a diode with no
+  schematic VALUE comes back as `Interpretation(spec=None, partial={kind,
+  package})` — it prefills the confirm card (only the value is the
+  engineer's ask) and the interpreter stays alive for the rest of the
+  design. `None` means the INTERPRETER is unavailable, and only then does
+  the caller stop asking it.
   **Standing rule (ADR-0006): judgment belongs to Claude and the engineer;
   Python never composes searches, invents filters, or parses names.**
 - `src/hendley/knowledge/partsdb.py` — the house-parts DB (SQLite v4 at
@@ -201,11 +247,15 @@ concrete `providers/*` or `datasources/jlc` — only the base protocols.
   interpreter): `test_auth.py` (signing, pinned to the Java SDK algorithm),
   `test_fusion.py` (parts-export ingest contract), `test_pcba.py` +
   `test_pcba_golden.py` (BOM/CPL builders; byte-identical end-to-end gate),
-  `test_app.py` (the JSON API over a real HTTP server: intake → resolve →
-  approve → emit, interpretation caching), `test_app_draft_rotations.py`
-  (rotations/draft/design-cache/explore endpoints), `test_queue_discovery.py`
-  (deterministic-only auto-discovery, verbatim human searches),
-  `test_datasources_jlc.py` (manufacturer brand-slug parsing), plus
+  `test_app.py` (the JSON API over a real HTTP server: intake → search →
+  key → approve → emit, interpretation caching, the recorded key outranking a
+  stale spec), **`test_search_executor.py`** (the sieve's honesty: an index
+  that silently ignores a param must not leak a wrong part; an uncheckable
+  term is a miss, never a pass; units are never guessed at),
+  `test_app_draft_rotations.py` (rotations/draft/design-cache/overview
+  search), `test_queue_discovery.py`
+  (deterministic-only auto-discovery), `test_datasources_jlc.py`
+  (manufacturer brand-slug parsing), plus
   `test_domain/normalizer/specs/partsdb/resolve/resolver_engines/providers/
   bom/snapshot/alternates/scr/ai`. Fixtures must pass tmp `db_path`,
   `draft_path`, and `cache_path` — tests never touch `~/.hendley`.

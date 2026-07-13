@@ -95,6 +95,104 @@ CATEGORIES: tuple[str, ...] = (
     "wire_to_board_connectors",
 )
 
+# The filterable columns each category publishes, as MEASURED from the index
+# (probed live, 2026-07-13). These are what a search term can be PROVEN against
+# — the engineer picks from them when editing a query, so nobody has to guess a
+# field name. Traps worth knowing: ``power_watts`` is milliwatts (0603 = 100),
+# ``tolerance_fraction`` 0.01 means ±1%. Categories absent here publish nothing
+# beyond ``package`` (or are empty in the index — use keyword search).
+CATEGORY_COLUMNS: dict[str, tuple[str, ...]] = {
+    "resistors": ("resistance", "tolerance_fraction", "power_watts", "package",
+                  "max_overload_voltage", "is_surface_mount", "is_basic"),
+    "resistor_arrays": ("resistance", "tolerance_fraction", "power_watts",
+                        "package", "number_of_resistors", "number_of_pins",
+                        "topology"),
+    "capacitors": ("capacitance_farads", "tolerance_fraction", "voltage_rating",
+                   "temperature_coefficient", "package", "esr_ohms",
+                   "ripple_current_amps", "is_polarized", "capacitor_type"),
+    "diodes": ("forward_voltage", "reverse_voltage", "forward_current",
+               "power_dissipation_watts", "recovery_time_ns", "diode_type",
+               "is_schottky", "is_zener", "is_tvs", "package", "configuration"),
+    "leds": ("color", "wavelength_nm", "forward_voltage", "forward_current",
+             "luminous_intensity_mcd", "viewing_angle_deg",
+             "power_dissipation_mw", "lens_color", "is_rgb", "package"),
+    "mosfets": ("drain_source_voltage", "continuous_drain_current",
+                "gate_threshold_voltage", "power_dissipation", "package"),
+    "fuses": ("current_rating", "voltage_rating", "response_time",
+              "is_resettable", "is_surface_mount", "package"),
+    "ldos": ("output_voltage_min", "output_voltage_max", "output_current_max",
+             "dropout_voltage", "input_voltage_min", "input_voltage_max",
+             "quiescent_current", "output_type", "topology", "package"),
+    "voltage_regulators": ("output_voltage_min", "output_voltage_max",
+                           "output_current_max", "dropout_voltage",
+                           "input_voltage_min", "input_voltage_max",
+                           "quiescent_current", "topology", "package"),
+    "headers": ("pitch_mm", "num_pins", "num_rows", "num_pins_per_row", "gender",
+                "is_right_angle", "is_shrouded", "current_rating_amp", "package"),
+    "jst_connectors": ("pitch_mm", "num_pins", "num_rows", "reference_series",
+                       "package"),
+    "wire_to_board_connectors": ("pitch_mm", "num_pins", "num_rows",
+                                 "num_pins_per_row", "reference_series", "gender",
+                                 "mounting_style", "is_smd", "package"),
+    "fpc_connectors": ("pitch_mm", "number_of_contacts", "contact_type"),
+    "usb_c_connectors": ("number_of_contacts", "number_of_ports",
+                         "current_rating_a", "gender", "mounting_style",
+                         "package"),
+    "switches": ("switch_type", "circuit", "current_rating_a", "voltage_rating_v",
+                 "is_latching", "pin_count", "package"),
+    "relays": ("relay_type", "contact_form", "coil_voltage", "coil_resistance",
+               "max_switching_current", "max_switching_voltage", "package"),
+    "potentiometers": ("max_resistance", "pin_variant", "is_surface_mount",
+                       "package"),
+    "battery_holders": ("battery_type", "connector_type", "package"),
+    "microcontrollers": ("cpu_core", "cpu_speed_hz", "flash_size_bytes",
+                         "ram_size_bytes", "gpio_count", "supply_voltage_min",
+                         "supply_voltage_max", "has_uart", "has_i2c", "has_spi",
+                         "has_usb", "has_can", "has_adc", "package"),
+    "arm_processors": ("cpu_core", "cpu_speed_hz", "flash_size_bytes",
+                       "ram_size_bytes", "gpio_count", "package"),
+    "risc_v_processors": ("cpu_core", "cpu_speed_hz", "flash_size_bytes",
+                          "ram_size_bytes", "gpio_count", "package"),
+    "adcs": ("resolution_bits", "num_channels", "sampling_rate_hz",
+             "supply_voltage_min", "supply_voltage_max", "has_spi", "has_i2c",
+             "package"),
+    "dacs": ("resolution_bits", "num_channels", "settling_time_us",
+             "supply_voltage_min", "supply_voltage_max", "package"),
+    "io_expanders": ("num_gpios", "has_i2c", "has_spi", "has_interrupt",
+                     "package"),
+    "led_drivers": ("output_current_max", "channel_count", "supply_voltage_min",
+                    "supply_voltage_max", "package"),
+    "analog_switches": ("num_channels", "on_resistance_ohms",
+                        "supply_voltage_min", "supply_voltage_max",
+                        "channel_type", "package"),
+    "analog_multiplexers": ("num_channels", "num_bits", "on_resistance_ohms",
+                            "supply_voltage_min", "supply_voltage_max",
+                            "channel_type", "package"),
+    "accelerometers": ("axes", "supply_voltage_min", "supply_voltage_max",
+                       "has_i2c", "has_spi", "package"),
+    "gyroscopes": ("axes", "supply_voltage_min", "supply_voltage_max", "has_i2c",
+                   "has_spi", "package"),
+    "microphones": ("microphone_type", "package"),
+    "wifi_modules": ("core_processor", "antenna_type", "frequency_ghz",
+                     "operating_voltage", "package"),
+    "fpgas": ("logic_elements", "embedded_ram_bits", "supply_voltage_min",
+              "supply_voltage_max", "package"),
+    "led_segment_display": ("positions", "type", "size", "color", "package"),
+    "led_with_ic": ("forward_voltage", "forward_current", "color", "protocol",
+                    "package"),
+    "gas_sensors": ("sensor_type", "measures_co2", "measures_air_quality",
+                    "package"),
+    "pcie_m2_connectors": ("key", "is_right_angle"),
+    "components": ("package", "category", "subcategory", "is_basic"),
+}
+
+# Categories the index publishes but which are EMPTY (probed live) — searching
+# them returns nothing, so a keyword search is the honest fallback.
+EMPTY_CATEGORIES: tuple[str, ...] = (
+    "bjt_transistors", "boost_converters", "buck_boost_converters",
+    "lcd_display", "oled_display", "led_dot_matrix_display",
+)
+
 # A fetch callable: (url, params) -> decoded JSON dict. Injectable for tests.
 Fetch = Callable[[str, dict[str, Any]], Any]
 
@@ -163,9 +261,14 @@ def fetch_candidates(
 ) -> list[dict]:
     """Discover candidate parts from jlcsearch for one category.
 
-    Returns the rows **in the index's own order** (no re-ranking) normalised to a
-    small common shape. ``params`` are passed through verbatim (jlcsearch ignores
-    unknown keys), so the caller controls the hard filter.
+    Returns the rows **in the index's own order** (no re-ranking), normalised
+    to a small common shape and carrying **every typed column the category
+    publishes** (``resistance``, ``tolerance_fraction``,
+    ``temperature_coefficient``, ``is_zener``, …). Those columns are the only
+    honest way to filter: ``params`` are passed through verbatim and jlcsearch
+    SILENTLY IGNORES the ones it doesn't know, so a query cannot be trusted to
+    have filtered — the caller proves each row against the columns instead
+    (``resolver/orchestration/search.py``).
     """
     url = f"{JLCSEARCH_BASE.rstrip('/')}/{category}/list.json"
     doc = fetch(url, params)
@@ -174,8 +277,11 @@ def fetch_candidates(
     for r in rows:
         if not isinstance(r, dict):
             continue
+        columns = {k: v for k, v in r.items()
+                   if k not in ("lcsc", "stock", "attributes")}
         out.append(
             {
+                **columns,   # the category's typed columns, verbatim
                 "code": normalize_code(r.get("lcsc")),
                 "mfr": r.get("mfr"),
                 "package": r.get("package"),

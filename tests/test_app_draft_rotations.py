@@ -141,12 +141,12 @@ def test_intake_cache_repopulates_with_later_corrections(tmp_path):
     assert ccard["guess"]["spec"]["kind"] == "capacitor"
     assert interp.calls == calls
 
-    # the answer arrives after the read (the Search gesture) …
-    app.api_confirm_spec({
-        "kindHint": card["kindHint"], "value": card["value"],
-        "footprint": card["footprint"],
-        "spec": {"kind": "capacitor", "value": "47u", "package": "C-E-5",
-                 "qualifier": "50V"}})
+    # the answer arrives after the read — the engineer picked a part, and the
+    # AGENT named the requirement from it (no form was ever shown)
+    app.api_key({
+        "lineIndex": card["lineIndex"], "requirements": intake["requirements"],
+        "terms": "47u 50V electrolytic",
+        "part": {"code": "C_E", "mpn": "EEU-FR1H470", "package": "C-E-5"}})
     # … and the repopulated design carries it
     cached = app.api_intake_cache({})["cached"]
     assert cached["uninterpreted"] == []
@@ -156,106 +156,81 @@ def test_intake_cache_repopulates_with_later_corrections(tmp_path):
     assert interp.calls == calls
 
 
-def test_explore_returns_only_verified_candidates(tmp_path):
+def test_intake_cache_keeps_the_judged_package_without_new_calls(tmp_path):
+    from test_app import FakeSource, JudgingInterpreter, MysteryBridge
+
+    interp = JudgingInterpreter(package="SMD-5x5")
+    app = HendleyApp(db_path=tmp_path / "parts.db", outdir=tmp_path / "out",
+                     datasource_factory=lambda: FakeSource({}),
+                     bridge_factory=lambda host: MysteryBridge(),
+                     interpreter_factory=lambda: interp,
+                     rotations_path=tmp_path / "rot.json",
+                     draft_path=tmp_path / "draft.json",
+                     cache_path=tmp_path / "cache.json")
+    intake = app.api_intake({"productionQuantity": 5})
+    [card] = intake["uninterpreted"]
+    assert card["judgedPackage"] == "SMD-5x5"
+    calls = interp.footprint_calls
+
+    # a cache load answers from the cache alone — judgment included
+    cached = app.api_intake_cache({})["cached"]
+    [ccard] = cached["uninterpreted"]
+    assert ccard["judgedPackage"] == "SMD-5x5"
+    assert ccard["judgedEnvelope"] == {"mount": "smd"}
+    assert interp.footprint_calls == calls
+
+
+class _Planner:
+    """Plans whatever it is asked; counts the judgments."""
+
+    name = "planner"
+
+    def __init__(self):
+        self.calls = 0
+
+    def plan_search(self, ctx):
+        self.calls += 1
+        return {"mode": "fts", "category": "components",
+                "net": {"search": ctx["terms"]}, "sieve": [],
+                "lookingFor": {}, "say": "by name", "confidence": 0.9}
+
+
+def test_the_catalog_is_searchable_without_opening_a_part(tmp_path):
+    # the overview's box: no design line, no spec, no recording — just a
+    # verified answer to "what is out there"
     from test_app import FakeSource
 
+    planner = _Planner()
     src = FakeSource(stocks={"C1": 500},
                      discovered=[{"code": "C1"}, {"code": "C_GONE"}])
     app = HendleyApp(db_path=tmp_path / "parts.db",
                      datasource_factory=lambda: src,
+                     interpreter_factory=lambda: planner,
                      draft_path=tmp_path / "draft.json",
                      cache_path=tmp_path / "cache.json")
-    got = app.api_explore({"search": "zener 10V"})
-    assert got["search"] == "zener 10V"
+    got = app.api_search({"terms": "zener 10V"})     # no lineIndex
+    assert got["terms"] == "zener 10V"
     assert [c["code"] for c in got["candidates"]] == ["C1"]  # C_GONE unverified
     assert got["candidates"][0]["manufacturer"] == "MFR-C1"
-    with pytest.raises(ApiError, match="search"):
-        app.api_explore({})
+    assert got["misses"][0]["code"] == "C_GONE"
+    with pytest.raises(ApiError, match="terms"):
+        app.api_search({})
 
 
-class _PackageSource:
-    """Verified candidates with per-code packages, for the explore filter."""
+def test_a_plan_is_judged_once_per_words_and_line(tmp_path):
+    from test_app import FakeSource
 
-    name = "pkg"
-
-    def __init__(self, packages: dict):
-        self.packages = packages
-
-    def discover(self, query):
-        return [{"code": c} for c in self.packages]
-
-    def verify(self, refs):
-        from hendley.datasources.base import PartFact
-
-        return {r: PartFact(
-            ref=r, found=True, stock=1000, mpn=f"MPN-{r}",
-            price_tiers=[{"startQuantity": 1, "unitPrice": 0.01}],
-            raw={"componentCode": r, "componentModel": f"MPN-{r}",
-                 "componentSpecification": self.packages[r],
-                 "stockCount": 1000, "libraryType": "Basic",
-                 "priceRanges": [{"startQuantity": 1, "unitPrice": 0.01}],
-                 "parameters": []},
-            provenance=self.name) for r in refs}
-
-
-class _FootprintJudge:
-    def __init__(self, package="0603", confidence=0.9):
-        self.calls = 0
-        self.package = package
-        self.confidence = confidence
-
-    def interpret_footprint(self, footprint):
-        self.calls += 1
-        return {"package": self.package, "envelope": {"mount": "smd"},
-                "confidence": self.confidence, "rationale": "chip size"}
-
-
-def test_explore_filters_to_the_agent_judged_package(tmp_path):
-    judge = _FootprintJudge()
+    planner = _Planner()
     app = HendleyApp(db_path=tmp_path / "parts.db",
-                     datasource_factory=lambda: _PackageSource(
-                         {"C_0603": "0603", "C_0805": "0805"}),
-                     interpreter_factory=lambda: judge,
+                     datasource_factory=lambda: FakeSource({"C1": 5}),
+                     interpreter_factory=lambda: planner,
                      draft_path=tmp_path / "draft.json",
                      cache_path=tmp_path / "cache.json")
-    got = app.api_explore({"search": "4.7u", "footprint": "C-0603"})
-    assert got["package"] == "0603"
-    # ALL verified candidates return — the page does the package split,
-    # so nothing filtered is ever unreachable
-    assert [c["code"] for c in got["candidates"]] == ["C_0603", "C_0805"]
-    assert judge.calls == 1
-
-    # judged once, ever — the cache answers from now on
-    app.api_explore({"search": "4.7u", "footprint": "C-0603"})
-    assert judge.calls == 1
-
-
-def test_explore_explicit_package_skips_the_judgment(tmp_path):
-    # a spec line's package is already agent-normalized — no interpreter call
-    def no_interpreter():
-        raise AssertionError("interpreter must not be consulted")
-
-    app = HendleyApp(db_path=tmp_path / "parts.db",
-                     datasource_factory=lambda: _PackageSource(
-                         {"C_0603": "0603", "C_0805": "0805"}),
-                     interpreter_factory=no_interpreter,
-                     draft_path=tmp_path / "draft.json",
-                     cache_path=tmp_path / "cache.json")
-    got = app.api_explore({"search": "100n", "package": "0603"})
-    assert got["package"] == "0603"
-    assert len(got["candidates"]) == 2   # all returned; the page splits
-
-
-def test_explore_low_confidence_judgment_means_no_filter(tmp_path):
-    judge = _FootprintJudge(confidence=0.4)
-    app = HendleyApp(db_path=tmp_path / "parts.db",
-                     datasource_factory=lambda: _PackageSource(
-                         {"C_0603": "0603", "C_0805": "0805"}),
-                     interpreter_factory=lambda: judge,
-                     draft_path=tmp_path / "draft.json",
-                     cache_path=tmp_path / "cache.json")
-    got = app.api_explore({"search": "4.7u", "footprint": "C-WEIRD"})
-    assert got["package"] is None and len(got["candidates"]) == 2
+    app.api_search({"terms": "1n4148ws"})
+    app.api_search({"terms": "1n4148ws"})
+    assert planner.calls == 1        # cached forever
+    app.api_search({"terms": "1n4148 sod-123"})
+    assert planner.calls == 2        # different words, a new judgment
 
 
 def test_part_verify_refreshes_live_stock(tmp_path):

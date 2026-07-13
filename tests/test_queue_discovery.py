@@ -57,7 +57,8 @@ def test_human_search_fires_verbatim_at_the_fts_index():
     [q] = src.queries
     assert q["category"] == "components"
     assert q["params"] == {"search": "zener 10V sot-23"}   # verbatim, no edits
-    assert used == "zener 10V sot-23"
+    assert used == {"category": "components",
+                    "params": {"search": "zener 10V sot-23"}}
     assert [r["code"] for r in rows] == ["C353563"]
 
 
@@ -87,4 +88,5 @@ def test_chip_package_without_a_category_uses_the_search_not_a_crash():
                                       search="ferrite bead 600R 0603")
     [q] = src.queries
     assert q["category"] == "components"
-    assert used == "ferrite bead 600R 0603"
+    assert used == {"category": "components",
+                    "params": {"search": "ferrite bead 600R 0603"}}

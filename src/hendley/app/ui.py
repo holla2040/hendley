@@ -97,10 +97,32 @@ body.busy, body.busy * { cursor:wait !important; }
                  border:1px dashed var(--line); }
 .comp.st-na    { background:var(--panel); color:var(--silk); }
 .comp.sel { outline:2px solid var(--pad); outline-offset:2px; }
-/* value assigned in the app, not read from the schematic (rail + overview) */
-.app-tag { font:700 9.5px var(--mono); letter-spacing:.06em;
-  background:var(--pad); color:#1A1406; border-radius:3px; padding:1px 4px;
-  margin-left:6px; }
+
+/* the search line — part type, what you want, Search */
+.sect.search { border-top:1px solid var(--line); padding-top:14px; }
+.sect.search .form { gap:10px; }
+select.cat { font:12px var(--mono); max-width:210px; }
+input.grow { flex:1 1 auto; min-width:240px; font:13px var(--mono); }
+/* the agent is reading this part: the box says so, and pulses while it does */
+input.grow.working { color:var(--pad); border-color:var(--pad);
+  animation:pulse 1.4s ease-in-out infinite; }
+input.grow.working::placeholder { color:var(--pad); opacity:1; }
+@keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:.45; } }
+.say { font:13px var(--mono); color:var(--pad); margin:12px 0 0; }
+.say .count { color:var(--tin); font-size:12px; margin-left:10px; }
+
+/* the query, laid bare and editable */
+details.query { margin:8px 0 0; }
+details.query > summary { cursor:pointer; color:var(--tin);
+  font:12px var(--mono); }
+details.query > summary:hover { color:var(--pad); }
+details.query .req { font:12.5px var(--mono); color:var(--silk); margin:10px 0; }
+details.query .req .mono { color:var(--pad); }
+table.terms td { padding:3px 12px 3px 0; border:none; font-size:12.5px; }
+table.terms td.op { color:var(--pad); text-align:center; }
+.form.addterm { margin-top:8px; gap:8px; }
+.form.addterm input { font:12px var(--mono); max-width:180px; }
+.form.addterm select { font:12px var(--mono); }
 
 /* ---- main / detail --------------------------------------------------------- */
 .panel { padding:12px 30px 60px; }
@@ -151,9 +173,10 @@ tr.linkrow:hover td { background:rgba(217,164,65,.06); }
 .btn.mini { padding:2px 9px; font-size:11px; margin-left:8px;
   white-space:nowrap; }
 details.unconf { margin-top:12px; }
-details.unconf > summary { cursor:pointer; color:var(--tin);
-  font:12px var(--mono); }
-details.unconf > summary:hover { color:var(--pad); }
+details.unconf > summary { cursor:pointer; color:var(--pad);
+  border:1px solid var(--pad); border-radius:4px; padding:4px 10px;
+  width:max-content; font:600 12px var(--mono); }
+details.unconf > summary:hover { background:rgba(217,164,65,.12); }
 .note { color:var(--tin); font-size:12.5px; margin:10px 0 0; }
 .alert { color:var(--err); font-size:13px; margin:10px 0; }
 input[type=radio], input[type=checkbox] { accent-color:var(--pad);
@@ -235,8 +258,16 @@ const S = {
   avlCache: {},        // spec JSON -> housePart (this session)
   searches: {},        // lineKey -> the engineer's search terms (draft-persisted)
   manualDnp: {},       // lineKey -> true — DNP for this run only (draft-persisted)
-  exploring: {},       // lineKey -> the pinned part's explore panel is open
-  exploreResults: {},  // lineKey -> live-verified explore candidates (session)
+  acks: {},            // lineKey -> the unnamed part was looked at (draft)
+  results: {},         // lineKey ("" = overview) -> the last search's result
+  busySearch: null,    // lineKey currently searching
+  categories: [],      // the catalog's tables + their filterable columns
+  catPick: {},         // lineKey -> the part type YOU chose ("" = auto)
+  showQuery: false,    // the query panel stays open once you open it
+  readings: {},        // lineKey -> what the agent read this part to BE
+  reading: null,       // lineKey being read right now
+  typed: {},           // lineKey -> what YOU typed in the box (session only —
+                       // the app's own seed is never stored as if you typed it)
   staged: {},          // lineKey -> {radio, checks:{code:bool}} — UNSAVED
                        // selections; nothing writes until Update is pressed
   altSort: {key: null, dir: -1},  // alternates sort: "stock" | "price"
@@ -257,11 +288,6 @@ function unitStr(u) { return u == null ? "—" : String(u); }
 function qty() { return Math.max(1, parseInt($("qty").value || "1", 10) || 1); }
 function provider() { return $("provider").value; }
 function lineKey(line) { return line.designators.join(","); }
-function specStr(spec) {
-  if (!spec) return "";
-  return [spec.kind, spec.value, spec.package, spec.qualifier]
-    .filter(Boolean).join(" · ");
-}
 function specQS(spec) {
   return "kind=" + encodeURIComponent(spec.kind) +
     "&value=" + encodeURIComponent(spec.value) +
@@ -299,8 +325,10 @@ async function hydrate(data, readAt) {
   S.overrides = {};
   S.searches = {};
   S.manualDnp = {};
-  S.exploring = {};
-  S.exploreResults = {};
+  S.acks = {};
+  S.results = {};
+  S.readings = {};
+  S.typed = {};
   S.staged = {};
   if (d.draft) {
     if (d.draft.productionQuantity) $("qty").value = d.draft.productionQuantity;
@@ -311,6 +339,8 @@ async function hydrate(data, readAt) {
       if (valid.has(k)) S.searches[k] = v;
     for (const k of Object.keys(d.draft.manualDnp || {}))
       if (valid.has(k)) S.manualDnp[k] = true;
+    for (const k of Object.keys(d.draft.acks || {}))
+      if (valid.has(k)) S.acks[k] = true;
   }
   try { S.rotations = (await api("/api/rotations")).corrections; }
   catch (e) { S.rotations = []; }
@@ -365,21 +395,55 @@ function effectiveRequirements() {
   return req;
 }
 
+/* resolve = the approved-parts database answering the design. Searches are
+   the engineer's own act (/api/search) and never ride along here — nothing
+   is ever queried behind their back. */
 async function resolveNow() {
-  const searches = {};
-  S.requirements.lines.forEach((ln, idx) => {
-    const t = S.searches[lineKey(ln)];
-    if (t) searches[idx] = t;
-  });
   const data = await api("/api/resolve", {
     requirements: effectiveRequirements(),
-    placements: S.placements, provider: provider(), searches: searches});
+    placements: S.placements, provider: provider()});
   S.resolution = data.resolution;
   S.queue = data.queue || null;
   S.altSort = {key: null, dir: -1};
   S.staged = {};   // committed state changed — staged diffs are stale
+  adoptAutoLookups();
   render();
   saveDraft();
+}
+
+/* A dense R/C value on a chip package needs no judgment, so the app looks it
+   up without being asked. It still lands in the SAME results table as your
+   own searches, under a line saying what it looked up — a part list with no
+   query attached to it is exactly the thing you can't check. */
+function adoptAutoLookups() {
+  for (const q of ((S.queue || {}).entries || [])) {
+    const rl = S.requirements.lines[q.lineIndex];
+    if (!rl || !rl.spec) continue;
+    const key = lineKey(rl);
+    if (S.results[key]) continue;          // your own search always wins
+    if (!(q.discovery || {}).automatic) continue;
+    const reasons = (c, k) => (c[k] || []).map(w => ({field: "package", why: w}));
+    const query = (q.discovery || {}).query || null;
+    S.results[key] = {
+      terms: "",
+      planned: {say: [rl.spec.value, rl.spec.package].filter(Boolean).join(" ") +
+        " — looked up from the schematic, you didn’t have to ask",
+        category: (q.discovery || {}).category},
+      // the app ran this one unasked, so it owes you the query all the more —
+      // every constraint it enforced, listed and droppable like any other
+      query: query,
+      proved: Object.entries((query || {}).params || {}).map(
+        ([k, v]) => ({field: NET_COL[k] || k, op: "eq", value: v})),
+      candidates: [].concat(q.proposal || [], q.alsoFound || []),
+      misses: [].concat(
+        (q.fitUnconfirmed || []).map(c =>
+          ({...c, failed: reasons(c, "fitUnknownBecause")})),
+        (q.rejectedCandidates || []).map(c =>
+          ({...c, failed: reasons(c, "rejectedBecause")}))),
+      scanned: (q.candidates || []).length + (q.rejectedCandidates || []).length +
+               (q.fitUnconfirmed || []).length,
+      truncated: false};
+  }
 }
 
 function saveDraft() {
@@ -389,6 +453,7 @@ function saveDraft() {
     overrides: S.overrides,
     searches: S.searches,
     manualDnp: S.manualDnp,
+    acks: S.acks,
     savedAt: new Date().toISOString(),
   }}).catch(() => {});   // draft is a convenience — never break the flow
 }
@@ -405,10 +470,24 @@ function queueFor(i) {
 function uninterpFor(i) {
   return S.uninterpreted.find(u => u.lineIndex === i) || null;
 }
+/* THE SCHEMATIC never named this part — no VALUE, no MPN, just a footprint.
+   Whatever the app remembers for it is a guess about intent (the same
+   footprint in the next design could be a different device), so it never
+   mounts silently: one look, one Update, per design. */
+function unnamed(i) {
+  const rl = S.requirements.lines[i];
+  return !rl.comment && !rl.mpn &&
+    !Object.keys(rl.providerRefs || {}).length;
+}
+function needsAck(i) {
+  const l = S.resolution.lines[i];
+  if (!l.ref || !unnamed(i)) return false;
+  return !S.acks[lineKey(S.requirements.lines[i])];
+}
 function lineState(i) {
   const l = S.resolution.lines[i];
   if (l.dnp) return "dnp";
-  if (uninterpFor(i)) return "conf";
+  if (needsAck(i)) return "conf";
   if (escFor(i)) return "short";
   if (l.ref || l.mpn) {
     if ((l.checks || []).some(c => c.check === "unverified")) return "na";
@@ -465,7 +544,7 @@ const STATE_BADGE = {ok: "ok", short: "short", conf: "conf", na: "na",
 function railStat(i, state) {
   const l = S.resolution.lines[i];
   if (state === "dnp") return isManualDnp(i) ? "DNP · this run" : "DNP";
-  if (state === "conf") return "search";
+  if (state === "conf") return "confirm";
   if (state === "na") return "unverified";
   if (state === "short") return "short";
   let tail = "✓";
@@ -474,23 +553,14 @@ function railStat(i, state) {
   return tail;
 }
 
-/* the value bit, as HTML: the schematic value, else the app-assigned spec
-   value tagged "app" (no schematic VALUE — the spec came from the confirm
-   card / spec search), else the resolved part's MPN */
-function valueHtml(l) {
-  if (l.comment) return esc(l.comment);
-  if (l.spec && l.spec.value)
-    return esc(l.spec.value) + '<span class="app-tag">app</span>';
-  return esc(l.mpn || "");
-}
-
-function railDesc(l) {
-  const bits = [];
-  const v = valueHtml(l);
-  if (v) bits.push(v);
-  if (l.spec && l.spec.package) bits.push(esc(l.spec.package));
-  else if (l.footprint) bits.push(esc(l.footprint));
-  return bits.join(" · ");
+/* THE DESIGN'S OWN WORDS, always — read off the REQUIREMENT (what Refresh
+   brought over), never the resolution (what the app then decided): the
+   schematic VALUE, the schematic MPN, the library footprint name, verbatim.
+   What the app worked out about a part belongs in the panel's "recorded as"
+   line. A rail that shows the app's own guesses back to you can't be checked. */
+function designWords(i) {
+  const rl = S.requirements.lines[i];
+  return [rl.comment || rl.mpn, rl.footprint].filter(Boolean);
 }
 
 function renderRail() {
@@ -504,7 +574,8 @@ function renderRail() {
     const sel = S.selected === i ? " sel" : "";
     return '<button class="comp st-' + state + sel + '" data-line="' + i + '">' +
       '<span><span class="ref">' + esc(l.designators.join(" ")) + '</span>' +
-      '<span class="desc">' + railDesc(l) + '</span></span>' +
+      '<span class="desc">' + designWords(i).map(esc).join(" · ") +
+      '</span></span>' +
       '<span class="stat">' + esc(railStat(i, state)) + '</span></button>';
   }).join("");
   document.querySelectorAll("#comps .comp").forEach(b =>
@@ -580,7 +651,7 @@ function overviewHtml() {
       (l.dnp ? ' style="color:var(--tin)"' : "") + '>' +
       '<td class="dimtd mono">' + (n + 1) + '</td>' +
       '<td class="mono">' + esc(l.designators.join(" ")) + '</td>' +
-      '<td>' + valueHtml(l) +
+      '<td>' + esc(l.comment || l.mpn || "") +
         (l.footprint ? ' <span class="dimtd">' + esc(l.footprint) + '</span>' : "") +
       '</td>' +
       '<td>' + lcsc + '</td>' + stock +
@@ -604,7 +675,9 @@ function overviewHtml() {
     '<tr><th>#</th><th>designators</th><th>part</th><th>lcsc</th>' +
     '<th class="num">stock / need</th><th class="num">unit $</th>' +
     '<th class="num">order $</th><th>class</th></tr>' + rows +
-    '</table></div></div>';
+    '</table></div></div>' +
+    // the catalog is searchable without opening a part — look anything up
+    searchHtml(null);
 }
 
 function exportCardHtml() {
@@ -694,11 +767,10 @@ function detailHtml(i) {
   const state = lineState(i);
   const badge = STATE_BADGE[state]
     ? '<span class="badge ' + STATE_BADGE[state] + '">' +
-      (state === "conf" ? "search" : state === "na" ? "unverified" : state) +
+      (state === "conf" ? "confirm" : state === "na" ? "unverified" : state) +
       '</span>' : "";
-  const title = l.spec ? specStr(l.spec)
-    : (l.comment || l.mpn || "") +
-      (l.footprint ? " on " + l.footprint : "");
+  // the schematic's own words — never the app's reading of them
+  const title = designWords(i).join(" · ");
   let body;
   if (l.dnp) {
     body = isManualDnp(i)
@@ -706,39 +778,50 @@ function detailHtml(i) {
         "BOM and CPL. Cleared automatically after a clean export.</p>"
       : '<p class="sub">Marked DNP in the schematic — excluded from the ' +
         "BOM and CPL. Nothing to resolve.</p>";
-  } else if (state === "conf") {
-    body = confBody(i);
   } else if (!rl.spec && (rl.providerRefs || rl.mpn)) {
     body = pinnedBody(i);
   } else {
     body = specBody(i);
   }
+  // the search box is on EVERY part, always — hunting a better part is not a
+  // thing you should have to be in trouble to do
+  const search = l.dnp ? "" : searchHtml(i);
   return '<button class="crumb" data-line="-1">&#8592; design overview</button>' +
     '<h2 class="part-title"><span class="ref">' +
     esc(l.designators.join(" ")) + '</span><span class="spec">' + esc(title) +
-    '</span>' + badge + titleActionsHtml(i) + '</h2>' + body +
-    placementHtml(i);
+    '</span>' + badge + titleActionsHtml(i) + '</h2>' +
+    ackHtml(i) + body + search + placementHtml(i);
 }
 
-/* a line awaiting its one-time spec search */
-function confBody(i) {
-  const u = uninterpFor(i);
-  const g = (u && u.guess && u.guess.spec) || {};
-  const rationale = u && u.guess && u.guess.rationale
-    ? '<p class="sub">' + esc(u.guess.rationale) + "</p>" : "";
-  return rationale + specFormHtml(i, {
-    kind: g.kind || "", value: g.value || (u ? u.value : ""),
-    package: g.package || (u ? u.footprint : "") || "",
-    qualifier: g.qualifier || ""}, null);
+/* an unnamed part (no schematic VALUE, no MPN) resolved from memory — say so
+   out loud and make them look, every design, before it can ship */
+function ackHtml(i) {
+  if (lineState(i) !== "conf") return "";
+  const rl = S.requirements.lines[i];
+  return '<p class="alert">The schematic doesn’t say what this part is — ' +
+    'it’s mounting <b>' + esc(S.resolution.lines[i].ref || "") + '</b> ' +
+    'because that’s what you approved for <span class="mono">' +
+    esc(rl.footprint || "") + '</span> before. Check it, then press ' +
+    '<b>Update</b> to confirm it for this design.</p>';
 }
 
-/* the schematic names an exact part; alternates are explored on demand and
-   any pick is order-only (the schematic stays authoritative) */
+/* what the approved-parts database filed this requirement under. Bookkeeping,
+   shown so it can be audited — never a form, never the title. */
+function recordedHtml(i) {
+  const rl = S.requirements.lines[i];
+  if (!rl.spec) return "";
+  const bits = [rl.spec.kind, rl.spec.value, rl.spec.package, rl.spec.qualifier]
+    .filter(Boolean).map(esc).join(" · ");
+  return '<p class="note">recorded as <span class="mono">' + bits +
+    "</span> — search again and pick to change it</p>";
+}
+
+/* the schematic names an exact part; any pick from the search box below is
+   order-only (the schematic stays authoritative) */
 function pinnedBody(i) {
   const l = S.resolution.lines[i];
   const e = escFor(i);
   const rl = S.requirements.lines[i];
-  const key = lineKey(rl);
   const over = isOverridden(i);
   const schematicCode = (rl.providerRefs || {}).jlcpcb || "";
   const code = l.ref || (e && e.ref) || schematicCode;
@@ -766,66 +849,226 @@ function pinnedBody(i) {
       "verify by MPN. Add the LCSC attribute in Fusion, or pick a part " +
       "below for this order.</p>";
   }
-  let exploreHtml = "";
-  if (S.exploring[key]) {
-    // seed is value only: library footprint names return zero FTS rows;
-    // the package narrowing is the agent-judged filter, not the search
-    const seed = S.searches[key] || l.comment || l.mpn || "";
-    exploreHtml = '<div class="sect"><div class="form">' +
-      '<label>search in-stock parts <input id="sf-explore" value="' +
-      esc(seed) + '"></label>' +
-      '<button class="btn solid" id="explore-search" data-line="' + i +
-      '">Search</button></div></div>' + exploreResultsHtml(i, l);
-  }
   return '<div class="sect"><div class="tablewrap"><table>' + PART_TABLE_HEAD +
-    row + "</table></div>" + extra + checksHtml(l) + "</div>" + exploreHtml;
+    row + "</table></div>" + extra + checksHtml(l) + "</div>";
 }
 
-function exploreResultsHtml(i, l) {
+/* ---- THE SEARCH BOX — one box, every part, type anything ------------------ */
+
+/* What to put in the box before they touch it: what they last typed, else the
+   words the app has for this part (the agent's reading, or the schematic's own
+   text). Only a starting point — whatever ends up in the box is what gets
+   read and searched. */
+/* What goes in the box, in order of authority:
+     1. what YOU typed — nothing outranks that;
+     2. what the agent READ this part to be (the catalog's own answer, when the
+        design pins a part number);
+     3. the words behind its spec;
+     4. last resort, the schematic's raw text — which is not searchable, and is
+        the app admitting it never looked.
+   The app's own seed is NEVER written back into (1). It used to be — the
+   popup handler and the search button both saved the box's contents to the
+   draft as if the engineer had typed them, so a raw "10uF@50V C-E-5" the app
+   put there itself came back forever and outranked every reading after it. */
+function seedFor(i) {
+  if (i == null) return S.typed[""] || "";
   const rl = S.requirements.lines[i];
   const key = lineKey(rl);
-  const r = S.exploreResults[key];
+  if (S.typed[key]) return S.typed[key];
+  const read0 = S.readings[key];
+  if (read0 && read0.search) return read0.search;
+  const u = uninterpFor(i);
+  const read = (u && u.guess && (u.guess.spec || u.guess.partial)) || null;
+  // with no value to search on, the kind is what you'd type ("diode SOD-323")
+  const bits = rl.spec
+    ? [rl.spec.value || rl.spec.kind, rl.spec.package, rl.spec.qualifier]
+    : read
+      ? [read.value || rl.comment || read.kind,
+         read.package || (u && u.judgedPackage), read.qualifier]
+      : [rl.comment || rl.mpn, rl.footprint];
+  return bits.filter(Boolean).join(" ");
+}
+
+/* the part type actually used — the popup shows it, so it is never a decision
+   made behind your back. "auto" = let the agent read it off the design line. */
+function catFor(i, key) {
+  if (key in S.catPick) return S.catPick[key];
+  const r = S.results[key];
+  if (r && r.planned && r.planned.category) return r.planned.category;
+  const read0 = S.readings[key];               // what the part was read to be
+  if (read0 && read0.plan && read0.plan.category) return read0.plan.category;
+  return "";                                   // auto
+}
+
+function catSelectHtml(i, key) {
+  const cur = catFor(i, key);
+  const opt = (v, label, sel) => '<option value="' + esc(v) + '"' +
+    (sel ? " selected" : "") + ">" + esc(label) + "</option>";
+  return '<select id="sf-cat" class="cat" aria-label="part type">' +
+    opt("", i == null ? "— no part type —" : "auto — read it from the part",
+        !cur) +
+    opt("components", "— no part type —", cur === "components") +
+    '<option disabled>──────────</option>' +
+    S.categories.filter(c => c.slug !== "components")
+      .map(c => opt(c.slug, c.slug.replace(/_/g, " ") + (c.empty ? " (empty)" : ""),
+                    cur === c.slug)).join("") +
+    "</select>";
+}
+
+/* Picking NO part type means the catalog is never narrowed to a table: your
+   words are matched against part NAMES and nothing else. That is the right
+   tool for a part number and the wrong one for "22k" — so say so, before the
+   search runs, not after it disappoints. */
+function noTypeHintHtml(i, key) {
+  const cur = catFor(i, key);
+  const none = cur === "components" || (i == null && !cur);
+  if (!none) return "";
+  return '<p class="alert">No part type — your words will be matched against ' +
+    "part <b>names</b> only, so they have to be specific: a part number " +
+    "(<span class=\"mono\">1N4148WS</span>), a series, a maker's name. A " +
+    "value on its own (<span class=\"mono\">22k</span>) finds parts with " +
+    "“22k” <i>in the name</i>, not 22k parts — pick a part type above for " +
+    "that.</p>";
+}
+
+function searchHtml(i) {
+  const key = i == null ? "" : lineKey(S.requirements.lines[i]);
+  const busy = S.busySearch === key;
+  // the agent is working out what this part is — say so IN the box, where the
+  // answer is about to appear, not in a status line at the far edge of the page
+  const reading = S.reading === key;
+  const field = reading
+    ? '<input id="sf-terms" class="grow working" value="" disabled ' +
+      'placeholder="reading this part — asking the catalog what it is …" ' +
+      'aria-label="reading this part">'
+    : '<input id="sf-terms" class="grow" value="' + esc(seedFor(i)) +
+      '" placeholder="22k 0603 1% · 10uF 0805 X7R 25V · 1N4148WS · C25804" ' +
+      'aria-label="search in-stock parts">';
+  const label = reading ? "Reading …" : busy ? "Searching …" : "Search";
+  // ONE line: what kind of part · what you want · Search
+  return '<div class="sect search"><p class="eyebrow">Search in-stock parts</p>' +
+    '<div class="form">' + catSelectHtml(i, key) + field +
+    '<button class="btn solid" id="terms-search" data-line="' +
+    (i == null ? -1 : i) + '"' +
+    (busy || reading ? ' aria-disabled="true"' : "") + ">" + label +
+    "</button></div>" +
+    noTypeHintHtml(i, key) + readingHtml(i, key) +
+    (i == null ? "" : recordedHtml(i)) +
+    "</div>" + resultsHtml(i, key);
+}
+
+/* what the agent read this part to BE, and where it got it — so a reading
+   taken from the part's own catalog record is never mistaken for a guess at
+   the schematic's words */
+function readingHtml(i, key) {
+  if (i == null) return "";
+  if (S.reading === key) return "";   // the box itself is saying it
+  if (!(key in S.readings)) return "";
+  const r = S.readings[key];
+  if (!r)
+    return '<p class="note">couldn’t read this part — the agent isn’t ' +
+      "available, so the box holds the schematic’s own words</p>";
+  return '<p class="note">read as <b>' + esc(r.is) + "</b>" +
+    (r.rationale ? " — " + esc(r.rationale) : "") + "</p>";
+}
+
+/* THE QUERY, laid out exactly as it was sent, and every part of it yours to
+   change. A search you can't see is a search you can't correct. */
+function queryHtml(i, key) {
+  const r = S.results[key];
+  if (!r || !r.planned) return "";
+  const q = r.query;
+  const req = q
+    ? esc(q.category) + "?" + Object.entries(q.params || {})
+        .map(([k, v]) => esc(k) + "=" + esc(v)).join("&")
+    : r.planned.mode === "code"
+      ? "the part number, looked up directly"
+      : "nothing — no query was sent";
+  const terms = (r.proved || []).map((t, n) =>
+    '<tr><td class="mono">' + esc(t.field) + "</td>" +
+    '<td class="mono op">' + esc(OPS[t.op] || t.op) + "</td>" +
+    '<td class="mono">' + esc(String(t.value)) + "</td>" +
+    '<td><button class="btn mini" data-drop="' + n + '">drop</button></td></tr>')
+    .join("");
+  const cols = (S.categories.find(c => c.slug === (q || {}).category) || {})
+    .columns || [];
+  return '<details class="query"' + (S.showQuery ? " open" : "") + ">" +
+    "<summary>the actual search — change any of it</summary>" +
+    '<p class="req">asked the catalog for <span class="mono">' + req +
+    "</span></p>" +
+    (terms
+      ? '<p class="note">then proved every part against these — a part that ' +
+        "fails one, or can’t be checked against it, is not a result:</p>" +
+        '<div class="tablewrap"><table class="terms">' + terms + "</table></div>"
+      : '<p class="note">nothing further was demanded of the results</p>') +
+    '<div class="form addterm">' +
+    '<input id="qt-field" list="qt-cols" placeholder="field" class="mono">' +
+    '<datalist id="qt-cols">' +
+    cols.map(c => "<option>" + esc(c) + "</option>").join("") + "</datalist>" +
+    '<select id="qt-op">' + Object.entries(OPS).map(([k, v]) =>
+      '<option value="' + esc(k) + '">' + esc(v) + "</option>").join("") +
+    "</select>" +
+    '<input id="qt-val" placeholder="value" class="mono">' +
+    '<button class="btn mini" id="qt-add">add this term</button></div>' +
+    "</details>";
+}
+
+const OPS = {eq: "=", ne: "≠", lte: "≤", gte: "≥", lt: "<", gt: ">",
+             contains: "contains", isTrue: "is true", isFalse: "is false"};
+
+/* a query param and the column that proves it (the index calls them different
+   things: you ask for `capacitance`, the row publishes `capacitance_farads`) */
+const NET_COL = {package: "package", resistance: "resistance",
+                 capacitance: "capacitance_farads"};
+
+/* Results. Every row here was fetched by the agent's query AND proven against
+   every one of your terms; the ones that failed are kept, with the reason, so
+   "no parts" is never a mystery. */
+function resultsHtml(i, key) {
+  const r = S.results[key];
   if (!r) return "";
-  const need = l.requiredQty;
-  const all = r.candidates || [];
-  const pkgOk = c => !r.package || (c.package || "") === r.package;
+  const need = i == null ? 1 : S.resolution.lines[i].requiredQty;
+  const rl = i == null ? null : S.requirements.lines[i];
   const covers = c => (c.liveStock || 0) >= need;
-  const exploreRow = (c, radio) => partRow({
-    radio: radio, checked: effRadio(i) === c.code, code: c.code, mpn: c.model,
-    maker: c.manufacturer, pkg: c.package, cls: c.libraryType,
-    check: rl.spec ? {show: true, on: effCheck(i, c.code)} : undefined,
+  const hits = (r.candidates || []).filter(covers);
+  const shortStock = (r.candidates || []).filter(c => !covers(c));
+  const misses = r.misses || [];
+
+  const row = (c, radio, why) => partRow({
+    radio: radio, checked: i != null && effRadio(i) === c.code, code: c.code,
+    mpn: c.model, maker: c.manufacturer, pkg: c.package, cls: c.libraryType,
+    check: (i != null && rl.spec) ? {show: true, on: effCheck(i, c.code)}
+                                  : undefined,
     stock: c.liveStock, stockCls: covers(c) ? "ok-num" : "short-num",
-    need: need, unit: c.unitPrice1, why: ""});
+    need: need, unit: c.unitPrice1, why: why || ""});
 
-  const main = all.filter(c => pkgOk(c) && covers(c));
-  const otherPkg = all.filter(c => !pkgOk(c));           // pickable: aliases exist
-  const short = all.filter(c => pkgOk(c) && !covers(c)); // never pickable
+  const say = '<p class="say">' + esc(r.planned.say || r.terms) +
+    ' <span class="count">' + r.scanned + " looked at · " +
+    (r.candidates || []).length + " matched" +
+    (r.truncated ? " · the index stops at the 100 best-stocked — narrow it "
+                 + "down if what you want isn’t here" : "") + "</span></p>" +
+    queryHtml(i, key);
 
-  const block = (list, summary, radio) => list.length
-    ? '<details class="unconf"><summary>' + summary + "</summary>" +
+  const block = (list, summary, mk) => list.length
+    ? '<details class="unconf"><summary>' + esc(summary) + "</summary>" +
       '<div class="tablewrap"><table>' + PART_TABLE_HEAD +
-      list.map(c => exploreRow(c, radio)).join("") + "</table></div></details>"
+      list.map(mk).join("") + "</table></div></details>"
     : "";
-  const blocks =
-    block(otherPkg, otherPkg.length + " other package" +
-      (otherPkg.length === 1 ? "" : "s"), true) +
-    block(short, short.length + " can’t cover " + need, false);
-  const note = r.package
-    ? '<p class="note">package ' + esc(r.package) + " only</p>" : "";
 
-  if (!main.length) {
-    const alert = all.length
-      ? "search found " + all.length + " — " +
-        [otherPkg.length ? otherPkg.length + " other packages" : "",
-         short.length ? short.length + " can’t cover " + need : ""]
-          .filter(Boolean).join(", ")
-      : "search found nothing — adjust the terms and search again";
-    return note + '<p class="alert">' + esc(alert) + "</p>" + blocks;
+  const missBlock = block(misses.slice(0, 40),
+    misses.length + " didn’t match your terms",
+    c => row(c, false, "✗ " + esc((c.failed || []).map(f => f.why).join(" · "))));
+  const shortBlock = block(shortStock, shortStock.length + " can’t cover " + need,
+    c => row(c, false, ""));
+
+  if (!hits.length) {
+    return say + '<p class="alert">nothing in stock matched every term. ' +
+      "Open the list below to see what was rejected and why — then loosen a " +
+      "term and search again.</p>" + missBlock + shortBlock;
   }
-  return note +
-    '<div class="sect"><div class="tablewrap"><table>' + PART_TABLE_HEAD +
-    main.map(c => exploreRow(c, true)).join("") + "</table></div></div>" +
-    blocks;
+  return say + '<div class="sect"><div class="tablewrap"><table>' +
+    sortableHead() + hits.map(c => row(c, true, candWhy(c))).join("") +
+    "</table></div></div>" + shortBlock + missBlock;
 }
 
 /* a spec line: the single list — your part(s) first, then search results */
@@ -872,22 +1115,8 @@ function specBody(i) {
           stock: stock, stockCls: canPick ? "" : "short-num",
           need: need, unit: c.lastPrice, why: ""});
       }).join("");
-    // the search stays reachable after picks are saved: search more
-    // alternates any time, results committed by the same Update button
-    const lk = lineKey(rl);
-    let explore = "";
-    if (S.exploring[lk]) {
-      const seed = S.searches[lk] ||
-        [rl.spec.qualifier, rl.spec.value].filter(Boolean).join(" ");
-      explore = '<div class="sect"><div class="form">' +
-        '<label>search in-stock parts <input id="sf-explore" value="' +
-        esc(seed) + '"></label>' +
-        '<button class="btn solid" id="explore-search" data-line="' + i +
-        '">Search</button></div></div>' + exploreResultsHtml(i, l);
-    }
     return '<div class="sect"><div class="tablewrap"><table>' +
-      PART_TABLE_HEAD + rows + "</table></div>" + checksHtml(l) + "</div>" +
-      explore;
+      PART_TABLE_HEAD + rows + "</table></div>" + checksHtml(l) + "</div>";
   }
   // red: approved-but-short rows first (no radio), then verified alternates;
   // maker/price for the short rows come from the AVL cache once fetched
@@ -903,85 +1132,28 @@ function specBody(i) {
       stock: c.liveStock, stockCls: "short-num", need: need,
       unit: x.stockUnknown ? null : x.lastPrice, why: "your part"});
   });
-  const firstPick = e.reason === "no-part-choices";
-  const disc = (q && q.discovery) || {};
-  const searchable = disc.needsSearch || disc.search != null;
-  // only parts that can actually cover this order are offered
-  const coversNeed = c => (c.liveStock || 0) >= need;
-  const confirmed = (q ? [].concat(q.proposal || [], q.alsoFound || []) : [])
-    .filter(coversNeed);
-  const unconf = (q ? (q.fitUnconfirmed || []) : []).filter(coversNeed);
-  if (S.altSort.key) {
-    const dir = S.altSort.dir;
-    const val = c => S.altSort.key === "stock" ? c.liveStock
-      : S.altSort.key === "price" ? c.unitPrice1
-      : (c.libraryType ? offerLabel(c.libraryType) : null);
-    const cmp = (a, b) => {
-      const av = val(a), bv = val(b);
-      if (av == null && bv == null) return 0;
-      if (av == null) return 1;   // unknowns sort last either direction
-      if (bv == null) return -1;
-      if (typeof av === "string") return av.localeCompare(bv) * dir;
-      return (av - bv) * dir;
-    };
-    confirmed.sort(cmp); unconf.sort(cmp);
-  }
-  const candRows = confirmed.map(c => partRow({
-    radio: true, checked: effRadio(i) === c.code, code: c.code, mpn: c.model,
-    maker: c.manufacturer, pkg: c.package, cls: c.libraryType,
-    check: {show: true, on: effCheck(i, c.code)},
-    stock: c.liveStock,
-    stockCls: (c.liveStock || 0) >= need ? "ok-num" : "",
-    need: need, unit: c.unitPrice1,
-    why: candWhy(c)}));
-  const unconfRows = unconf.map(c => partRow({
-    radio: true, checked: effRadio(i) === c.code, code: c.code, mpn: c.model,
-    maker: c.manufacturer, pkg: c.package, cls: c.libraryType,
-    check: {show: true, on: effCheck(i, c.code)},
-    stock: c.liveStock, stockCls: "",
-    need: need, unit: c.unitPrice1,
-    why: "⚠ " + esc((c.fitUnknownBecause || []).join(" · "))}));
-  const unconfBlock = unconf.length
-    ? '<details class="unconf"' + (S.showUnconfirmed ? " open" : "") + '>' +
-      "<summary>" + unconf.length + " more — package not confirmed</summary>" +
-      '<div class="tablewrap"><table>' + sortableHead() + unconfRows.join("") +
-      "</table></div></details>"
+  // everything else — the app's own lookups and your searches alike — lands
+  // in the one results table below the search box
+  const empty = !avlRows.length
+    ? '<p class="alert">' + esc(e.reason === "no-part-choices"
+        ? "no approved part for this yet — search below and pick one"
+        : e.reason) + "</p>"
     : "";
-  const yourPart = '<div class="sect"><div class="tablewrap"><table>' +
-    PART_TABLE_HEAD + avlRows.join("") + "</table></div>";
-  if (!confirmed.length && !unconf.length) {
-    if (searchable) {
-      // no candidates until the engineer fires a search — nothing invented
-      const miss = disc.search != null
-        ? '<p class="alert">searched “' + esc(disc.search) + '” — nothing ' +
-          "in stock matched; adjust the terms and search again</p>"
-        : "";
-      return yourPart + miss + "</div>" + searchRowHtml(i, l);
-    }
-    const noteText = disc.note ? disc.note
-      : disc.automatic
-        ? "no in-stock part matches package “" +
-          (l.spec ? l.spec.package : "") +
-          "” exactly — package matching has no wildcards; " +
-          "correct the term and search again"
-        : "no search ran — check the terms and search again";
-    return yourPart +
-      '<p class="alert">' + esc(noteText) + "</p></div>" +
-      specFormHtml(i, l.spec || {}, disc.automatic ? "package" : "kind");
-  }
-  return (searchable ? searchRowHtml(i, l) : "") +
-    '<div class="sect"><div class="tablewrap"><table>' + sortableHead() +
-    avlRows.join("") + candRows.join("") + "</table></div>" +
-    unconfBlock + checksHtml(l) + "</div>";
+  return '<div class="sect">' +
+    (avlRows.length ? '<div class="tablewrap"><table>' + PART_TABLE_HEAD +
+      avlRows.join("") + "</table></div>" : "") +
+    empty + checksHtml(l) + "</div>";
 }
 
 /* the acknowledgement: staged selections write to the database (or the
    order draft) only when this button is pressed */
 function updateBtnHtml(i) {
-  const dirty = stagedDirty(i);
+  // an unnamed part waiting to be confirmed has nothing staged — pressing
+  // Update IS the confirmation, so the button has to be live
+  const live = stagedDirty(i) || lineState(i) === "conf";
   return '<button class="btn solid mini" id="update-btn" ' +
     'data-line="' + i + '"' +
-    (dirty ? "" : ' aria-disabled="true" title="no changes to save"') +
+    (live ? "" : ' aria-disabled="true" title="no changes to save"') +
     ">Update</button>";
 }
 
@@ -995,14 +1167,7 @@ function titleActionsHtml(i) {
         'id="populate-btn">Populate this run</button></span>'
       : "";
   const dnpBtn = '<button class="btn mini" id="dnp-btn">DNP this run</button>';
-  const pinned = !rl.spec && (rl.providerRefs || rl.mpn);
-  if (lineState(i) === "conf" || (!pinned && !rl.spec))
-    return '<span class="title-actions">' + dnpBtn + "</span>";
-  const canSearch = (pinned || !escFor(i)) &&
-    !S.exploring[lineKey(rl)];   // red spec panels carry the search inline
   return '<span class="title-actions">' +
-    (canSearch ? '<button class="btn mini" id="open-search">' +
-      "Search Alternates</button>" : "") +
     updateBtnHtml(i) + dnpBtn + "</span>";
 }
 
@@ -1023,31 +1188,6 @@ function candWhy(c) {
     bits.push(x.why);
   }
   return bits.map(esc).join(" · ");
-}
-
-/* the engineer's search: seeded from the spec, edited and FIRED by a human —
-   no query composed or run behind their back */
-function searchRowHtml(i, l) {
-  const key = lineKey(S.requirements.lines[i]);
-  const spec = l.spec || S.requirements.lines[i].spec || {};
-  const seed = S.searches[key] ||
-    [spec.qualifier, spec.value, spec.package].filter(Boolean).join(" ");
-  return '<div class="sect"><div class="form">' +
-    '<label>search in-stock parts <input id="sf-terms" value="' + esc(seed) +
-    '"></label>' +
-    '<button class="btn solid" id="terms-search" data-line="' + i +
-    '">Search</button></div></div>';
-}
-
-function specFormHtml(i, spec, suspect) {
-  const f = (name, val) =>
-    '<label>' + name + ' <input id="sf-' + name + '" value="' + esc(val || "") +
-    '"' + (suspect === name ? ' class="suspect"' : "") + "></label>";
-  return '<div class="sect"><div class="form">' +
-    f("kind", spec.kind) + f("value", spec.value) +
-    f("package", spec.package) + f("qualifier", spec.qualifier) +
-    '<button class="btn solid" id="spec-search" data-line="' + i +
-    '">Search</button></div></div>';
 }
 
 /* rotation / placement — JLCPCB CPL only */
@@ -1104,14 +1244,47 @@ function wireMain() {
     if (upd.getAttribute("aria-disabled") === "true") return;
     applyStaged(parseInt(upd.dataset.line, 10));
   };
-  const search = $("spec-search");
-  if (search) search.onclick = () => doSearch(parseInt(search.dataset.line, 10));
   const terms = $("terms-search");
   if (terms) {
-    const fire = () => doTermsSearch(parseInt(terms.dataset.line, 10));
+    const n = parseInt(terms.dataset.line, 10);
+    const line = n < 0 ? null : n;
+    const fire = () => {
+      if (terms.getAttribute("aria-disabled") === "true") return;
+      doSearch(line);
+    };
     terms.onclick = fire;
+    const key = line == null ? "" : lineKey(S.requirements.lines[line]);
     const input = $("sf-terms");
-    if (input) input.onkeydown = ev => { if (ev.key === "Enter") fire(); };
+    if (input) {
+      input.onkeydown = ev => { if (ev.key === "Enter") fire(); };
+      // ONLY your own keystrokes count as yours
+      input.oninput = () => { S.typed[key] = input.value; };
+    }
+    // choosing a part type says so at once (picking NO type changes what a
+    // search can even do) — and never eats what you've already typed
+    const cat = $("sf-cat");
+    if (cat) cat.onchange = () => {
+      S.catPick[key] = cat.value;
+      render();
+    };
+    // the query panel: drop a term, add a term — fired exactly as edited
+    const q = document.querySelector("#main details.query");
+    if (q) q.ontoggle = () => { S.showQuery = q.open; };
+    const proved = ((S.results[key] || {}).proved || []);
+    document.querySelectorAll("#main [data-drop]").forEach(btn => {
+      btn.onclick = () => rerun(line,
+        proved.filter((_, n2) => n2 !== parseInt(btn.dataset.drop, 10)));
+    });
+    const add = $("qt-add");
+    if (add) add.onclick = () => {
+      const f = $("qt-field").value.trim();
+      if (!f) { msg("name a field to test — the list shows what this part " +
+                    "type publishes", "warn"); return; }
+      const raw = $("qt-val").value.trim();
+      const num = raw !== "" && !isNaN(Number(raw));
+      rerun(line, proved.concat([{field: f, op: $("qt-op").value,
+                                  value: num ? Number(raw) : raw}]));
+    };
   }
   const rot = $("rot-select");
   if (rot) rot.onchange = () =>
@@ -1131,18 +1304,6 @@ function wireMain() {
   document.querySelectorAll("#main [data-act]").forEach(btn => {
     btn.onclick = () => clearOverride(S.selected);
   });
-  const expl = $("explore-search");
-  if (expl) {
-    const fire = () => doExploreSearch(parseInt(expl.dataset.line, 10));
-    expl.onclick = fire;
-    const input = $("sf-explore");
-    if (input) input.onkeydown = ev => { if (ev.key === "Enter") fire(); };
-  }
-  const ge = $("open-search");
-  if (ge) ge.onclick = () => {
-    S.exploring[lineKey(S.requirements.lines[S.selected])] = true;
-    render();
-  };
   const dnp = $("dnp-btn");
   if (dnp) dnp.onclick = () => {
     S.manualDnp[lineKey(S.requirements.lines[S.selected])] = true;
@@ -1153,7 +1314,42 @@ function wireMain() {
     delete S.manualDnp[lineKey(S.requirements.lines[S.selected])];
     run("re-resolving", resolveNow);
   };
-  if (S.selected != null) ensureAvl(S.selected);
+  if (S.selected != null) { ensureReading(S.selected); ensureAvl(S.selected); }
+}
+
+/* OPENING A PART READS IT. Every part, every time — pinned, spec, unnamed
+   alike; the old code read some lines and not others, and the ones it skipped
+   (the ones the schematic pinned, which carry a part number and are therefore
+   the BEST known parts in the design) fell back to showing you raw schematic
+   text in the search box. The agent gets everything: the schematic's words,
+   this shop's designator conventions, and — when a part number is pinned or
+   mounted — that part's own record from the live catalog. Judged once, cached
+   forever. */
+async function ensureReading(i) {
+  const rl = S.requirements.lines[i];
+  const l = S.resolution.lines[i];
+  if (!rl || l.dnp) return;
+  const key = lineKey(rl);
+  if (key in S.readings || S.reading === key) return;
+  S.reading = key;
+  render();   // say it AT ONCE — the guard above stops this recursing
+  msg("reading this part …");
+  try {
+    const d = await api("/api/read", {
+      lineIndex: i, requirements: S.requirements,
+      // the pinned part number, else whatever is mounted — either one lets
+      // the catalog answer instead of the agent guessing
+      code: (rl.providerRefs || {}).jlcpcb || l.ref || undefined});
+    S.readings[key] = d.reading;      // null = the agent couldn't be reached
+    if (d.reading) msg("read: " + d.reading.is, "ok");
+    else msg("");
+  } catch (e) {
+    S.readings[key] = null;
+    msg("");
+  } finally {
+    S.reading = null;
+  }
+  if (S.selected === i) render();
 }
 
 /* any spec line's panel: fetch the approved list once (provenance, makers,
@@ -1173,27 +1369,52 @@ async function ensureAvl(i) {
   if (S.selected === i) render();
 }
 
-async function doExploreSearch(i) { await run(
-  "searching (judging a new footprint can take a few seconds)", async () => {
-  const t = $("sf-explore").value.trim();
-  if (!t) throw new Error("enter search terms first");
-  const rl = S.requirements.lines[i];
-  const key = lineKey(rl);
-  S.searches[key] = t;
-  saveDraft();
-  const d = await api("/api/explore", {
-    search: t,
-    // a spec line's package is already agent-normalized — no judgment call
-    package: rl.spec ? rl.spec.package : undefined,
-    footprint: rl.spec ? undefined
-      : (S.resolution.lines[i].footprint || undefined)});
-  S.exploreResults[key] = d;
+/* THE search. Whatever is in the box is what gets read: the agent turns the
+   words into a query, and every part that comes back has been proven against
+   every term (the ones that failed come back too, with the reason).
+   `override` carries an edited query (a category you chose, terms you dropped
+   or added) — when it does, it is fired EXACTLY as given: your query outranks
+   the agent's, always. */
+async function doSearch(i, override) { await run("searching", async () => {
+  const t = $("sf-terms").value.trim();
+  if (!t) throw new Error("type what you want, then Search");
+  const key = i == null ? "" : lineKey(S.requirements.lines[i]);
+  const cat = $("sf-cat") ? $("sf-cat").value : "";
+  S.catPick[key] = cat;
+  S.typed[key] = t;          // you fired these words: the box keeps them
+  S.busySearch = key;
   render();
-  const n = (d.candidates || []).length;
-  msg(n ? n + " part(s) found — pick one for this order"
-        : "nothing found — adjust the terms and search again",
+  try {
+    if (i != null) { S.searches[key] = t; saveDraft(); }
+    S.results[key] = await api("/api/search", {
+      terms: t, lineIndex: i == null ? undefined : i,
+      requirements: S.requirements,
+      category: cat || undefined,
+      ...(override || {})});
+  } finally {
+    S.busySearch = null;
+  }
+  render();
+  const r = S.results[key];
+  const n = (r.candidates || []).length;
+  msg(n ? n + " part(s) matched — pick one"
+        : "nothing matched every term — see what was rejected, below",
       n ? "ok" : "warn");
 }); }
+
+/* re-fire the SAME query with the terms edited — no judgment call, no agent:
+   exactly what you asked for */
+/* the edited terms ARE the query now — the server rebuilds the request from
+   them, so a term you drop is really gone (it can't sneak back in as a query
+   param) */
+function rerun(i, sieve) {
+  const key = i == null ? "" : lineKey(S.requirements.lines[i]);
+  const r = S.results[key];
+  if (!r || !r.query) return;
+  S.showQuery = true;
+  S.catPick[key] = r.query.category;
+  doSearch(i, {category: r.query.category, sieve: sieve, say: r.planned.say});
+}
 
 /* undo an order-only pick: the resolver's own choice comes back */
 async function clearOverride(i) { await run("undoing pick", async () => {
@@ -1202,13 +1423,17 @@ async function clearOverride(i) { await run("undoing pick", async () => {
   msg("back to the automatic pick", "ok");
 }); }
 
-function modelFor(i, code) {
+function candFor(i, code) {
   const q = queueFor(i);
   const key = lineKey(S.requirements.lines[i]);
+  const r = S.results[key] || {};
   const pool = [].concat(
     q ? q.candidates || [] : [], q ? q.fitUnconfirmed || [] : [],
-    (S.exploreResults[key] || {}).candidates || []);
-  const c = pool.find(x => x.code === code);
+    r.candidates || [], r.misses || []);
+  return pool.find(x => x.code === code) || null;
+}
+function modelFor(i, code) {
+  const c = candFor(i, code);
   return c ? c.model : null;
 }
 
@@ -1219,9 +1444,39 @@ async function applyStaged(i) { await run("saving", async () => {
   const rl = S.requirements.lines[i];
   const key = lineKey(rl);
   const st = S.staged[key];
-  if (!st || !stagedDirty(i)) return;
+  const acking = lineState(i) === "conf";
+  if ((!st || !stagedDirty(i)) && !acking) return;
+  // an unnamed part resolved from memory: looking at it IS the act
+  if (acking && (!st || !stagedDirty(i))) {
+    S.acks[key] = true;
+    saveDraft();
+    render();
+    msg("confirmed for this design", "ok");
+    return;
+  }
   const e = escFor(i);
-  const firstPick = !!(rl.spec && e && e.reason === "no-part-choices");
+  // The AGENT names the requirement — from this design line, the words you
+  // searched, and the part you picked. You never fill in database fields.
+  // It re-names when your search says something new about a part the
+  // schematic never named ("1n4148ws" / "zener 10V" is what it IS); picking
+  // an already-approved part never re-names anything.
+  const found = (S.results[key] || {}).candidates || [];
+  const fromSearch = !!st.radio && found.some(c => c.code === st.radio);
+  let rekeyed = false;
+  if (st.radio && (!rl.spec || (unnamed(i) && fromSearch))) {
+    msg("naming this requirement …");
+    const named = await api("/api/key", {
+      lineIndex: i, requirements: S.requirements,
+      terms: S.typed[key] || S.searches[key] || "",   // YOUR words, if any
+      part: candFor(i, st.radio) || {code: st.radio}});
+    rekeyed = JSON.stringify(named.spec) !== JSON.stringify(rl.spec);
+    rl.spec = named.spec;
+    delete rl.mpn; delete rl.manufacturer; delete rl.providerRefs;
+    S.uninterpreted = S.uninterpreted.filter(x => x.lineIndex !== i);
+  }
+  // a fresh key has no approved list yet, so this pick is its rank 1
+  const firstPick = !!rl.spec && (rekeyed ||
+    ((!e || e.reason === "no-part-choices") && !committedRadio(i)));
   const com = committedChecks(i);
   const approvals = [];
   let overrideSet = false;
@@ -1239,9 +1494,10 @@ async function applyStaged(i) { await run("saving", async () => {
   if (rl.spec) {
     // newly checked codes append in the current table order
     const q = queueFor(i);
+    const r = S.results[key] || {};
     const ordered = [].concat(
       q ? (q.candidates || []).map(c => c.code) : [],
-      q ? (q.fitUnconfirmed || []).map(c => c.code) : [],
+      (r.candidates || []).map(c => c.code),
       Object.keys(st.checks));
     const seen = new Set();
     for (const code of ordered) {
@@ -1266,55 +1522,13 @@ async function applyStaged(i) { await run("saving", async () => {
                                 ? "removed in the app"
                                 : "alt removed in the app"});
   if (rl.spec) delete S.avlCache[JSON.stringify(rl.spec)];
+  S.acks[key] = true;   // you just looked at it and pressed the button
   await resolveNow();
   const done = [];
   if (approvals.length) done.push(approvals.length + " approved");
   if (removals.length) done.push(removals.length + " removed");
   if (overrideSet) done.push("pick applies to this order only");
   msg("saved — " + (done.join(" · ") || "updated"), "ok");
-}); }
-
-async function doSearch(i) { await run("searching", async () => {
-  const spec = {
-    kind: $("sf-kind").value.trim(), value: $("sf-value").value.trim(),
-    package: $("sf-package").value.trim(),
-    qualifier: $("sf-qualifier").value.trim()};
-  const rl = S.requirements.lines[i];
-  const u = uninterpFor(i);
-  const hint = ((rl.designators[0] || "").match(/^[A-Za-z]+/) || [""])[0]
-    .toUpperCase();
-  // remember the answer silently (a user answer is never re-asked) …
-  await api("/api/confirm-spec", {
-    kindHint: u ? u.kindHint : hint,
-    value: u ? u.value : (rl.comment || ""),
-    footprint: u ? u.footprint : (rl.footprint || ""),
-    spec: spec,
-    envelope: (u && u.guess && u.guess.envelope) || undefined});
-  // … then search: the line becomes a spec line and re-resolves
-  rl.spec = spec;
-  delete rl.mpn; delete rl.manufacturer; delete rl.providerRefs;
-  S.uninterpreted = S.uninterpreted.filter(x => x.lineIndex !== i);
-  delete S.overrides[lineKey(rl)];
-  await resolveNow();
-  const q = queueFor(i);
-  const found = q ? (q.candidates || []).length + (q.fitUnconfirmed || []).length
-                  : 0;
-  msg(found ? found + " part(s) found — pick one"
-            : "nothing found — adjust a term and search again",
-      found ? "ok" : "warn");
-}); }
-
-async function doTermsSearch(i) { await run("searching", async () => {
-  const t = $("sf-terms").value.trim();
-  if (!t) throw new Error("enter search terms first");
-  S.searches[lineKey(S.requirements.lines[i])] = t;
-  await resolveNow();
-  const q = queueFor(i);
-  const found = q
-    ? (q.candidates || []).length + (q.fitUnconfirmed || []).length : 0;
-  msg(found ? found + " part(s) found — pick one"
-            : "nothing found — adjust the terms and search again",
-      found ? "ok" : "warn");
 }); }
 
 async function setRotation(i, footprint, deg) {
@@ -1372,6 +1586,9 @@ $("provider").onchange = () => {
 $("qty").onchange = () => {
   if (S.requirements) run("re-resolving", resolveNow);
 };
+// the catalog's own tables, for the part-type popup — no magic words to guess
+api("/api/categories").then(d => { S.categories = d.categories; render(); })
+  .catch(() => {});
 loadCache();
 </script>
 </body>

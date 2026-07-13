@@ -157,9 +157,15 @@ def test_avl_manager_flow(client):
     one = client("/api/part?kind=resistor&value=22k&package=0603")
     assert [c["lcscCode"] for c in one["housePart"]["choices"]] == ["C31850"]
 
-    bad = client("/api/record", {"kind": "resistor", "value": "", "package": "0603",
-                                 "lcsc": "C1"}, expect=400)
-    assert "spec" in bad["error"]
+    # kind and package are the identity; an empty VALUE is legal (a
+    # general-purpose diode has none) and must not be demanded
+    bad = client("/api/record", {"kind": "resistor", "value": "22k",
+                                 "package": "", "lcsc": "C1"}, expect=400)
+    assert "package" in bad["error"]
+    client("/api/record", {"kind": "diode", "value": "", "package": "SOD-323",
+                           "lcsc": "C2128", "mpn": "1N4148WS"})
+    unnamed = client("/api/part?kind=diode&value=&package=SOD-323")
+    assert unnamed["housePart"]["choices"][0]["lcscCode"] == "C2128"
 
 
 def test_full_resolution_flow_intake_to_emit(client, tmp_path):
@@ -267,6 +273,7 @@ class CountingInterpreter:
 
     def __init__(self, confidence=0.9):
         self.calls = 0
+        self.keys = 0
         self.confidence = confidence
 
     def interpret_part(self, ctx):
@@ -280,6 +287,13 @@ class CountingInterpreter:
             envelope={"mount": "tht", "maxDiaMm": 10, "leadSpacingMm": 5},
             confidence=self.confidence,
             rationale="electrolytic, 5mm lead spacing")
+
+    def derive_key(self, ctx):
+        self.keys += 1
+        return {"spec": {"kind": "capacitor", "value": "47u",
+                         "package": "C-E-5", "qualifier": "50V"},
+                "rationale": "47u/50V on a 5mm electrolytic footprint",
+                "confidence": 0.9}
 
 
 def _mystery_app(tmp_path, interp):
@@ -327,29 +341,353 @@ def test_llm_interprets_and_caches_once(tmp_path):
         server.server_close()
 
 
-def test_low_confidence_becomes_confirm_card_then_user_answer_sticks(tmp_path):
+class TwoMysteryBridge(MysteryBridge):
+    """C7 (47u/50V on C-E-5) plus D6: a diode with NO value, on D-SOD323."""
+
+    def read_all(self, entity_type, obj=None, page=1000):
+        if entity_type == "electronics.Attribute":
+            [flt] = obj["filters"]
+            if flt["value"] in (12, 13):
+                return []
+        if entity_type == "electronics.Part":
+            return super().read_all(entity_type, obj) + [
+                {"object_id": 13, "name": "D6", "value": "",
+                 "device_object_id": 103}]
+        if entity_type == "electronics.Device":
+            return super().read_all(entity_type, obj) + [
+                {"object_id": 103, "package_object_id": 471}]
+        if entity_type == "electronics.Element":
+            return super().read_all(entity_type, obj) + [
+                {"object_id": 33, "name": "D6", "x": 3.0, "y": 3.0, "angle": 0,
+                 "mirror": 0, "populate": 1, "package_object_id": 53}]
+        if entity_type == "electronics.Package":
+            return super().read_all(entity_type, obj) + [
+                {"object_id": 53, "name": "D-SOD323"}]
+        return super().read_all(entity_type, obj)
+
+
+class PartialThenComplete:
+    """Answers C7 with an INCOMPLETE reading, D6 with a complete spec."""
+
+    name = "fake-llm"
+
+    def __init__(self):
+        self.seen = []
+
+    def interpret_part(self, ctx):
+        from hendley.ai.interpreter import Interpretation
+        from hendley.domain.model import SpecKey
+
+        self.seen.append(ctx["designator"])
+        if ctx["footprint"] == "C-E-5":   # value unreadable: ask the engineer
+            return Interpretation(
+                partial={"kind": "capacitor", "package": "C-E-5"},
+                envelope={"mount": "tht"}, confidence=0.9,
+                rationale="can't read the value")
+        return Interpretation(
+            spec=SpecKey("diode", "1n4148", "SOD-323", ""),
+            confidence=0.9, rationale="clear")
+
+
+def test_an_incomplete_reading_does_not_kill_the_interpreter(tmp_path):
+    # regression: an answer that isn't a complete spec used to look like a
+    # dead interpreter, so every later part in the design went unjudged
+    interp = PartialThenComplete()
+    app = HendleyApp(db_path=tmp_path / "parts.db", outdir=tmp_path / "out",
+                     datasource_factory=lambda: FakeSource({}),
+                     bridge_factory=lambda host: TwoMysteryBridge(),
+                     interpreter_factory=lambda: interp,
+                     draft_path=tmp_path / "draft.json",
+                     cache_path=tmp_path / "cache.json")
+    data = app.api_intake({"productionQuantity": 5})
+    assert interp.seen == ["C7", "D6"]   # D6 still got asked
+    d6 = next(ln for ln in data["requirements"]["lines"]
+              if "D6" in ln["designators"])
+    assert d6["spec"]["package"] == "SOD-323"
+    # C7's partial reading rides onto the card as prefill
+    [card] = data["uninterpreted"]
+    assert card["designators"] == ["C7"]
+    assert card["guess"]["spec"] is None
+    assert card["guess"]["partial"] == {"kind": "capacitor", "package": "C-E-5"}
+    # the package was already read — no second judgment call is spent
+    assert "judgedPackage" not in card
+
+
+class JudgingInterpreter:
+    """Recognizes nothing as a part, but judges footprints (counted)."""
+
+    name = "fake-judge"
+
+    def __init__(self, package="SMD-5x5"):
+        self.footprint_calls = 0
+        self.package = package
+
+    def interpret_part(self, ctx):
+        from hendley.ai.interpreter import Interpretation
+
+        return Interpretation()   # honest shrug: no spec, confidence 0
+
+    def interpret_footprint(self, footprint):
+        self.footprint_calls += 1
+        assert footprint == "C-E-5"
+        return {"package": self.package, "envelope": {"mount": "smd"},
+                "confidence": 0.9, "rationale": "catalog form of the name"}
+
+
+def test_confirm_card_carries_the_judged_catalog_package(tmp_path):
+    # the card must never seed the raw library footprint as the package —
+    # the agent-judged catalog form rides along for the prefill
+    interp = JudgingInterpreter(package="SMD-5x5")
+    call, server = _mystery_app(tmp_path, interp)
+    try:
+        data = call("/api/intake", {"productionQuantity": 5})
+        [card] = data["uninterpreted"]
+        assert card["judgedPackage"] == "SMD-5x5"
+        assert card["judgedEnvelope"] == {"mount": "smd"}
+        assert interp.footprint_calls == 1
+        # judged once, ever — the cache answers on the next intake
+        data = call("/api/intake", {"productionQuantity": 5})
+        [card] = data["uninterpreted"]
+        assert card["judgedPackage"] == "SMD-5x5"
+        assert interp.footprint_calls == 1
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_guess_with_a_package_skips_the_footprint_judgment(tmp_path):
+    class GuessWithPackage(CountingInterpreter):
+        def interpret_footprint(self, footprint):
+            raise AssertionError("footprint judgment must not run")
+
+    interp = GuessWithPackage(confidence=0.4)  # guess already has a package
+    call, server = _mystery_app(tmp_path, interp)
+    try:
+        data = call("/api/intake", {"productionQuantity": 5})
+        [card] = data["uninterpreted"]
+        assert "judgedPackage" not in card
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_judged_nothing_standard_gives_no_prefill(tmp_path):
+    # '' is the valid "nothing standard recognizable" answer — the card
+    # falls back to the raw footprint, per the verbatim convention
+    interp = JudgingInterpreter(package="")
+    call, server = _mystery_app(tmp_path, interp)
+    try:
+        data = call("/api/intake", {"productionQuantity": 5})
+        [card] = data["uninterpreted"]
+        assert "judgedPackage" not in card
+        assert interp.footprint_calls == 1
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_low_confidence_leaves_the_line_unread_for_the_search_box(tmp_path):
+    # nothing is invented and nothing is demanded: the line simply has no key
+    # yet, and the search box (seeded from what WAS read) is how it gets one
     interp = CountingInterpreter(confidence=0.4)  # honest doubt
     call, server = _mystery_app(tmp_path, interp)
     try:
         data = call("/api/intake", {"productionQuantity": 5})
         [card] = data["uninterpreted"]
         assert card["designators"] == ["C7"] and card["value"] == "47u/50V"
-        assert card["guess"]["spec"]["kind"] == "capacitor"  # prefill offered
-        # the engineer confirms (correcting the qualifier)
-        confirmed = call("/api/confirm-spec", {
-            "kindHint": card["kindHint"], "value": card["value"],
-            "footprint": card["footprint"],
-            "spec": {"kind": "capacitor", "value": "47u", "package": "C-E-5",
-                     "qualifier": "50V low-ESR"},
-            "envelope": card["guess"]["envelope"]})
-        assert confirmed["spec"]["qualifier"] == "50V low-ESR"
-        # from now on the cache answers; the LLM is not consulted again
-        before = interp.calls
-        data = call("/api/intake", {"productionQuantity": 5})
-        assert data["uninterpreted"] == [] and interp.calls == before
+        assert card["guess"]["spec"]["kind"] == "capacitor"   # seeds the box
         c7 = next(ln for ln in data["requirements"]["lines"]
                   if "C7" in ln["designators"])
-        assert c7["spec"]["qualifier"] == "50V low-ESR"
+        assert "spec" not in c7 or not c7["spec"]
     finally:
         server.shutdown()
         server.server_close()
+
+
+# ---------------------------------------------------------------------------
+# the search box: the agent plans, Python proves, the agent names the key
+# ---------------------------------------------------------------------------
+
+class PlanningInterpreter(CountingInterpreter):
+    """Plans a query from the engineer's words and names the requirement."""
+
+    def __init__(self):
+        super().__init__(confidence=0.4)
+        self.plans = 0
+        self.keys = 0
+        self.saw_terms = []
+        self.forced = []
+        self.conventions = []
+
+    def plan_search(self, ctx):
+        self.plans += 1
+        self.saw_terms.append(ctx["terms"])
+        if ctx.get("category"):
+            self.forced.append(ctx["category"])
+        self.conventions.append(ctx.get("convention") or {})
+        return {"mode": "parametric",
+                "category": ctx.get("category") or "capacitors",
+                "net": {"package": "0805"},
+                "sieve": [{"field": "voltage_rating", "op": "gte", "value": 25}],
+                "lookingFor": {"kind": "capacitor", "value": "10u",
+                               "package": "0805", "qualifier": "25V"},
+                "say": "10uF 0805, 25V or better", "confidence": 0.9}
+
+    def derive_key(self, ctx):
+        self.keys += 1
+        assert ctx["part"]["code"] == "C_OK"      # the VERIFIED part, not a guess
+        return {"spec": {"kind": "capacitor", "value": "10u",
+                         "package": "0805", "qualifier": "25V"},
+                "rationale": "the engineer asked for 25V", "confidence": 0.9}
+
+
+def _searching_app(tmp_path, interp):
+    from test_search_executor import LyingIndex
+
+    src = LyingIndex([{"code": "C_OK", "package": "0805", "voltage_rating": 50},
+                      {"code": "C_LOW", "package": "0805", "voltage_rating": 16}])
+    app = HendleyApp(db_path=tmp_path / "parts.db", outdir=tmp_path / "out",
+                     datasource_factory=lambda: src,
+                     bridge_factory=lambda host: MysteryBridge(),
+                     interpreter_factory=lambda: interp,
+                     draft_path=tmp_path / "draft.json",
+                     cache_path=tmp_path / "cache.json")
+    return app, src
+
+
+def test_search_plans_proves_and_caches(tmp_path):
+    interp = PlanningInterpreter()
+    app, src = _searching_app(tmp_path, interp)
+    intake = app.api_intake({"productionQuantity": 5})
+    body = {"terms": "10uF 0805 25V", "lineIndex": 0,
+            "requirements": intake["requirements"]}
+    got = app.api_search(body)
+    # the engineer's words reach the agent verbatim
+    assert interp.saw_terms == ["10uF 0805 25V"]
+    # and only parts PROVEN against every term are offered
+    assert [c["code"] for c in got["candidates"]] == ["C_OK"]
+    [miss] = got["misses"]
+    assert miss["code"] == "C_LOW" and "25" in miss["failed"][0]["why"]
+    assert got["planned"]["say"] == "10uF 0805, 25V or better"
+    # the same words on the same line are never judged twice
+    app.api_search(body)
+    assert interp.plans == 1
+
+
+def test_the_agent_names_the_key_the_engineer_never_does(tmp_path):
+    interp = PlanningInterpreter()
+    app, _ = _searching_app(tmp_path, interp)
+    intake = app.api_intake({"productionQuantity": 5})
+    got = app.api_key({
+        "lineIndex": 0, "requirements": intake["requirements"],
+        "terms": "10uF 0805 25V",
+        "part": {"code": "C_OK", "mpn": "CL21B106", "package": "0805"}})
+    assert got["spec"] == {"kind": "capacitor", "value": "10u",
+                           "package": "0805", "qualifier": "25V"}
+    assert interp.keys == 1
+    # it is the engineer's own act, so it is recorded as theirs — and the next
+    # intake applies it with no judgment call at all
+    before = interp.calls
+    data = app.api_intake({"productionQuantity": 5})
+    line = data["requirements"]["lines"][0]
+    assert line["spec"]["qualifier"] == "25V"
+    assert interp.calls == before and data["uninterpreted"] == []
+
+
+def test_the_engineer_can_see_and_change_the_query(tmp_path):
+    # the category is the biggest decision in a search (it picks the table, so
+    # it decides what can appear AND which columns exist to filter on). It must
+    # be visible and overridable — an X is a connector in one library and a
+    # socket in another, and only the engineer knows which.
+    interp = PlanningInterpreter()
+    app, src = _searching_app(tmp_path, interp)
+    got = app.api_search({"terms": "10uF 0805 25V"})
+    # what was actually sent, and what every result had to satisfy, come back
+    assert got["query"] == {"category": "capacitors",
+                            "params": {"package": "0805"}}
+    assert {t["field"] for t in got["proved"]} == {"voltage_rating", "package"}
+
+    # the engineer edits the terms: fired EXACTLY as given, no agent call
+    before = interp.plans
+    edited = app.api_search({"terms": "10uF 0805 25V", "category": "capacitors",
+                             "sieve": []})
+    assert interp.plans == before          # their query outranks the agent's
+    assert edited["judged"] is False
+    assert {c["code"] for c in edited["candidates"]} == {"C_OK", "C_LOW"}
+    # A DROPPED TERM STAYS DROPPED. The query is rebuilt from the terms, so a
+    # constraint they removed can't sneak back in as a query param (the sieve
+    # re-asserts every net param — which would have silently undone the edit).
+    assert edited["query"] == {"category": "capacitors", "params": {}}
+    assert edited["proved"] == []
+    kept = app.api_search({
+        "terms": "10uF 0805 25V", "category": "capacitors",
+        "sieve": [{"field": "package", "op": "eq", "value": "0805"}]})
+    assert kept["query"] == {"category": "capacitors",
+                             "params": {"package": "0805"}}
+
+
+def test_a_forced_category_is_remembered_as_the_shop_s_convention(tmp_path):
+    # "X means a connector in MY library" — said once, held forever
+    interp = PlanningInterpreter()
+    app, _ = _searching_app(tmp_path, interp)
+    line = {"lines": [{"designators": ["X1"], "footprint": "CON-JST-2"}]}
+    app.api_search({"terms": "2 pin 2mm", "lineIndex": 0,
+                    "requirements": line, "category": "jst_connectors"})
+    assert interp.forced == ["jst_connectors"]
+    assert app._convention("X4") == {"category": "jst_connectors",
+                                     "kind": "capacitor",  # the fake's lookingFor
+                                     "prefix": "X"}
+    # every later X search carries the convention to the agent, unasked
+    app.api_search({"terms": "3 pin", "lineIndex": 0, "requirements": line})
+    assert interp.conventions[-1]["category"] == "jst_connectors"
+
+
+def test_categories_are_offered_never_guessed(tmp_path):
+    app, _ = _searching_app(tmp_path, PlanningInterpreter())
+    cats = app.api_categories({})["categories"]
+    slugs = {c["slug"] for c in cats}
+    assert {"resistors", "capacitors", "diodes", "components"} <= slugs
+    caps = next(c for c in cats if c["slug"] == "capacitors")
+    # the columns a term can be proven against — so nobody guesses a field name
+    assert "temperature_coefficient" in caps["columns"]
+    assert next(c for c in cats if c["slug"] == "bjt_transistors")["empty"]
+
+
+def test_the_recorded_key_outranks_a_stale_spec_on_the_line(tmp_path):
+    # the read-time guess said "capacitor 47u C-E-5"; the engineer's pick then
+    # named it "50V". A design carrying the OLD spec must not go looking up a
+    # key nothing was ever approved under — the record wins, every time.
+    interp = PlanningInterpreter()
+    app, _ = _searching_app(tmp_path, interp)
+    intake = app.api_intake({"productionQuantity": 5})
+    app.api_key({"lineIndex": 0, "requirements": intake["requirements"],
+                 "terms": "10uF 0805 25V",
+                 "part": {"code": "C_OK", "package": "0805"}})
+
+    stale = json.loads(json.dumps(intake["requirements"]))
+    stale["lines"][0]["spec"] = {"kind": "capacitor", "value": "47u",
+                                 "package": "C-E-5", "qualifier": ""}
+    from hendley.domain.model import RequirementsBom
+
+    bom = RequirementsBom.from_dict(stale)
+    app._interpret_lines(bom, consult_interpreter=False)
+    assert bom.lines[0].spec.to_dict() == {
+        "kind": "capacitor", "value": "10u", "package": "0805",
+        "qualifier": "25V"}
+
+
+def test_a_search_with_no_agent_says_so_rather_than_pretending(tmp_path):
+    class Mute(CountingInterpreter):
+        def plan_search(self, ctx):
+            return None      # the binary is gone
+
+    interp = Mute(confidence=0.4)
+    app, src = _searching_app(tmp_path, interp)
+    intake = app.api_intake({"productionQuantity": 5})
+    got = app.api_search({"terms": "10uF 0805 25V", "lineIndex": 0,
+                          "requirements": intake["requirements"]})
+    assert got["judged"] is False
+    assert got["planned"]["mode"] == "fts"          # verbatim keyword fallback
+    assert src.queries[-1] == {"category": "components",
+                               "params": {"search": "10uF 0805 25V"}}
+    assert "isn't available" in got["planned"]["say"]

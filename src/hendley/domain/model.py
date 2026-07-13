@@ -67,11 +67,15 @@ def make_check(name: str, message: str) -> Check:
 class SpecKey:
     """The canonical requirement key: what the design needs, not what to buy.
 
-    ``kind``/``value``/``package`` are required; ``qualifier`` carries the
-    disambiguator when two different needs share the first three (e.g.
-    ``"1%"``, ``"X7R 50V"``, ``"20A"``). Interpretation of free-form design
-    attributes into a SpecKey is judgment (agent or engineer), not parsing —
-    this class only validates shape.
+    ``kind`` and ``package`` are required. ``value`` is required only when
+    the part HAS one: a 22k resistor does, a general-purpose diode does not
+    — and a key that demands one just gets a fabricated answer (which is
+    exactly how a "1000V" landed in a diode's value field once). Empty is a
+    legal, honest value. ``qualifier`` carries the disambiguator when two
+    different needs share the first three (e.g. ``"1%"``, ``"X7R 50V"``,
+    ``"20A"``). Interpretation of free-form design attributes into a SpecKey
+    is judgment (agent or engineer), not parsing — this class only validates
+    shape.
     """
 
     kind: str
@@ -80,7 +84,7 @@ class SpecKey:
     qualifier: str = ""
 
     def __post_init__(self):
-        for f in ("kind", "value", "package"):
+        for f in ("kind", "package"):
             if not getattr(self, f):
                 raise ValueError(f"spec is missing required {f!r}: {self!r}")
 
@@ -94,12 +98,12 @@ class SpecKey:
 
     @classmethod
     def from_dict(cls, d: dict) -> "SpecKey":
-        missing = [k for k in ("kind", "value", "package") if not d.get(k)]
+        missing = [k for k in ("kind", "package") if not d.get(k)]
         if missing:
             raise ValueError(f"spec is missing {missing}: {d!r}")
         return cls(
             kind=str(d["kind"]),
-            value=str(d["value"]),
+            value=str(d.get("value") or ""),
             package=str(d["package"]),
             qualifier=str(d.get("qualifier") or ""),
         )
