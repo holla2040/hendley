@@ -1250,16 +1250,22 @@ function compareRow(i, c, criteria, extras, need, above) {
   const bad = (c.failed || []).length > 0;
   const mine = i != null && effRadio(i) === c.code;
   const listed = above.get(c.code);
-  // EVERY row is pickable, rejects included: you are the engineer, and 35 V may
-  // be fine on your rail. The cell says what it fails; picking it says so too,
-  // and the requirement gets named from the part you ACTUALLY picked.
+  // A failed TERM is a judgment call — 35 V may be fine on your rail — so those
+  // rows stay pickable and say what they fail. Short STOCK is not a judgment
+  // call: there are 174 of them and you need 400, and no opinion changes that.
+  // It cannot mount, so it offers no radio. The checkbox stays, because stock
+  // recovers and the approved list outlives this order.
   const flag = bad ? ' data-bad="1"' : "";
   const radio = listed
     ? '<span class="listed" title="already on the approved list above — choose ' +
       'it there">' + esc(listed) + "</span>"
-    : '<input type="radio" name="pick"' + (mine ? " checked" : "") +
-      ' data-stage="' + esc(c.code) + '"' + flag +
-      ' aria-label="mount ' + esc(c.code) + '">';
+    : !cover
+      ? '<span class="listed short-num" title="only ' + fmt(c.liveStock) +
+        " in stock — it cannot cover " + fmt(need) +
+        ', so it cannot mount this run">short</span>'
+      : '<input type="radio" name="pick"' + (mine ? " checked" : "") +
+        ' data-stage="' + esc(c.code) + '"' + flag +
+        ' aria-label="mount ' + esc(c.code) + '">';
   const check = i == null ? "" :
     '<input type="checkbox" data-check="' + esc(c.code) + '"' +
     (effCheck(i, c.code) ? " checked" : "") + flag +
@@ -1271,7 +1277,7 @@ function compareRow(i, c, criteria, extras, need, above) {
       esc(cell.text) + "</td>";
   };
   return '<tr class="' + (mine ? "picked " : "") + (listed ? "onlist " : "") +
-    (bad ? "reject" : "") + '">' +
+    (bad || !cover ? "reject" : "") + '">' +
     '<td class="pick">' + radio + "</td>" +
     '<td class="pick">' + check + "</td>" +
     "<td>" + lcscLink(c.code) + "</td>" +
@@ -1296,14 +1302,22 @@ function resultsHtml(i, key) {
   const criteria = specCols(r);
   const others = extraCols(r, criteria);
   const extras = S.showSpecs ? others : [];
-  const hits = r.candidates || [];
+  // Three tiers, in the order you can act on them: the parts you can ORDER; the
+  // ones that match but have too few in stock to fill this run; the ones that
+  // fail a term. Nothing is hidden — a part 20 units short is still worth seeing
+  // — but a part you cannot buy must never sit among the ones you can.
+  const covers = c => (c.liveStock || 0) >= need;
+  const hits = (r.candidates || []).filter(covers);
+  const shortStock = (r.candidates || []).filter(c => !covers(c));
   const rejects = r.misses || [];
-  // matched parts first — then the rejects, still sorted, still comparable
-  const rows = sortRows(hits).concat(sortRows(rejects));
+  const rows = sortRows(hits).concat(sortRows(shortStock), sortRows(rejects));
 
   const say = '<p class="say">' + esc(r.planned.say || r.terms) +
     ' <span class="count">' + r.scanned + " looked at · " + hits.length +
-    " matched · " + rejects.length + " rejected" +
+    " matched" +
+    (shortStock.length ? " · " + shortStock.length + " short of " + fmt(need)
+                       : "") +
+    " · " + rejects.length + " rejected" +
     (r.truncated ? " · the index stops at the 100 best-stocked — narrow it "
                  + "down if what you want isn’t here" : "") + "</span></p>" +
     queryHtml(i, key);
@@ -1318,12 +1332,17 @@ function resultsHtml(i, key) {
       (S.showSpecs ? "hide the other specs" : "show all " + others.length +
        " specs") + "</button>"
     : "";
-  const lead = hits.length
+  const lead = (hits.length
     ? "read down a column to compare; a red cell is the one thing that part " +
       "fails, and you can still pick it. Ticking a box saves it — there is " +
       "nothing to press."
-    : "nothing passed every term — but every part is here with its numbers, so " +
-      "you can see what to loosen (or take one anyway).";
+    : "nothing you can order passed every term — but every part is here with " +
+      "its numbers, so you can see what to loosen.") +
+    (shortStock.length
+      ? " A part marked <b>short</b> matches, but there are too few in stock " +
+        "to fill " + fmt(need) + " — it can’t mount, though you can still " +
+        "approve it as an alternate."
+      : "");
 
   const above = shownAbove(i);
   return say + '<div class="sect"><p class="note">' + lead + toggle + "</p>" +
