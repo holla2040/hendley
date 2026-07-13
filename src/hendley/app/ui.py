@@ -12,6 +12,12 @@ requirements line is pinned in memory and re-resolved — nothing written to
 the parts DB); the FIRST pick for a spec with no house part is permanent
 (recorded as the approved part at rank 1). In-progress picks persist through
 page reloads via the server-side draft (``/api/draft``).
+
+Two provenance signals ride the list: a value the app assigned (the schematic
+carries no VALUE — the spec came from the confirm card / spec search) renders
+with a small ``app`` tag, and any line can be marked DNP for the current board
+run only ("DNP this run" on the panel title — draft-persisted, restored with
+one click, cleared by a clean export; schematic DNP stays Fusion's call).
 """
 
 PAGE_HTML = r"""<!DOCTYPE html>
@@ -34,6 +40,7 @@ html, body { margin:0; height:100%; overflow:hidden; }
 body { background:var(--board); color:var(--silk); font:14px/1.5 var(--sans);
        display:flex; flex-direction:column; }
 button { font:inherit; cursor:pointer; }
+body.busy, body.busy * { cursor:wait !important; }
 :focus-visible { outline:2px solid var(--pad); outline-offset:2px; }
 @media (prefers-reduced-motion: reduce) { * { transition:none !important; } }
 
@@ -90,6 +97,10 @@ button { font:inherit; cursor:pointer; }
                  border:1px dashed var(--line); }
 .comp.st-na    { background:var(--panel); color:var(--silk); }
 .comp.sel { outline:2px solid var(--pad); outline-offset:2px; }
+/* value assigned in the app, not read from the schematic (rail + overview) */
+.app-tag { font:700 9.5px var(--mono); letter-spacing:.06em;
+  background:var(--pad); color:#1A1406; border-radius:3px; padding:1px 4px;
+  margin-left:6px; }
 
 /* ---- main / detail --------------------------------------------------------- */
 .panel { padding:12px 30px 60px; }
@@ -223,6 +234,7 @@ const S = {
   rotations: [],
   avlCache: {},        // spec JSON -> housePart (this session)
   searches: {},        // lineKey -> the engineer's search terms (draft-persisted)
+  manualDnp: {},       // lineKey -> true — DNP for this run only (draft-persisted)
   exploring: {},       // lineKey -> the pinned part's explore panel is open
   exploreResults: {},  // lineKey -> live-verified explore candidates (session)
   staged: {},          // lineKey -> {radio, checks:{code:bool}} — UNSAVED
@@ -286,6 +298,7 @@ async function hydrate(data, readAt) {
   const d = await api("/api/draft?design=" + encodeURIComponent(S.design));
   S.overrides = {};
   S.searches = {};
+  S.manualDnp = {};
   S.exploring = {};
   S.exploreResults = {};
   S.staged = {};
@@ -296,6 +309,8 @@ async function hydrate(data, readAt) {
       if (valid.has(k)) S.overrides[k] = v;   // stale picks drop silently
     for (const [k, v] of Object.entries(d.draft.searches || {}))
       if (valid.has(k)) S.searches[k] = v;
+    for (const k of Object.keys(d.draft.manualDnp || {}))
+      if (valid.has(k)) S.manualDnp[k] = true;
   }
   try { S.rotations = (await api("/api/rotations")).corrections; }
   catch (e) { S.rotations = []; }
@@ -303,18 +318,21 @@ async function hydrate(data, readAt) {
 }
 
 async function refresh() {
-  $("comps").innerHTML = "";   // stale rows never sit under a fresh read
-  $("main").innerHTML =
-    '<p class="sub">Reading the open Fusion design …</p>';
-  await run(
-  "reading Fusion (interpreting new parts can take a minute)", async () => {
-  const data = await api("/api/intake", {productionQuantity: qty()});
-  await hydrate(data, new Date());
-  msg("read “" + (S.design || "design") + "” — " +
-      S.requirements.lines.length + " part type" +
-      (S.requirements.lines.length === 1 ? "" : "s") + ". " +
-      "(Click Fusion’s schematic tab before the next Refresh.)", "ok");
-}); }
+  document.body.classList.add("busy");   // wait cursor until the read lands
+  try {
+    $("comps").innerHTML = "";   // stale rows never sit under a fresh read
+    $("main").innerHTML =
+      '<p class="sub">Reading the open Fusion design …</p>';
+    await run(
+    "reading Fusion (interpreting new parts can take a minute)", async () => {
+    const data = await api("/api/intake", {productionQuantity: qty()});
+    await hydrate(data, new Date());
+    msg("read “" + (S.design || "design") + "” — " +
+        S.requirements.lines.length + " part type" +
+        (S.requirements.lines.length === 1 ? "" : "s") + ". " +
+        "(Click Fusion’s schematic tab before the next Refresh.)", "ok");
+  }); } finally { document.body.classList.remove("busy"); }
+}
 
 /* page load: repopulate from the last read — every correction reapplies
    (confirmed specs from the DB, picks from the draft, rotations from the
@@ -333,6 +351,8 @@ async function loadCache() {
 function effectiveRequirements() {
   const req = JSON.parse(JSON.stringify(S.requirements));
   req.productionQuantity = qty();
+  for (const line of req.lines)
+    if (S.manualDnp[lineKey(line)]) line.dnp = true;   // this run only
   if (provider() === "jlcpcb") {
     for (const line of req.lines) {
       const o = S.overrides[lineKey(line)];
@@ -368,6 +388,7 @@ function saveDraft() {
     productionQuantity: qty(),
     overrides: S.overrides,
     searches: S.searches,
+    manualDnp: S.manualDnp,
     savedAt: new Date().toISOString(),
   }}).catch(() => {});   // draft is a convenience — never break the flow
 }
@@ -398,6 +419,9 @@ function lineState(i) {
 function isOverridden(i) {
   const rl = S.requirements.lines[i];
   return !!S.overrides[lineKey(rl)];
+}
+function isManualDnp(i) {
+  return !!S.manualDnp[lineKey(S.requirements.lines[i])];
 }
 
 /* ---- staged selections (radio + backup checkboxes, saved on Update) -------- */
@@ -440,7 +464,7 @@ const STATE_BADGE = {ok: "ok", short: "short", conf: "conf", na: "na",
 
 function railStat(i, state) {
   const l = S.resolution.lines[i];
-  if (state === "dnp") return "DNP";
+  if (state === "dnp") return isManualDnp(i) ? "DNP · this run" : "DNP";
   if (state === "conf") return "search";
   if (state === "na") return "unverified";
   if (state === "short") return "short";
@@ -450,12 +474,22 @@ function railStat(i, state) {
   return tail;
 }
 
+/* the value bit, as HTML: the schematic value, else the app-assigned spec
+   value tagged "app" (no schematic VALUE — the spec came from the confirm
+   card / spec search), else the resolved part's MPN */
+function valueHtml(l) {
+  if (l.comment) return esc(l.comment);
+  if (l.spec && l.spec.value)
+    return esc(l.spec.value) + '<span class="app-tag">app</span>';
+  return esc(l.mpn || "");
+}
+
 function railDesc(l) {
   const bits = [];
-  if (l.comment) bits.push(l.comment);
-  else if (l.mpn) bits.push(l.mpn);
-  if (l.spec && l.spec.package) bits.push(l.spec.package);
-  else if (l.footprint) bits.push(l.footprint);
+  const v = valueHtml(l);
+  if (v) bits.push(v);
+  if (l.spec && l.spec.package) bits.push(esc(l.spec.package));
+  else if (l.footprint) bits.push(esc(l.footprint));
   return bits.join(" · ");
 }
 
@@ -470,7 +504,7 @@ function renderRail() {
     const sel = S.selected === i ? " sel" : "";
     return '<button class="comp st-' + state + sel + '" data-line="' + i + '">' +
       '<span><span class="ref">' + esc(l.designators.join(" ")) + '</span>' +
-      '<span class="desc">' + esc(railDesc(l)) + '</span></span>' +
+      '<span class="desc">' + railDesc(l) + '</span></span>' +
       '<span class="stat">' + esc(railStat(i, state)) + '</span></button>';
   }).join("");
   document.querySelectorAll("#comps .comp").forEach(b =>
@@ -492,9 +526,12 @@ function select(i) {
 
 function renderExport() {
   const b = $("export-btn");
+  // a manually-DNP'd line's pending spec search never blocks the export —
+  // the part sits out this run; restoring it brings the card and gate back
+  const open = S.uninterpreted.filter(u => !isManualDnp(u.lineIndex));
   const ready = !!S.resolution &&
     (S.resolution.escalations || []).length === 0 &&
-    S.uninterpreted.length === 0;
+    open.length === 0;
   b.setAttribute("aria-disabled", ready ? "false" : "true");
   if (ready) b.removeAttribute("title");
   else b.title = S.resolution
@@ -543,7 +580,7 @@ function overviewHtml() {
       (l.dnp ? ' style="color:var(--tin)"' : "") + '>' +
       '<td class="dimtd mono">' + (n + 1) + '</td>' +
       '<td class="mono">' + esc(l.designators.join(" ")) + '</td>' +
-      '<td>' + esc(l.comment || l.mpn || "") +
+      '<td>' + valueHtml(l) +
         (l.footprint ? ' <span class="dimtd">' + esc(l.footprint) + '</span>' : "") +
       '</td>' +
       '<td>' + lcsc + '</td>' + stock +
@@ -664,8 +701,11 @@ function detailHtml(i) {
       (l.footprint ? " on " + l.footprint : "");
   let body;
   if (l.dnp) {
-    body = '<p class="sub">Marked DNP in the schematic — excluded from the ' +
-      "BOM and CPL. Nothing to resolve.</p>";
+    body = isManualDnp(i)
+      ? '<p class="sub">Marked DNP for this board run — excluded from the ' +
+        "BOM and CPL. Cleared automatically after a clean export.</p>"
+      : '<p class="sub">Marked DNP in the schematic — excluded from the ' +
+        "BOM and CPL. Nothing to resolve.</p>";
   } else if (state === "conf") {
     body = confBody(i);
   } else if (!rl.spec && (rl.providerRefs || rl.mpn)) {
@@ -949,15 +989,21 @@ function updateBtnHtml(i) {
 function titleActionsHtml(i) {
   const l = S.resolution.lines[i];
   const rl = S.requirements.lines[i];
-  if (l.dnp || lineState(i) === "conf") return "";
+  if (l.dnp)   // schematic DNP is Fusion's call; manual DNP restores in place
+    return isManualDnp(i)
+      ? '<span class="title-actions"><button class="btn mini" ' +
+        'id="populate-btn">Populate this run</button></span>'
+      : "";
+  const dnpBtn = '<button class="btn mini" id="dnp-btn">DNP this run</button>';
   const pinned = !rl.spec && (rl.providerRefs || rl.mpn);
-  if (!pinned && !rl.spec) return "";
+  if (lineState(i) === "conf" || (!pinned && !rl.spec))
+    return '<span class="title-actions">' + dnpBtn + "</span>";
   const canSearch = (pinned || !escFor(i)) &&
     !S.exploring[lineKey(rl)];   // red spec panels carry the search inline
   return '<span class="title-actions">' +
     (canSearch ? '<button class="btn mini" id="open-search">' +
       "Search Alternates</button>" : "") +
-    updateBtnHtml(i) + "</span>";
+    updateBtnHtml(i) + dnpBtn + "</span>";
 }
 
 function offerLabel(v) {
@@ -1096,6 +1142,16 @@ function wireMain() {
   if (ge) ge.onclick = () => {
     S.exploring[lineKey(S.requirements.lines[S.selected])] = true;
     render();
+  };
+  const dnp = $("dnp-btn");
+  if (dnp) dnp.onclick = () => {
+    S.manualDnp[lineKey(S.requirements.lines[S.selected])] = true;
+    run("re-resolving", resolveNow);
+  };
+  const pop = $("populate-btn");
+  if (pop) pop.onclick = () => {
+    delete S.manualDnp[lineKey(S.requirements.lines[S.selected])];
+    run("re-resolving", resolveNow);
   };
   if (S.selected != null) ensureAvl(S.selected);
 }

@@ -31,7 +31,8 @@ concrete `providers/*` or `datasources/jlc` — only the base protocols.
   JSON API 1:1 over library calls; `ui.py` = the single embedded page). One
   page (2026-07 redesign): left rail = Refresh + board qty + the design's
   components colored by stock state (green covers / red short / amber needs a
-  spec search / dashed DNP); click a component → detail panel (one table:
+  spec search / dashed DNP; app-assigned values — no schematic VALUE — carry
+  an `app` tag); click a component → detail panel (one table:
   the radio picks what mounts — order-only when overriding an approved
   part, AVL rank 1 on a new spec's first pick — and an **alt checkbox
   column** grows/prunes the spec's ranked AVL (every approved choice
@@ -43,12 +44,15 @@ concrete `providers/*` or `datasources/jlc` — only the base protocols.
   deterministic) and results split into package-confirmed /
   other-packages / can't-cover buckets; **Search Alternates** (beside
   Update) reopens the search on saved parts and serves schematic-pinned
-  parts (`/api/explore`, order-only picks); Placement section edits
+  parts (`/api/explore`, order-only picks); **DNP this run** (title line,
+  immediate like board qty) sits a part out of the current run only —
+  `DNP · this run` in the rail, excluded from export and its gates, restored
+  by **Populate this run**, schematic DNP untouchable; Placement section edits
   `data/cpl-rotations.json`;
   Export BOM/CPL in the title bar stays disabled until all rows are green
   (Chromium: standard folder picker for the copies). Page load repopulates
   from the last read (`~/.hendley/design-cache.json`) with all corrections
-  re-applied; picks/searches/qty persist via the server-side draft
+  re-applied; picks/searches/qty/per-run DNPs persist via the server-side draft
   (`~/.hendley/draft.json`, cleared on clean export). Zero new dependencies.
 - `src/hendley/domain/model.py` — the canonical vocabulary: `SpecKey`,
   `RequirementLine` (one selection mode: spec | mpn | provider refs; `dnp`
@@ -254,7 +258,7 @@ Hendley — say any of these:
   help                     this menu
 
 Order files land in ~/tmp/hendley_output/ (bom.csv + cpl.csv, nothing else).
-Out-of-stock parts are flagged; DNP parts (DNP attribute = 1) are left out; rotation
+Out-of-stock parts are flagged; DNP parts (DNP attribute = 1, or value = DNP) are left out; rotation
 fixes in data/cpl-rotations.json apply automatically. After a run, click Fusion's
 schematic tab before running again.
 ```

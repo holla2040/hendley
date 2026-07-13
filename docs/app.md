@@ -15,7 +15,11 @@ same library the CLI uses:
   quantity, above the design's components colored by state: green = the
   order is covered, light red = short or unresolved, amber = needs a spec
   search, neutral = present but unverifiable (an MPN-only pin — see below),
-  dashed = DNP (sunk to the bottom). On page load the app
+  dashed = DNP — the schematic `DNP` attribute or a part value of literally
+  `DNP` (sunk to the bottom). A value the app assigned — the schematic
+  carries no VALUE and the spec came from the confirm card or your spec
+  search — shows with a small `app` tag (rail and overview alike); a plain
+  value is the schematic's own. On page load the app
   repopulates from the last read (`~/.hendley/design-cache.json`) with every
   correction re-applied — no Fusion round-trip until you want one.
 - **Design Overview** (nothing selected): one row per part — LCSC code
@@ -55,6 +59,16 @@ same library the CLI uses:
 - **Schematic-pinned parts** (an `LCSC` attribute) are verified as-is, with
   the same **Search Alternates** button for order-only substitutes; an
   MPN-only attribute is called out honestly (JLC can't verify by MPN).
+- **DNP for this run**: every panel's title line carries a **DNP this run**
+  button — the part sits out *this* board run only (excluded from the BOM
+  and CPL, its stock and pending spec search stop gating the export). It
+  takes effect immediately, like the board quantity: the row goes dashed and
+  sinks to the DNP section labeled `DNP · this run`, distinct from schematic
+  DNP. **Populate this run** on the DNP'd part restores it — pick, search,
+  and all. The flag lives in the order draft (never the schematic or the
+  parts DB), survives reloads and Refreshes, and clears with the draft on a
+  clean export. A part DNP'd in the schematic stays Fusion's call — the app
+  won't un-DNP it.
 - **Placement (CPL)** in each panel edits `data/cpl-rotations.json` — set a
   rotation correction once (keyed by footprint/LCSC, never designator) and
   every later export applies it (details:
@@ -65,9 +79,9 @@ same library the CLI uses:
   first opens the standard folder picker and saves copies where you choose;
   browsers without it silently skip the copies (Brave ships the API disabled —
   enable `brave://flags/#file-system-access-api` to get the picker).
-- **Nothing is lost to a reload**: picks, searches, and the board quantity
-  write through to a server-side draft (`~/.hendley/draft.json`, per
-  design), reconciled by line identity on the next load and cleared by a
+- **Nothing is lost to a reload**: picks, searches, per-run DNPs, and the
+  board quantity write through to a server-side draft (`~/.hendley/draft.json`,
+  per design), reconciled by line identity on the next load and cleared by a
   clean export.
 
 Under WSL2 the Windows browser reaches the WSL loopback directly — no
