@@ -3,10 +3,10 @@
 <img src="image/hendley.png" alt="Hendley — James Garner as Hendley, 'the Scrounger', in The Great Escape" width="160" align="right">
 
 Hendley turns an Autodesk Fusion Electronics design into a ready-to-upload
-JLCPCB PCBA order. It reads the open design, checks every part against your
-approved house parts and live JLC stock, helps you pick verified alternates
-when something is short, and exports `bom.csv` + `cpl.csv` — all from one page
-in your browser.
+JLCPCB PCBA order. It reads the open design, checks every part against live
+JLC stock, helps you pick verified alternates when something is short —
+remembering the parts you approve so the next order reuses them — and exports
+`bom.csv` + `cpl.csv`, all from one page in your browser.
 
 > Named after James Garner's character in *The Great Escape*: "the Scrounger",
 > who finds what the team needs.
@@ -57,7 +57,18 @@ JLCAPI:
 The app starts without it, but live stock checks and searches need it. Never
 commit `.keys` or any secret.
 
-**5. Connect Fusion** (needed for the Refresh button to read your design):
+**5. Install Claude Code and log in** (inside WSL). Hendley uses Claude to
+interpret part values and footprint names when it builds searches:
+
+```bash
+curl -fsSL https://claude.ai/install.sh | bash
+claude    # run once and follow the login prompt
+```
+
+It rides your Claude subscription — no separate API key. Without it the app
+still works, but asks you to confirm each interpretation by hand.
+
+**6. Connect Fusion** (needed for the Refresh button to read your design):
 
 - In Fusion on Windows: open your Electronics document, enable
   **Preferences > General > API > Fusion MCP Server**, and keep the
@@ -91,6 +102,8 @@ board quantity, and **Export BOM/CPL** when every row is green. The guide is
 - [`docs/PRD.md`](docs/PRD.md) — product scope, workflows, acceptance criteria
 - [`docs/architecture.md`](docs/architecture.md) — modules, interfaces, and
   open decisions (with [`docs/architecture-principles.md`](docs/architecture-principles.md))
+- [`docs/writing-a-provider.md`](docs/writing-a-provider.md) — adding a board
+  house (strategy + adapter, PCBWay as the reference)
 - [`docs/api-reference.md`](docs/api-reference.md) — the JLCPCB OpenAPI contract
 - [`docs/fusion-notes.md`](docs/fusion-notes.md) — Fusion HTTP integration
   (handshake, reads, writes, WSL2 networking)

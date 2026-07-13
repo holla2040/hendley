@@ -182,6 +182,10 @@ concrete `providers/*` or `datasources/jlc` — only the base protocols.
 - `docs/cli.md` — the CLI guide (commands + output formats, `hendley pcba`
   and the CPL rotations, the design-change workflow, the `.scr` swap-JSON
   contract, the Python API). The README is a TL;DR pointing here.
+- `docs/writing-a-provider.md` — the developer guide for adding a board
+  house: the strategy/adapter contracts, identity via provider refs, the
+  honest-unverified shape, wiring points, and the required tests (PCBWay is
+  the reference implementation).
 - `docs/adr/` — architecture decision records (ranking synthesis, SQLite,
   app-first interface, …).
 - `sdk/` — reference JLCPCB Java SDK jars (Core + Business).

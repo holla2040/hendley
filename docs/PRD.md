@@ -127,37 +127,19 @@ Fusion write-back is considered an ancillary, engineer-initiated migration utili
 
 The intended workflow is:
 
-```text
-Engineering Design
-        |
-        v
-Engineering Intent
-        |
-        v
-Requirements BOM
-        |
-        v
-AI-Assisted BOM Resolver
-        |
-        +--> Provider Strategy
-        |
-        +--> Component Data Sources
-        |
-        +--> Reusable Knowledge Base
-        |
-        +--> Ranking and Explanation
-        |
-        v
-Engineer Review and Approval
-        |
-        v
-Provider Adapter
-        |
-        v
-Manufacturing BOM
-        |
-        v
-PCB Assembly Provider
+```mermaid
+flowchart TD
+    design[Engineering Design] --> intent[Engineering Intent]
+    intent --> rbom[Requirements BOM]
+    rbom --> resolver[AI-Assisted BOM Resolver]
+    resolver -.-> strategy[Provider Strategy]
+    resolver -.-> sources[Component Data Sources]
+    resolver -.-> knowledge[Reusable Knowledge Base]
+    resolver -.-> ranking[Ranking and Explanation]
+    resolver --> review[Engineer Review and Approval]
+    review --> adapter[Provider Adapter]
+    adapter --> mbom[Manufacturing BOM]
+    mbom --> provider[PCB Assembly Provider]
 ```
 
 The system does not replace ECAD. It does not replace engineering judgment. It does not autonomously redesign circuits.
