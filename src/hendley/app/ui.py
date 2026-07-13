@@ -166,10 +166,10 @@ table.results td.bad { color:var(--err); font-weight:600; }
 table.results tr.reject td { opacity:.66; }
 table.results tr.reject:hover td { opacity:1; }
 table.results th .th-sort { white-space:nowrap; }
-/* already on the approved list above: it shows its RANK, not a second radio —
-   two radios for one part means the lower one steals the selection */
+/* already on the approved list above: it says so, instead of carrying a second
+   radio — two radios for one part means the lower one steals the selection */
 table.results tr.onlist td { background:rgba(217,164,65,.05); }
-table.results .rank { font:11px var(--mono); color:var(--pad);
+table.results .listed { font:11px var(--mono); color:var(--pad);
   white-space:nowrap; }
 tr.linkrow { cursor:pointer; }
 tr.linkrow:hover td { background:rgba(217,164,65,.06); }
@@ -1134,13 +1134,17 @@ function shownAbove(i) {
   const rl = S.requirements.lines[i];
   const house = rl.spec ? S.avlCache[JSON.stringify(rl.spec)] : null;
   for (const c of ((house && house.choices) || []))
-    if (c.lcscCode) out.set(c.lcscCode, "rank " + c.rank);
+    if (c.lcscCode) out.set(c.lcscCode, "alternate");
   const e = escFor(i);
   for (const c of ((e && e.choices) || []))
-    if (c.ref && !out.has(c.ref)) out.set(c.ref, "approved");
-  if (l.ref && !out.has(l.ref)) out.set(l.ref, "mounted");
+    if (c.ref) out.set(c.ref, "alternate");
   const pinned = (rl.providerRefs || {}).jlcpcb;
   if (pinned && !out.has(pinned)) out.set(pinned, "schematic");
+  // The order of the approved list is bookkeeping — the engineer never asked for
+  // a numbered list, they asked for alternates. So a part is either the one they
+  // CHOSE (the radio above says so) or one of its alternates. Nothing is numbered
+  // at them.
+  if (l.ref) out.set(l.ref, "chosen");
   return out;
 }
 
@@ -1215,8 +1219,8 @@ function compareRow(i, c, criteria, extras, need, above) {
   // and the requirement gets named from the part you ACTUALLY picked.
   const flag = bad ? ' data-bad="1"' : "";
   const radio = listed
-    ? '<span class="rank" title="already on the approved list above — mount it ' +
-      'from there">' + esc(listed) + "</span>"
+    ? '<span class="listed" title="already on the approved list above — choose ' +
+      'it there">' + esc(listed) + "</span>"
     : '<input type="radio" name="pick"' + (mine ? " checked" : "") +
       ' data-stage="' + esc(c.code) + '"' + flag +
       ' aria-label="mount ' + esc(c.code) + '">';
