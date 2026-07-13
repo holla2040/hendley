@@ -1180,10 +1180,13 @@ function sortRows(rows) {
    to the catalog when you edit a term. */
 const HEAD_LABEL = {
   "Capacitance": "value",
-  "Resistance": "value",
-  "Voltage Rating": "voltage",
-  "Temperature Coefficient": "tempco",
+  "capacitance_farads": "value",
+  "Resistance": "value",                 // also matches the index's `resistance`
+  "Voltage Rating": "voltage",           // also `voltage_rating`
+  "Temperature Coefficient": "temp_co",  // also `temperature_coefficient`
   "Tolerance": "tol",
+  "tolerance_fraction": "tol",
+  "Power(Watts)": "power",               // also `power_watts`
   "Height - Seated (Max)": "height",
   "Diameter": "dia",
   "Equivalent Series Resistance(ESR)": "esr",
@@ -1191,7 +1194,15 @@ const HEAD_LABEL = {
   "Operating Temperature": "temp",
   "Lifetime": "life",
 };
-const headLabel = field => HEAD_LABEL[field] || field;
+
+/* One field, two spellings: the catalog says "Temperature Coefficient", the
+   index column is `temperature_coefficient`. They are the same thing, so the
+   label lookup ignores case and punctuation — exactly as the sieve does when it
+   matches a term to a part's published parameters. */
+const squash = s => String(s).toLowerCase().replace(/[^a-z0-9]/g, "");
+const HEAD_BY_FIELD = {};
+Object.keys(HEAD_LABEL).forEach(k => { HEAD_BY_FIELD[squash(k)] = HEAD_LABEL[k]; });
+const headLabel = field => HEAD_BY_FIELD[squash(field)] || field;
 
 function compareHead(criteria, extras) {
   const h = (html, key, num) => {
