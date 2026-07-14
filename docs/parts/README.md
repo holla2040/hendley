@@ -80,6 +80,11 @@ than silence, because the agent will believe it.
 
 - [Aluminium electrolytic capacitors](aluminium-electrolytic-capacitors.md)
 - [Chip resistors (surface mount)](chip-resistors.md)
+- [ICs named by a family, not a part number](ics-by-family-mpn.md) — `MAX232`,
+  `ULN2003`, `SP3485`: the footprint on the board is what picks the orderable
+  part. The only keyword surface (`components?search=`), why its stock is a lie,
+  reading the footprint's *geometry* instead of its name, and the substitutions
+  that fit the land but break the circuit.
 
 ## Still to write
 

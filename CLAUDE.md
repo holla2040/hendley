@@ -306,7 +306,11 @@ concrete `providers/*` or `datasources/jlc` — only the base protocols.
   `enrich_with_jlc()`, `check_stock()`/`format_stock_report()` (classify each
   part out/low/not_found/no_code/ok via one `getComponentDetailByCode` call),
   `STOCK_BLOCKERS`.
-- `src/hendley/migration/fusion_script/scr.py` — Fusion `.scr`
+- `src/hendley/migration/fusion_script/scr.py` — **⛔ RETIRED 2026-07-13, do not
+  use.** Hendley builds the BOM; it does not modify the circuit. The code and its
+  tests remain in the tree, but neither `hendley scr` nor the `Electron.run` write
+  path may be invoked — the designer edits Fusion, you read it back. Description
+  kept for history only: Fusion `.scr`
   migration-script generator: `PartSwap`, `load_swaps_json()`,
   `render_script()`. Turns a list of part swaps (designator + package variant
   + attributes) into the EAGLE command-line script the user runs in Fusion
@@ -413,7 +417,8 @@ Hendley — say any of these:
                            gaps, then emit the upload CSV + release snapshot
   is C25804 in stock?      live stock / price / specs for one part
   find a replacement for R8 (out of stock / different package / different value)
-                           discover + verify alternates, then build the Fusion swap
+                           discover + verify alternates and recommend one. You make
+                           the change in Fusion — Hendley never edits the design.
   check stock              stock-check every part in the open design before ordering
   house parts              show the approved parts list (AVL) for a spec, or all
   help                     this menu
@@ -428,8 +433,18 @@ schematic tab before running again.
 
 The point of Hendley: the user runs Claude in this repo, says something in plain
 words about a JLC part, and you have the conversation — **you are the interpreter
-of their words into the existing tooling.** Three standing rules for that role:
+of their words into the existing tooling.** Four standing rules for that role:
 
+- **⛔ Hendley READS the design. It does NOT write to it.** (Standing rule,
+  2026-07-13.) Hendley is the tool that produces **the BOM** — it is not a tool for
+  modifying the circuit. **Do not generate a `.scr`, do not run `hendley scr`, and
+  do not fire `Electron.run` / `fusion_mcp_execute` to change a design.** No
+  `CHANGE PACKAGE`, no `ATTRIBUTE`, no `VALUE` writes over the bridge. When a part
+  needs to change, you **recommend** it — the designer makes the edit in Fusion
+  themselves, then you re-read. The bridge is read-only in practice, whatever it is
+  capable of. (The `.scr` machinery and the `Electron.run` write path still exist in
+  the tree and are documented below for history; they are **retired** and must not
+  be used.)
 - **Everything you need to drive the tools is documented** — this file,
   `docs/cli.md` + `docs/app.md` (the README is a TL;DR pointing there), and
   the module docstrings named below. **Do not read the source to
@@ -502,9 +517,21 @@ below — to get its designator and the exact package variant names.) Drive it a
    Always **surface electrical caveats** — e.g. downsizing 0603→0402 drops the
    power/voltage rating, so check the part's actual dissipation first. Recommend
    one with reasoning the user can override.
-5. **Build the swap and generate the `.scr`.** Do NOT read the `scr` module source for the
-   input format — the swap-JSON contract is documented in **`docs/cli.md` →
-   "The `.scr` file format"** and the `hendley.migration.fusion_script.scr` module docstring.
+5. **Hand the recommendation to the designer. STOP THERE.** ⛔ **You do not apply the
+   change.** Hendley builds the BOM; it does not modify the circuit (standing rule,
+   2026-07-13). Give the user the designator, the chosen `Cxxxx`, the MPN, the
+   manufacturer, the exact package, and the caveats — **they** make the edit in
+   Fusion. Then re-read the design over the bridge to confirm what they did.
+
+   **Do NOT** run `hendley scr`, write a swap JSON, generate a `.scr`, or fire
+   `Electron.run` / `fusion_mcp_execute` at the design. Do not offer to. If the user
+   asks for a `.scr`, tell them that path is retired and confirm before doing anything.
+
+<!-- RETIRED 2026-07-13 — kept for history. Do not follow. The `.scr` write path is
+     no longer used; Hendley is read-only against the design.
+
+   Build the swap and generate the `.scr`: the swap-JSON contract is documented in
+   **`docs/cli.md` → "The `.scr` file format"**.
    Fields (only `designator` required), filled from data you already have:
    - `designator` — the schematic ref (e.g. `R6`). Find it in the BOM
      (`hendley fusion PARTS.json --no-enrich`, or grep the parts JSON) by matching
@@ -561,6 +588,8 @@ below — to get its designator and the exact package variant names.) Drive it a
    BOM record (the parts JSON) so the designator points to the new code and a
    later `hendley stock` reflects reality.
 
+     END RETIRED SECTION -->
+
 **jlcsearch matching rules (so your flags actually match):**
 - `package` and other per-category **string** filters are **exact, case-
   sensitive, no wildcards** (`DFN-8` ≠ `DFN-8(3x3)`; `%`/`*`/substrings → 0 rows).
@@ -590,7 +619,8 @@ part" — jlcsearch is the discovery surface.
   flag** (passing `--json` errors). Pipe their stdout to `python3`/`jq` to parse.
 - `stock`, `alternates` — print a **human report by default**; add **`--json`**
   for structured output. These are the *only* two commands that accept `--json`.
-- `ping` — prints a status line. `scr` — prints the `.scr` (or `-o FILE` to write).
+- `ping` — prints a status line. `scr` — **retired, do not run** (see the standing
+  rule: Hendley does not modify the circuit).
 - `pcba` — writes `bom.csv` + `cpl.csv` to `--outdir` (default
   `~/tmp/hendley_output/`), progress to stderr, the stock report to stdout;
   exits nonzero on stock blockers (same gate as `stock`). `--no-verify` skips
@@ -658,7 +688,14 @@ reload (R1 was `2812` one session, `11225` the next), so always re-read
 reader can't see JLC attrs" — was the cause of earlier empty reads;
 `LCSC`/`MPN`/`MANUFACTURER` do read back fine when scoped.)
 
-## Fusion access from WSL (write side) — `Electron.run`
+## ⛔ RETIRED — Fusion write side (`Electron.run`). DO NOT USE.
+
+> **Retired 2026-07-13.** Hendley is the tool that builds **the BOM**. It is **not**
+> the tool that modifies the circuit. Everything in this section still *works* — that
+> is exactly why the prohibition is written down. **Do not fire `Electron.run`, do not
+> use `fusion_mcp_execute` to change a design, do not generate or run a `.scr`.** The
+> designer edits the schematic in Fusion; you read it back. Kept below only so nobody
+> re-discovers it and assumes it is sanctioned.
 
 The Electronics **object** API is read-only, but the **EAGLE command interpreter
 is reachable over the same HTTP endpoint** — the one thing we long thought
