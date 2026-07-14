@@ -421,14 +421,27 @@ Find, from the datasheet / distributor pages:
 
 3. traps: the parts that FIT THE SAME LAND but are NOT the same part. This is
    the whole point of asking you, and it is where a board gets ruined. Each is
-   {{"part": "<the lookalike>", "why": "<what differs, concretely>"}}. Real
-   examples of exactly what to catch:
+   {{"part": "<the lookalike>", "why": "<what differs, concretely>"}}.
+
+   ⚠️ A TRAP IS ABOUT FUNCTION, NEVER ABOUT THE PACKAGE. Do not say a part is
+   the wrong body, the wrong land or the wrong pin count — the CATALOG proves
+   the package for every part, exactly, and it outranks you. Saying "PCF8574T is
+   the narrow 3.9mm body" when the catalog lists that very part as
+   SOIC-16-300mil does not protect anyone: it slanders a good part, and the
+   engineer may skip the one they should have bought. The package is handled.
+   You are here for what the package CANNOT show: the address, the voltage, the
+   gain, the temperature grade, the register model.
+
+   Real examples of exactly what to catch:
      - PCF8574 vs PCF8574A — a DIFFERENT I2C base address (0x20 vs 0x38).
        Identical package. The firmware will not find it.
      - MB10S (1000V) vs MB6S (600V) — same MBS package, 40% less standoff.
      - LTV-352T (CTR 1000-5000%) vs LTV-357T / EL357N (CTR 50-600%) — same
        SOP-4 land, 3-5x less current transfer.
      - a temperature grade (SP3485EN = -40..+85C, SP3485CN = 0..+70C).
+     - PCA9554 vs PCF8574 — same pinout, same I2C address range, but REGISTER
+       based: its ports power up as inputs and a bare byte write does not drive
+       them. Solders down, ACKs, does nothing.
    Only state a trap you actually verified. [] is fine. NEVER invent one.
 
 confidence: 0..1, honest.
