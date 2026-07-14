@@ -614,7 +614,12 @@ class ClaudeCLIInterpreter:
         if not str(family or "").strip():
             return None
         offered = {str(p) for p, _ in packages}
+        truncated = bool(getattr(packages, "truncated", False))
         listing = "\n".join(f"  {p}  ({n} parts)" for p, n in packages)
+        if truncated:
+            listing += ("\n  [INCOMPLETE: the catalog capped this sample at 100 rows. "
+                        "You may name a datasheet-supported package absent from the "
+                        "sample; the caller will verify that exact spelling.]")
         obj = self._ask(
             FAMILY_PROMPT.format(
                 family=family,
@@ -629,7 +634,7 @@ class ClaudeCLIInterpreter:
         # nothing, so an invented one is dropped rather than fired.
         chosen = [str(p).strip() for p in (obj.get("packages") or [])
                   if str(p).strip()]
-        packages_out = [p for p in chosen if not offered or p in offered]
+        packages_out = [p for p in chosen if truncated or not offered or p in offered]
         traps = [
             {"part": str(t.get("part") or "").strip(),
              "why": str(t.get("why") or "").strip()}

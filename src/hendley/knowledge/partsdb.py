@@ -847,6 +847,26 @@ def put_interpretation(
     return True
 
 
+def delete_interpretation(
+    conn: sqlite3.Connection, scope: str, kind_hint: str = "",
+    raw_value: str = "", footprint: str = "", *, source: str | None = None,
+) -> bool:
+    """Forget a cached judgment that runtime evidence has disproved.
+
+    ``source`` makes invalidation conservative: callers healing an LLM answer
+    cannot erase an engineer-confirmed convention that happens to share a key.
+    """
+    sql = ("DELETE FROM interpretations WHERE scope=? AND kind_hint=? "
+           "AND raw_value=? AND footprint=?")
+    params: tuple = (scope, kind_hint, raw_value, footprint)
+    if source is not None:
+        sql += " AND source=?"
+        params += (source,)
+    with conn:
+        cur = conn.execute(sql, params)
+    return bool(cur.rowcount)
+
+
 class PartsDb:
     """The SQLite house-parts store behind the KnowledgeStore contract.
 
@@ -904,3 +924,9 @@ class PartsDb:
         return put_interpretation(self.conn, scope, result, source,
                                   kind_hint=kind_hint, raw_value=raw_value,
                                   footprint=footprint, confidence=confidence)
+
+    def delete_interpretation(self, scope: str, kind_hint: str = "",
+                              raw_value: str = "", footprint: str = "", *,
+                              source: str | None = None) -> bool:
+        return delete_interpretation(self.conn, scope, kind_hint, raw_value,
+                                     footprint, source=source)

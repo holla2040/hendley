@@ -1115,6 +1115,75 @@ def test_a_land_with_two_catalog_names_fires_one_request_each(tmp_path):
                               "value": ["SOIC-8", "SOP-8"]}]
 
 
+def test_a_capped_package_sample_does_not_hide_an_unseen_familys_land(tmp_path):
+    """A new design must not be limited to packages in a capped 100-row sample."""
+    from test_search_executor import LyingIndex
+
+    rows = [{"code": f"C_SAMPLE_{i}", "package": "QFN-32"} for i in range(100)]
+    rows.append({"code": "C_RIGHT", "package": "LQFP-48"})
+
+    class CappedCatalog(LyingIndex):
+        def discover(self, query):
+            self.queries.append(query)
+            package = (query.get("params") or {}).get("package")
+            if package:
+                return [r for r in self.rows if r["package"] == package]
+            return list(self.rows[:100])
+
+    class UnseenMcu(FamilyInterpreter):
+        def read_family(self, family, footprint="", headline="", packages=()):
+            self.family_calls += 1
+            assert getattr(packages, "truncated", False)
+            assert "LQFP-48" not in {p for p, _ in packages}
+            return {"packages": ["LQFP-48"], "partNumbers": ["GENERIC48-A"],
+                    "class": "microcontroller", "traps": [],
+                    "rationale": "the ordering table maps A to LQFP-48",
+                    "confidence": 0.9}
+
+    src = CappedCatalog(rows)
+    interp = UnseenMcu()
+    app = HendleyApp(db_path=tmp_path / "parts.db", outdir=tmp_path / "out",
+                     datasource_factory=lambda: src,
+                     interpreter_factory=lambda: interp,
+                     draft_path=tmp_path / "draft.json",
+                     cache_path=tmp_path / "cache.json")
+    line = {**FAMILY_LINE, "family": "GENERIC48", "footprint": "LOCAL-MCU-48"}
+    got = app.api_search({"lineIndex": 0, "requirements": {"lines": [line]}})
+
+    assert [c["code"] for c in got["candidates"]] == ["C_RIGHT"]
+    # Its spelling was absent from the sample, so it was proved narrowly before
+    # becoming the real search plan. No trust is placed in either guess alone.
+    hidden = {"category": "components",
+              "params": {"search": "GENERIC48", "package": "LQFP-48"}}
+    assert src.queries.count(hidden) == 2
+
+
+def test_an_empty_cached_family_judgment_is_re_read_once(tmp_path):
+    """A transient first answer must not poison every later unseen design."""
+    rows = [{"code": "C_HEALED", "package": "TSSOP-20"}]
+
+    class HealedFamily(FamilyInterpreter):
+        def read_family(self, family, footprint="", headline="", packages=()):
+            self.family_calls += 1
+            return {"packages": ["TSSOP-20"], "partNumbers": ["FRESH20A"],
+                    "class": "interface IC", "traps": [],
+                    "rationale": "fresh catalog-backed read", "confidence": 0.9}
+
+    interp = HealedFamily()
+    app, src = _family_app(tmp_path, interp, rows=rows)
+    line = {**FAMILY_LINE, "family": "FRESH20", "footprint": "LOCAL-20"}
+    app._store().put_interpretation(
+        "family", {"packages": ["QFN-20"], "partNumbers": [], "traps": []},
+        "llm", raw_value="FRESH20", footprint="LOCAL-20", confidence=0.8)
+
+    got = app.api_search({"lineIndex": 0, "requirements": {"lines": [line]}})
+
+    assert [c["code"] for c in got["candidates"]] == ["C_HEALED"]
+    assert interp.family_calls == 1
+    assert any(q["params"].get("package") == "QFN-20" for q in src.queries)
+    assert any(q["params"].get("package") == "TSSOP-20" for q in src.queries)
+
+
 def test_a_dead_column_is_dead_only_in_its_own_category(tmp_path):
     # A column is a lie IN A CATEGORY, not everywhere. `color` proves nothing on
     # a 7-segment display and proves plenty on an LED; `has_i2c` is a lie on an

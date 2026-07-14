@@ -60,6 +60,12 @@ DEFAULT_DRAFT_PATH = "~/.hendley/draft.json"
 DEFAULT_CACHE_PATH = "~/.hendley/design-cache.json"
 
 
+class PackageListing(list):
+    """Catalog package counts plus whether the source listing hit its row cap."""
+
+    truncated = False
+
+
 class ApiError(Exception):
     def __init__(self, message: str, status: int = 400):
         super().__init__(message)
@@ -613,12 +619,26 @@ class HendleyApp:
             # ("ULN2003") and the board already states the land — there is nothing
             # for the engineer to type, and making them retype it would be asking
             # them to repeat the schematic back to us.
+            family_key = {"footprint": str(line.get("footprint") or "").strip(),
+                          "raw_value": str(line.get("family") or "").strip()}
+            cached_before = self._store().get_interpretation("family", **family_key)
             planned = self._family_plan(line)
             if planned is None:
                 raise ApiError("'terms' is required — type what you want")
             plans, fam = planned
             found = self._merge(run_search(self._datasource_factory(), p)
                                 for p in plans)
+            # A cached family judgment that no longer produces even one row was
+            # made against catalog state we can no longer reproduce. Re-read it
+            # once instead of replaying a permanent, convincing empty answer.
+            # User-confirmed knowledge is never removed by this automatic path.
+            if (found["scanned"] == 0 and cached_before
+                    and cached_before.get("source") == "llm"
+                    and self._store().delete_interpretation(
+                        "family", source="llm", **family_key)):
+                plans, fam = self._family_plan(line) or ([], {})
+                found = self._merge(run_search(self._datasource_factory(), p)
+                                    for p in plans)
             return {"terms": line["family"], "planned": plans[0],
                     "queries": [f["query"] for f in found["parts"]],
                     "judged": False, "family": fam,
@@ -764,7 +784,9 @@ class HendleyApp:
             pkg = str(r.get("package") or "").strip()
             if pkg:
                 counts[pkg] = counts.get(pkg, 0) + 1
-        return sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
+        listing = PackageListing(sorted(counts.items(), key=lambda kv: (-kv[1], kv[0])))
+        listing.truncated = len(rows) >= 100
+        return listing
 
     def _family_read(self, line: dict,
                      packages: list[tuple[str, int]] | None = None) -> dict:
@@ -840,7 +862,20 @@ class HendleyApp:
             # A package the catalog does not spell that way matches NOTHING, so it
             # is dropped rather than fired — a search returning zero because the
             # word was wrong looks exactly like a family JLC does not stock.
-            packages = [p for p in (fam.get("packages") or []) if p in known]
+            chosen = list(fam.get("packages") or [])
+            if getattr(offered, "truncated", False):
+                # The bare-family listing is only a sample. A package absent
+                # from it is unknown, not false: prove each proposed spelling
+                # with a narrow catalog request before allowing it into a plan.
+                for package in chosen:
+                    if package not in known:
+                        rows = self._datasource_factory().discover({
+                            "category": "components",
+                            "params": {"search": family, "package": package},
+                        })
+                        if rows:
+                            known.add(package)
+            packages = [p for p in chosen if p in known]
             if not packages:
                 judged = self._judged_package(
                     footprint, headline=str(line.get("headline") or "")) or ""
