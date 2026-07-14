@@ -1,5 +1,11 @@
 # CLAUDE.md — guidance for Claude Code in this repo
 
+> **Picking this up fresh? Read [`HANDOFF.md`](HANDOFF.md).** It holds the current
+> state, the open work in priority order, the measured facts you must not re-derive,
+> and the two things that will otherwise waste your day: Fusion's `BOARD;` switch is
+> **one-way** (work from `~/.hendley/design-cache.json` instead), and `pytest` cannot
+> tell you the page never calls the API (use `scripts/ui_check.py`).
+
 ## Purpose
 
 **Hendley** is a Python tool to query the JLCPCB parts inventory (LCSC / JLC
