@@ -56,6 +56,40 @@ same library the CLI uses:
   number. *"I've looked at this"* is its acknowledgement, because nothing should
   mount silently when the design never said what it is.
 
+## A family part searches itself (ADR-0008)
+
+You place an IC and type **`ULN2003`** into the schematic VALUE, because the value
+shows on the schematic and that is convenient. You are never going to type
+`SP3485EN-L/TR` in there, and the app does not ask you to.
+
+`ULN2003` is a **family**, not a part. It ships as SOIC-16, SOP-16, TSSOP-16, DIP-16
+and a wide-body SO-16-208mil — and **the footprint already on your board decides which
+one you may order**. So the app does that for you: you typed the words, the board
+states the land, and there is nothing left for you to type. Open the panel and the
+candidates are already there.
+
+What it shows you, and why:
+
+- **The part number for your land.** The datasheet's ordering table is the only place
+  that says a ULN2003 `D` suffix is a 3.9 mm SOIC and an `NS` is a 5.3 mm SOP. The app
+  looks it up once per family, on the web, and remembers it forever.
+- **The traps** — the parts that fit the same land and are *not* the same part. These
+  are shown, never silently substituted:
+  - **`PCF8574A` is a different I²C address** (0x38, not 0x20) in an identical body. It
+    will solder down perfectly and your firmware will not find it.
+  - **`MB6S` is 600 V** where `MB10S` is 1000 V. Same `MBS` land.
+  - **`MAX485` is a +5 V part** on the identical SOIC-8 pinout as the 3.3 V `SP3485`.
+  - **`EL357N` has 3–5× less current transfer** than an `LTV-352T`. Same SOP-4 land.
+- **Only the parts you can order.** A wide-body part, a TSSOP, a DIP — they all answer
+  to the name "ULN2003" and none of them can go on your board. They are not rows.
+
+If the app cannot work out which package your footprint is, it **says so and names the
+packages the catalog does stock the family in** — rather than firing a guess, which
+would return nothing and look exactly like "JLC doesn't have it".
+
+Before this, a family in the MPN attribute was treated as an **exact orderable part** —
+pinned, never checked, sent to the resolver as if you could buy a `ULN2003`. You can't.
+
 ## The search box (ADR-0007)
 
 **One box, on every panel, always.** Type whatever you want and press

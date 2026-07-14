@@ -221,7 +221,7 @@ an MPN search path, which is not yet wrapped — see `docs/api-reference.md`.)
 | Fusion attribute | Hendley `DesignPart` field |
 |------------------|---------------------------|
 | `LCSC`           | `jlc_code` (`jlcCode`)    |
-| `MPN` (or `MP`)  | `manufacturer_part` (`manufacturerPart`) |
+| `MPN` **only**   | `manufacturer_part` (`manufacturerPart`) — ⚠️ **`MP` is NOT a fallback** |
 | `MANUFACTURER` (or `MF`) | kept in `attributes`  |
 | `PACKAGE`        | `package`                 |
 | Part `value`     | `value`                   |
@@ -232,8 +232,18 @@ Caveats seen in real data:
   (MT3608) uses `MP`/`MF` **in addition to** `MPN`/`MANUFACTURER`, plus extra
   SnapEDA/DigiKey fields (`CHECK_PRICES`, `SNAPEDA_LINK`, `DIGIKEY_PART_NUMBER`,
   `PRICE`, `AVAILABILITY`, `DESCRIPTION`). The extractor reads `LCSC` for the
-  code and falls back `MPN`→`MP` for the MPN.
-- `PACKAGE` is sometimes a placeholder (`"Package "`); treat as best-effort.
+  code and **`MPN` and only `MPN`** for the MPN.
+- ⚠️ **`MP` is NOT a fallback for `MPN`, and `MF` is not one for `MANUFACTURER`.**
+  They are stale SnapEDA imports and they LIE: on a real board `MP` read `MB6S`
+  — a 600 V bridge rectifier — on a part whose schematic VALUE said `MB10S`, a
+  1000 V one. A stale import must not decide what gets soldered down. They are
+  still carried in `attributes` (nothing is thrown away); they are simply never
+  obeyed. (Craig, 2026-07-13: `MP` is being retired.)
+- `PACKAGE` (the attribute) is sometimes a placeholder (`"Package "`); treat as
+  best-effort. The real library footprint comes from the
+  `electronics.Device` → `electronics.Package` join, along with its `headline` —
+  the geometry, which is the only honest way to tell a 150-mil `SO16` from a
+  300-mil one. Both are read schematic-side; no `BOARD;` switch is needed.
 - GND / supply symbols and the title-block/logo part (`U$1`, value `v1.0`)
   have no `LCSC`/`MPN` and are excluded from the BOM extraction.
 

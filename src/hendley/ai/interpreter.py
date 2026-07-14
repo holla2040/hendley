@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Protocol, runtime_checkable
 
@@ -70,6 +71,63 @@ class Interpreter(Protocol):
         whose ``spec`` is None means it answered but the reading is
         incomplete: an honest "I got this far" (see ``partial``), and the
         caller keeps consulting it for the other parts.
+        """
+        ...
+
+    def interpret_footprint(self, footprint: str,
+                            headline: str = "") -> dict | None:
+        """One library footprint name → the catalog package it denotes.
+
+        ``headline`` is the library's own description of that footprint, and it
+        decides the cases the name cannot: "SO16" does not say whether the body
+        is 3.9mm or 7.5mm, and those are different catalog packages (SOIC-16 vs
+        SOIC-16-300mil) holding different parts. "Small Outline package 150 mil"
+        says it outright.
+
+        Returns ``{"package", "envelope", "confidence", "rationale"}``; an empty
+        ``package`` is an honest answer (nothing standard recognizable). None =
+        interpreter unavailable.
+        """
+        ...
+
+    def read_family(self, family: str, footprint: str = "", headline: str = "",
+                    packages: Sequence[tuple[str, int]] = ()) -> dict | None:
+        """A FAMILY plus the footprint under it → what may go on the board.
+
+        A designer types ``ULN2003``, ``MB10S``, ``SP3485`` — an incomplete part
+        number that ships in many packages. The catalog can list every part whose
+        NAME matches, but it cannot tell you what the suffixes MEAN, and it will
+        happily offer a PCF8574A for a PCF8574: identical body, different I2C
+        address. The datasheet's ordering table knows both, so this is the one
+        judgment that reaches for the WEB.
+
+        ``packages`` is the catalog's OWN list of the packages it stocks this
+        family in, with counts. The answer is CHOSEN FROM IT, never invented:
+        a package judged from the library's footprint name is a guess at the
+        catalog's word rather than a reading of it, and they disagree exactly
+        where it hurts — the library says ``SOIC-4`` where the catalog says
+        ``MBS``, and ``SOP04`` where the catalog says ``SOP-4-2.54mm``. Both
+        guesses return ZERO rows while looking entirely reasonable.
+
+        It returns ALL the catalog's words for ONE land, not one of them: the
+        catalog spells the 3.9mm 8-pin body both ``SOIC-8`` and ``SOP-8`` and
+        they hold DIFFERENT parts — the Basic, 327k-in-stock SP3485 is under
+        ``SOIC-8``, so choosing ``SOP-8`` would never see it. A different BODY,
+        though, is a different land: 150-mil and 300-mil SOIC-16 are not
+        interchangeable, and the geometry is what tells them apart.
+
+        Returns::
+
+            {"packages": ["SOIC-8", "SOP-8"],      # the catalog's words, one land
+             "partNumbers": ["ULN2003ADR", ...],   # complete, fit THIS footprint
+             "class": "darlington transistor array",   # a label, never a filter
+             "traps": [{"part": "PCF8574A", "why": "different I2C address"}],
+             "rationale": "...", "confidence": 0..1}
+
+        An EMPTY ``partNumbers`` is honest, not a failure — the catalog sweep
+        finds the parts regardless, including the ones the web never names (JLC's
+        house brands, often the better buy). What this adds is knowing WHICH of
+        them is right. None = interpreter unavailable.
         """
         ...
 

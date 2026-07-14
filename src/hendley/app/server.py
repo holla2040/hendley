@@ -405,7 +405,8 @@ class HendleyApp:
                            or guess.partial.get("package")))
             if footprint and not read_package:
                 judged = self._judged_package(footprint,
-                                              consult=not interpreter_dead)
+                                              consult=not interpreter_dead,
+                                              headline=line.footprint_headline or "")
                 if judged:
                     entry["judgedPackage"] = judged
                     row = store.get_interpretation("footprint",
@@ -595,11 +596,26 @@ class HendleyApp:
         from ..resolver.orchestration.search import run_search
 
         terms = str(body.get("terms") or "").strip()
-        if not terms:
-            raise ApiError("'terms' is required — type what you want")
         line = self._search_line(body)
         category = str(body.get("category") or "").strip()
         sieve = body.get("sieve")
+        if not terms and not isinstance(sieve, list):
+            # A FAMILY line searches itself. The designer already typed the words
+            # ("ULN2003") and the board already states the land — there is nothing
+            # for the engineer to type, and making them retype it would be asking
+            # them to repeat the schematic back to us.
+            planned = self._family_plan(line)
+            if planned is None:
+                raise ApiError("'terms' is required — type what you want")
+            plans, fam = planned
+            found = self._merge(run_search(self._datasource_factory(), p)
+                                for p in plans)
+            return {"terms": line["family"], "planned": plans[0],
+                    "queries": [f["query"] for f in found["parts"]],
+                    "judged": False, "family": fam,
+                    **{k: v for k, v in found.items() if k != "parts"}}
+        if not terms:
+            raise ApiError("'terms' is required — type what you want")
         if isinstance(sieve, list):
             # The engineer edited the terms themselves: fire exactly that, no
             # judgment call. The terms are now the WHOLE truth — the query is
@@ -609,12 +625,20 @@ class HendleyApp:
 
             sieve = [p for p in sieve if isinstance(p, dict) and p.get("field")]
             fts = category == "components" or not category
-            net = {"search": terms} if fts else {
+            net = {
                 param: t["value"]
                 for param, column in NET_COLUMNS.items()
                 for t in sieve
                 if t.get("op") == "eq" and t.get("field") == column
             }
+            if fts:
+                # the keyword net is the words PLUS whatever net params survived
+                # the engineer's edit — `components` honours `package`, and a
+                # family search that quietly lost it would fetch every package
+                # the family ships in. Terms they dropped stay dropped: the net
+                # is rebuilt FROM the sieve, never re-asserted behind their back.
+                net = {k: v for k, v in net.items() if k == "package"}
+                net["search"] = terms or str(line.get("family") or "")
             plan = {"mode": "fts" if fts else "parametric",
                     "category": category or "components",
                     "net": net, "sieve": sieve, "lookingFor": {},
@@ -676,9 +700,167 @@ class HendleyApp:
         return {"designator": (ln.get("designators") or [""])[0],
                 "value": ln.get("comment") or "",
                 "footprint": ln.get("footprint") or "",
+                # the family the designer typed ("ULN2003") and the footprint's
+                # own geometry — the two things that decide which part may mount
+                "family": ln.get("family") or "",
+                "headline": ln.get("footprintHeadline") or "",
                 "code": str(body.get("code") or
                             (ln.get("providerRefs") or {}).get("jlcpcb")
                             or "").strip()}
+
+    @staticmethod
+    def _merge(results) -> dict:
+        """Union several searches over ONE land into one table.
+
+        The catalog spells a land several ways and the index takes one spelling
+        per request, so a land can need more than one request. The engineer is
+        picking a part for a board, not reading a query log: they get one table.
+        Deduped by code — a part reached by two spellings is still one part.
+        """
+        parts, candidates, misses, seen = [], [], [], set()
+        scanned = 0
+        truncated = False
+        for found in results:
+            parts.append(found)
+            scanned += found["scanned"]
+            truncated = truncated or found["truncated"]
+            for row in found["candidates"]:
+                if row["code"] not in seen:
+                    seen.add(row["code"])
+                    candidates.append(row)
+            for row in found["misses"]:
+                if row["code"] not in seen:
+                    seen.add(row["code"])
+                    misses.append(row)
+        return {"parts": parts, "candidates": candidates, "misses": misses,
+                "proved": parts[0]["proved"] if parts else [],
+                "query": parts[0]["query"] if parts else None,
+                "scanned": scanned, "truncated": truncated}
+
+    def _catalog_packages(self, family: str) -> list[tuple[str, int]]:
+        """The packages the CATALOG stocks this family in, commonest first.
+
+        The catalog's own vocabulary, which is the only spelling that matches
+        anything. Fetched by asking for the family and nothing else — one cheap
+        query — because a package judged from the library's footprint name is a
+        guess AT the catalog's word rather than a reading OF it, and the two
+        disagree exactly where it hurts: the library says ``SOIC-4`` and the
+        catalog says ``MBS``; the library says ``SOP04`` and the catalog says
+        ``SOP-4-2.54mm``. Both guesses return ZERO rows while looking right.
+        """
+        rows = self._datasource_factory().discover(
+            {"category": "components", "params": {"search": family}})
+        counts: dict[str, int] = {}
+        for r in rows:
+            pkg = str(r.get("package") or "").strip()
+            if pkg:
+                counts[pkg] = counts.get(pkg, 0) + 1
+        return sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
+
+    def _family_read(self, line: dict,
+                     packages: list[tuple[str, int]] | None = None) -> dict:
+        """What the WEB knows about this family — cached forever, per family and
+        footprint. ``{}`` when there is no family or no judgment to be had.
+
+        The only judgment that costs a web search, so it is asked once per
+        (family, footprint) and never again: what a suffix MEANS does not change.
+        It answers what the catalog cannot — which complete part number belongs in
+        THIS land, which of the catalog's packages that land IS, and which
+        lookalikes share the land but not the part (a PCF8574A is a different I2C
+        address in an identical body).
+        """
+        family = str(line.get("family") or "").strip()
+        footprint = str(line.get("footprint") or "").strip()
+        if not family:
+            return {}
+        store = self._store()
+        cached = store.get_interpretation("family", footprint=footprint,
+                                          raw_value=family)
+        if cached:
+            return (cached.get("result") or {})
+        interpreter = self._interpreter_factory()
+        read = getattr(interpreter, "read_family", None)
+        if read is None:
+            return {}
+        got = read(family, footprint, str(line.get("headline") or ""),
+                   packages if packages is not None
+                   else self._catalog_packages(family))
+        if got is None:
+            return {}                       # interpreter down — the sweep still works
+        store.put_interpretation("family", got, "llm", footprint=footprint,
+                                 raw_value=family,
+                                 confidence=got.get("confidence"))
+        return got
+
+    def _family_plan(self, line: dict) -> tuple[dict, dict] | None:
+        """The query for a family line: ``family + package``. Nothing else.
+        Returns ``(plan, familyRead)``.
+
+        ⚠️ PYTHON COMPOSES THIS QUERY — the one authorized exception to ADR-0006
+        (Craig, 2026-07-13; see ADR-0008). It is not judgment: the words are the
+        DESIGNER'S OWN, passed through verbatim, and the package is a judgment the
+        agent already made. Asking an agent to "plan" a query whose every term is
+        already known would be theatre.
+
+        The package comes from the CATALOG'S OWN LIST for this family, with the
+        footprint judgment as the fallback. Never the other way round: a package
+        the catalog does not spell that way matches nothing, however plausible.
+
+        The class is deliberately NOT in here. JLC's class labels are inconsistent
+        WITHIN one family — C2886577 (an MB10S, the part already on our board) is
+        filed under "Diodes - General Purpose" while its siblings are "Bridge
+        Rectifiers" — so a class term would reject good parts while looking like it
+        filtered. The class is a label, never a filter.
+        """
+        family = str(line.get("family") or "").strip()
+        footprint = str(line.get("footprint") or "").strip()
+        if not family or not footprint:
+            return None
+        cached = self._store().get_interpretation("family", footprint=footprint,
+                                                  raw_value=family)
+        fam = (cached or {}).get("result") or {}
+        packages = list(fam.get("packages") or [])
+        if not packages:
+            # First time for this (family, footprint). Ask the catalog which
+            # packages it stocks the family in — its OWN vocabulary — and let the
+            # judgment choose from that. Once answered it is cached, and this
+            # probe never runs again.
+            offered = self._catalog_packages(family)
+            known = {p for p, _ in offered}
+            fam = self._family_read(line, offered)
+            # A package the catalog does not spell that way matches NOTHING, so it
+            # is dropped rather than fired — a search returning zero because the
+            # word was wrong looks exactly like a family JLC does not stock.
+            packages = [p for p in (fam.get("packages") or []) if p in known]
+            if not packages:
+                judged = self._judged_package(
+                    footprint, headline=str(line.get("headline") or "")) or ""
+                packages = [judged] if judged in known else []
+            if not packages:
+                raise ApiError(
+                    f"can't tell which package “{footprint}” is. The catalog "
+                    f"stocks {family} in: "
+                    + ", ".join(p for p, _ in offered[:8])
+                    + " — search with the package you want.")
+        # ONE land, but the catalog may spell it several ways — SOIC-8 and SOP-8
+        # are the same 3.9mm body and hold DIFFERENT parts. The index takes only
+        # one `package` per request, so we fire ONE REQUEST PER SPELLING and union
+        # them, rather than widening the net to the family alone: the index caps a
+        # listing at 100 rows and will not go higher (measured — `1N4148`, `LM358`
+        # and `AMS1117` all return exactly 100, and `limit=500` changes nothing),
+        # so a bare-family net would quietly truncate a popular family. Each
+        # package-filtered request is far under the cap.
+        #
+        # Every request still carries the WHOLE set as one sieve term, so each part
+        # is proven against the land, not against the one spelling that fetched it.
+        shown = " or ".join(packages)
+        sieve = [{"field": "package", "op": "in", "value": packages}]
+        plans = [{"mode": "fts", "category": "components",
+                  "net": {"search": family, "package": p},
+                  "sieve": sieve, "lookingFor": {"package": shown},
+                  "say": f"{family} that fit {footprint} ({shown})",
+                  "confidence": 1.0} for p in packages]
+        return (plans, fam)
 
     def _plan(self, terms: str, line: dict,
               category: str | None = None) -> tuple[dict, bool]:
@@ -714,11 +896,19 @@ class HendleyApp:
                                  confidence=plan.get("confidence"), **key)
         return plan, True
 
-    def _judged_package(self, footprint: str, consult: bool = True) -> str | None:
+    def _judged_package(self, footprint: str, consult: bool = True,
+                        headline: str = "") -> str | None:
         """The catalog package for a library footprint name — cache first,
         else one agent judgment, cached forever. '' (nothing standard) is a
         valid cached answer; None means no judgment available. With
-        ``consult=False`` only the cache answers (cache loads)."""
+        ``consult=False`` only the cache answers (cache loads).
+
+        ``headline`` is the library's own description of the footprint, and it
+        is what makes the judgment honest: "SO16" cannot say whether the body is
+        3.9mm or 7.5mm — "Small Outline package 150 mil" can, and those are two
+        different catalog packages. Cached by footprint, since the geometry is a
+        property OF the footprint, not of the part wearing it.
+        """
         store = self._store()
         cached = store.get_interpretation("footprint", footprint=footprint)
         result = (cached or {}).get("result") or {}
@@ -730,7 +920,10 @@ class HendleyApp:
         judge = getattr(interpreter, "interpret_footprint", None)
         if judge is None:
             return None
-        j = judge(footprint)
+        try:
+            j = judge(footprint, headline)
+        except TypeError:            # an interpreter that predates the geometry
+            j = judge(footprint)
         if j is None or j["confidence"] < CONFIDENCE_THRESHOLD:
             return None
         merged = dict(result)

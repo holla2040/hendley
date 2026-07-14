@@ -189,6 +189,62 @@ def test_keyword_mode_asks_the_component_index_verbatim():
     assert [c["code"] for c in got["candidates"]] == ["C1"]
 
 
+# The FAMILY case. A designer types "ULN2003" into the schematic VALUE — that is
+# a family, not a part, and the board decides which of the eleven ULN2003s can go
+# on it. These are the real catalog rows (measured 2026-07-13).
+ULN2003 = [
+    {"code": "C7512", "package": "SOIC-16"},          # the D suffix: 3.9mm body
+    {"code": "C94832", "package": "SOIC-16"},
+    {"code": "C2859910", "package": "SO-16-208mil"},  # the NS suffix: WIDE body
+    {"code": "C126289", "package": "TSSOP-16"},       # a different land entirely
+    {"code": "C93000", "package": "DIP-16"},          # not even surface mount
+]
+
+
+def test_a_family_search_carries_the_package_into_the_request():
+    # "ULN2003" alone matches every package the family ships in. The footprint on
+    # the board is what makes it orderable, so it MUST reach the index — dropping
+    # it (as _query once did) hands the engineer a DIP part for a 150-mil land.
+    src = LyingIndex(ULN2003)
+    run_search(src, {"mode": "fts", "category": "components",
+                     "net": {"search": "ULN2003", "package": "SOIC-16"},
+                     "sieve": []})
+    assert src.queries == [{"category": "components",
+                            "params": {"search": "ULN2003",
+                                       "package": "SOIC-16"}}]
+
+
+def test_a_family_search_proves_its_package_even_when_the_index_ignores_it():
+    # The keyword index matches part NAMES. If it quietly dropped `package` — the
+    # thing it does to every param it doesn't know — a wide-body SO-16-208mil part
+    # would be offered for a 150-mil footprint and NOTHING on screen would say so.
+    # So the net's package is re-asserted as a term and proven per part.
+    class IgnoresPackage(LyingIndex):
+        def discover(self, query):
+            self.queries.append(query)
+            return list(self.rows)        # the param is silently ignored
+
+    src = IgnoresPackage(ULN2003)
+    got = run_search(src, {"mode": "fts", "category": "components",
+                           "net": {"search": "ULN2003", "package": "SOIC-16"},
+                           "sieve": []})
+    assert [c["code"] for c in got["candidates"]] == ["C7512", "C94832"]
+    missed = {c["code"]: c["failed"][0] for c in got["misses"]}
+    assert set(missed) == {"C2859910", "C126289", "C93000"}
+    assert missed["C2859910"]["field"] == "package"      # named, with a reason
+    assert "SO-16-208mil" in missed["C2859910"]["why"]
+
+
+def test_a_family_search_states_no_term_for_the_words_themselves():
+    # `search` matches a NAME. A name is not a spec, and proving a part "right"
+    # because its name matched would be proving it for the wrong reason.
+    src = LyingIndex(ULN2003)
+    got = run_search(src, {"mode": "fts", "category": "components",
+                           "net": {"search": "ULN2003", "package": "SOIC-16"},
+                           "sieve": []})
+    assert [t["field"] for t in got["proved"]] == ["package"]
+
+
 def test_an_unverifiable_part_is_never_a_result():
     class Gone(LyingIndex):
         def verify(self, refs):
@@ -328,3 +384,32 @@ def test_tolerance_fraction_earns_the_catalogs_own_column():
     assert tol["shown"] == "±1%"        # → in the catalog's own words
     loose = next(c for c in got["misses"] if c["code"] == "R_10K_5PC")
     assert loose["failed"][0]["field"] == "tolerance_fraction"
+
+
+# One land, several of the catalog's words for it. JLC spells the 3.9mm 8-pin
+# body BOTH "SOIC-8" and "SOP-8", and they hold different parts — the Basic,
+# 327k-in-stock SP3485 sits under SOIC-8 (measured 2026-07-13).
+SP3485 = [
+    {"code": "C8963", "package": "SOIC-8"},        # Basic, the big-stock one
+    {"code": "C668205", "package": "SOP-8"},       # a house brand, same land
+    {"code": "C5199842", "package": "MSOP-8"},     # a DIFFERENT land
+    {"code": "C52121503", "package": "DFN-8(3x3)"},
+]
+
+
+def test_a_term_may_name_a_SET_of_packages_for_one_land():
+    # Picking a single string would throw away half the land's parts — and the
+    # better half at that. The net cannot express it (the index takes one
+    # `package`), so the sieve does, which is where the proving belonged anyway.
+    src = LyingIndex(SP3485)
+    got = run_search(src, {
+        "mode": "fts", "category": "components", "net": {"search": "SP3485"},
+        "sieve": [{"field": "package", "op": "in",
+                   "value": ["SOIC-8", "SOP-8"]}]})
+    assert src.queries == [{"category": "components",
+                            "params": {"search": "SP3485"}}]
+    assert [c["code"] for c in got["candidates"]] == ["C8963", "C668205"]
+    missed = {c["code"]: c["failed"][0]["why"] for c in got["misses"]}
+    assert set(missed) == {"C5199842", "C52121503"}
+    # the reason names what it IS and what was wanted — readable, not a code
+    assert missed["C5199842"] == "is 'MSOP-8', not SOIC-8 or SOP-8"

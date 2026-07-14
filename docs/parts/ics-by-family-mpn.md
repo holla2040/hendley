@@ -28,15 +28,117 @@ So there is exactly **one** discovery surface for a family name:
 FTS over part **names**, prefix-matching, in-stock rows only. Rows carry `lcsc`,
 `mfr` (which is the full **MPN**, not the maker), `package`, `stock`.
 
-⚠️ **`components` takes NO package param.** Package is a *per-category* filter and
-`components` is its own table. So you cannot ask "MAX232 in SOIC-16" in one query.
-**Search the family, then sieve the package yourself** against the footprint. This
-is not a limitation to work around — it is the whole job.
+**`components` DOES honour `package`** (measured 2026-07-13 — an earlier draft of this
+note said the opposite, and it was wrong):
+
+    ?search=SP3485                 → 19 rows
+    ?search=SP3485&package=SOIC-8  → exactly the 2 SOIC-8 parts
+    ?search=SP3485&package=BOGUS-9 → 0 rows
+
+So the whole query is **family + package**, and it is tight: `ULN2003`+`SOIC-16` → 11
+rows · `PCF8574`+`SOIC-16-300mil` → 5 · `MB10S`+`MBS` → 40 · `SP3485`+`SOIC-8` → 2 ·
+`LTV-352T`+`SOP-4-2.54mm` → 1.
+
+`is_basic` is honoured too. ⚠️ **`stock_min` is SILENTLY IGNORED** — `stock_min=999999999`
+still returns all 19 rows. Never filter stock at the index; verify it live.
+
+The package is still **re-asserted as a sieve term**, because a param the index quietly
+drops is exactly how a TSSOP part reaches a 150-mil land with nothing on screen saying so.
 
 ⚠️ **The index's `stock` is a stale snapshot and can be off by 100×.** Measured:
 `LTV-352T` (C10800) read **128,222 in the index and 1,295 live**. Never quote index
 stock. Every candidate that survives the package sieve goes through
 `hendley detail <code>` before it is shown to anyone.
+
+## ⚠️ The CLASS is a label. It is not a query, and it is not a sieve term.
+
+Tempting, and wrong twice over.
+
+**Not a query.** `?search=optocoupler` returns 100 rows — the cap — topped by *LEDs*
+(`KT-0603R`, `KT-0805Y`), spanning LEDs, IR LEDs and three optocoupler subcategories.
+`?search=LTV-352T` returns exactly **1**. FTS ANDs tokens against part NAMES, so a class
+word matches everything and nothing. There is also no `optocouplers` and no
+`bridge_rectifiers` slug among the 44 categories: even knowing the class, there is no
+parametric table to point at.
+
+**Not a sieve term either — the INDEX's `subcategory` column disagrees with the catalog
+on the very parts in front of you:**
+
+| code | CATALOG `secondTypeName` | INDEX `subcategory` |
+|---|---|---|
+| C8963 | `RS-485 / RS-422 ICs` | `RS-485/RS-422 ICs` |
+| C2692302 | `RS-485 / RS-422 ICs` | **`Buffers / Drivers`** ← same family |
+| C108824 | `Bridge Rectifiers` | `Bridge Rectifiers` |
+| C2886577 | `Bridge Rectifiers` | **`Diodes - General Purpose`** ← same part |
+
+C2886577 is an MB10S **mounted on a real board here**. A plan sieving on `subcategory`
+would have rejected the part already on the board — the `is_schottky` / `is_polarized`
+failure mode: **zero results while looking like it filtered.**
+
+Note which side is wrong: **the CATALOG is consistent across both pairs. The INDEX is
+not.** `components.category` and `components.subcategory` now live in
+`UNPROVABLE_COLUMNS` and are not offered to the agent.
+
+So: read the class off the **catalog** once a part is in hand, use it to pick the right
+note and to describe the part on screen — and let it find nothing and reject nothing.
+
+## ⚠️ Never GUESS the package. Read it off the catalog's own list.
+
+The trap that cost the most, because the guess looks completely reasonable:
+
+| the library's footprint | what you'd naturally judge | what the CATALOG actually calls it |
+|---|---|---|
+| `SOIC-4` (a bridge rectifier) | `SOIC-4` | **`MBS`** |
+| `SOP04` (a 4-pin optocoupler) | `SOP-4` | **`SOP-4-2.54mm`** |
+
+`?search=MB10S&package=SOIC-4` → **0 rows**. `?search=LTV-352T&package=SOP-4` → **0 rows**.
+Not because JLC lacks the part — it has 40 of one and 1 of the other — but because that is
+not the word the catalog uses. **A wrong package returns zero while looking exactly like a
+family JLC does not stock**, which is the worst possible failure: it is indistinguishable
+from a true answer.
+
+So the package is never invented. Ask the catalog for the family with **no package at
+all**, read off the packages it actually stocks it in, and choose from *that* list:
+
+    ?search=MB10S     → MBS (40 parts) · SMD-4P (2) · SOP-4 (2) · IBS (1)
+    ?search=LTV-352T  → SOP-4-2.54mm (1)
+
+The footprint's geometry then decides *which* of them when there is a choice (150-mil
+`SOIC-16` vs 300-mil `SOIC-16-300mil`). The library's name proposes; the catalog's list
+disposes.
+
+### …and take ALL the catalog's words for that one land, not one of them
+
+The catalog spells a single land several ways, and **the different spellings hold
+different parts**:
+
+    ?search=SP3485&package=SOIC-8  → 2 parts.  Best: C8963, 327k in stock, BASIC
+    ?search=SP3485&package=SOP-8   → 10 parts. Best: C668205, 145k, extended
+
+Both are the 3.9 mm 8-pin body. Same land. A search forced to pick one string throws
+away half the field — and here it would have thrown away the **Basic part with 7× the
+stock**, while looking like a complete answer.
+
+So the land is a **set** of catalog words, and the sieve carries it as one term:
+
+    {"field": "package", "op": "in", "value": ["SOIC-8", "SOP-8"]}
+
+The index takes only one `package` per request, so a set means **one request per
+spelling**, unioned into one table. Do NOT instead widen the net to the bare family:
+
+    ?search=1N4148   → 100 rows   ⚠️ CAPPED
+    ?search=LM358    → 100 rows   ⚠️ CAPPED
+    ?search=AMS1117  → 100 rows   ⚠️ CAPPED   (and `limit=500` changes nothing)
+
+**The listing cap is a hard 100 and cannot be raised.** A bare-family net would quietly
+truncate a popular part; a package-filtered one is far under it (`SP3485`+`SOIC-8` → 2,
+`ULN2003`+`SOIC-16` → 11). Every request still carries the whole set as its sieve term, so
+a part is proven against the **land**, not against the one spelling that happened to fetch
+it. The rejects read plainly: *`is 'MSOP-8', not SOIC-8 or SOP-8`*.
+
+⚠️ A different BODY is a different land, not another spelling: 150-mil `SOIC-16` and
+300-mil `SOIC-16-300mil` are **not** interchangeable, and neither is a TSSOP, a DIP or a
+QFN. The geometry is what tells them apart.
 
 ## Read the footprint's geometry, not its name
 

@@ -117,8 +117,19 @@ def _query(plan: dict) -> dict | None:
         return None                       # a part number needs no discovery
     if mode == "fts":
         search = str(net.get("search") or "").strip()
-        return ({"category": "components", "params": {"search": search}}
-                if search else None)
+        if not search:
+            return None
+        # ``components`` DOES honour ``package`` (measured 2026-07-13:
+        # search=SP3485 → 19 rows, +package=SOIC-8 → the 2 SOIC-8 parts,
+        # +package=BOGUS-9 → 0). This is what makes a FAMILY searchable: the
+        # designer typed "ULN2003" and the board decides which of the eleven
+        # ULN2003s can go on it. Dropping the package here — as this did —
+        # meant a family search returned every package it ships in.
+        params = {"search": search}
+        package = str(net.get("package") or "").strip()
+        if package:
+            params["package"] = package
+        return {"category": "components", "params": params}
     category = str(plan.get("category") or "").strip()
     return {"category": category, "params": net} if category else None
 
@@ -160,8 +171,16 @@ def _full_sieve(plan: dict) -> list[dict]:
             continue
         seen[key] = len(sieve)
         sieve.append(dict(term))
-    if plan.get("mode") != "parametric":
-        return sieve            # a keyword/code search states no terms to prove
+    if plan.get("mode") == "code":
+        return sieve            # a part number states no terms to prove
+    # Every OTHER mode re-asserts its net — including "fts". A keyword search
+    # that carries a package is exactly the family case (ULN2003 + SOIC-16),
+    # and it is the one search where trusting the net is least affordable:
+    # the words match a NAME, so if the package were quietly dropped the
+    # engineer would be handed a TSSOP part for a 150-mil land and nothing on
+    # screen would say so. ``search`` itself is not in NET_COLUMNS and earns no
+    # term — a name match is not a spec, and pretending otherwise would prove a
+    # part right for the wrong reason.
     for param, column in NET_COLUMNS.items():
         if param in (plan.get("net") or {}) and _squash(column) not in seen:
             seen[_squash(column)] = len(sieve)
@@ -274,6 +293,16 @@ def _compare(have: Any, op: str, want: Any, unit: str = "") -> tuple[bool, str]:
     if op == "contains":
         return (str(want).casefold() in str(have).casefold(),
                 f"{have!r} does not contain {want!r}")
+    if op == "in":
+        # ONE land, several of the catalog's words for it. JLC spells the 3.9mm
+        # 8-pin body both "SOIC-8" and "SOP-8", and they hold DIFFERENT parts —
+        # the Basic 327k-stock SP3485 is under SOIC-8 and would simply be missed
+        # by a search that had to pick one string. So a term may name a set.
+        wanted = want if isinstance(want, (list, tuple)) else [want]
+        shown = " or ".join(str(w) for w in wanted)
+        return (any(str(have).strip().casefold() == str(w).strip().casefold()
+                    for w in wanted),
+                f"is {have!r}, not {shown}")
     if op in NUMERIC_OPS:
         if h is None or w is None:
             return False, _uncheckable(have, unit)

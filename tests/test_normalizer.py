@@ -38,6 +38,58 @@ def test_mpn_line_carries_manufacturer_attribute():
     assert (line.mpn, line.manufacturer) == ("AMS1117-3.3", "AMS")
 
 
+def test_a_family_in_the_value_is_a_seed_not_a_spec():
+    # The designer types ULN2003 into the VALUE, because the value shows on the
+    # schematic. That is a family: it ships in SOIC-16, SOP-16, TSSOP-16 and DIP-16,
+    # and the FOOTPRINT decides which of them may go on this board.
+    part = DesignPart(designator="U1", value="ULN2003", footprint="SO16",
+                      footprint_headline="Small Outline package 150 mil")
+    line = requirements_from_design(None, [part], 1).lines[0]
+    assert line.family == "ULN2003"
+    assert line.mode is None                # NOT pinned — nothing to order yet
+    assert line.footprint == "SO16"
+    assert line.footprint_headline == "Small Outline package 150 mil"
+
+
+def test_a_family_in_the_mpn_attribute_does_not_pin_the_line():
+    # THE BUG THIS FIXES. A family in the MPN attribute used to land in `mpn`, so
+    # the line was PINNED: Hendley treated "ULN2003" as an exact orderable part,
+    # never sieved it, and shipped it to the resolver as if it were real.
+    part = DesignPart(designator="U1", manufacturer_part="ULN2003",
+                      footprint="SO16", attributes={"MPN": "ULN2003"})
+    line = requirements_from_design(None, [part], 1).lines[0]
+    assert line.family == "ULN2003"
+    assert line.mpn is None and line.mode is None
+
+
+def test_the_mpn_attribute_outranks_the_value_as_the_family():
+    part = DesignPart(designator="U1", value="a darlington array",
+                      manufacturer_part="ULN2003", footprint="SO16")
+    assert requirements_from_design(None, [part], 1).lines[0].family == "ULN2003"
+
+
+def test_a_family_needs_a_footprint_to_be_resolvable():
+    # family + footprint → package → the parts. With no footprint there is nothing
+    # to narrow with, and searching a bare family would offer every package it
+    # ships in. That stays a decision for the engineer.
+    part = DesignPart(designator="U1", value="ULN2003")
+    assert requirements_from_design(None, [part], 1).lines[0].family is None
+
+
+def test_a_pinned_part_is_never_treated_as_a_family():
+    part = DesignPart(designator="U3", value="MB10S", jlc_code="C2886577",
+                      footprint="SOIC-4")
+    line = requirements_from_design(None, [part], 1).lines[0]
+    assert line.family is None and line.mode == "provider"
+
+
+def test_a_passive_states_a_spec_and_is_never_a_family():
+    # "22k" is a value, not a family. R/C/L keep the deterministic spec path.
+    part = DesignPart(designator="R1", value="22k", footprint="R-0603")
+    line = requirements_from_design(None, [part], 1).lines[0]
+    assert line.family is None and line.mode == "spec"
+
+
 def test_dnp_attribute_and_populate_flag_mark_but_keep_lines():
     parts = [_part("TP1", attrs={"DNP": "1"}), _part("J2", "CONN-2")]
     placements = [Placement("J2", x=0, y=0, angle=0, populate=False)]
@@ -91,3 +143,11 @@ def test_equivalent_value_spellings_group_by_spec():
     # what matters: both lines carry the SAME spec key
     specs = {ln.spec for ln in bom.lines}
     assert len(specs) == 1 and next(iter(specs)).value == "100n"
+
+
+def test_a_dnp_part_names_no_family():
+    # a DNP part's VALUE is often literally "DNP". Searching for it would fire a
+    # nonsense query — and a paid web lookup — for a part that is not being fitted.
+    part = DesignPart(designator="U9", value="DNP", footprint="SO16")
+    line = requirements_from_design(None, [part], 1).lines[0]
+    assert line.dnp is True and line.family is None

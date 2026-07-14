@@ -75,6 +75,16 @@ def test_a_column_that_cannot_prove_anything_is_never_offered():
     # the specific ones that cost us a search
     assert "is_polarized" not in CATEGORY_COLUMNS["capacitors"]
     assert "is_schottky" not in CATEGORY_COLUMNS["diodes"]
+
+    # The index's own CLASS columns. It disagrees with the catalog on the very
+    # parts in front of us (measured 2026-07-13): the catalog files BOTH SP3485s
+    # as "RS-485 / RS-422 ICs" and BOTH MB10S parts as "Bridge Rectifiers", while
+    # the index calls C2692302 a "Buffers / Drivers" and C2886577 a "Diodes -
+    # General Purpose". C2886577 is an MB10S mounted on a real board here — a plan
+    # sieving on subcategory would have rejected the part already on the board.
+    # The class comes from the CATALOG's secondTypeName. Never from the index.
+    assert "subcategory" not in CATEGORY_COLUMNS["components"]
+    assert "category" not in CATEGORY_COLUMNS["components"]
     # a category stripped to `package` alone is an HONEST answer, not a gap: the
     # index cannot filter it, so the catalog's parameters must do the proving
     assert CATEGORY_COLUMNS["fpgas"] == ("package",)

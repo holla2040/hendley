@@ -20,7 +20,14 @@ Extraction rules (verified live, documented in ``docs/fusion-notes.md``):
   anything but ``0`` (test points, mount holes, programming pads), a part
   VALUE of literally ``DNP``, or the board element's ``populate`` flag off —
   are carried but flagged via :func:`is_dnp` / ``Placement.populate``.
-- The JLC code is the ``LCSC`` attribute; MPN is ``MPN`` (fallback ``MP``).
+- The JLC code is the ``LCSC`` attribute; the MPN is ``MPN`` and **only** ``MPN``.
+  The legacy ``MP``/``MF`` attributes are stale SnapEDA imports and are NEVER an
+  identity (they said ``MB6S`` — 600 V — on a part whose VALUE said ``MB10S`` —
+  1000 V).
+- The library FOOTPRINT and its geometry come from ``electronics.Device`` →
+  ``electronics.Package`` (``name`` + ``headline``), read schematic-side with no
+  ``BOARD;`` switch. The headline is what distinguishes a 150-mil ``SO16`` from a
+  300-mil one; the name alone cannot.
 - Board entities read empty until the board is the engine's current drawing;
   ``BOARD;`` switches it (without raising the board window). There is no
   command back — the user re-activates the schematic in the Fusion UI.
@@ -85,14 +92,25 @@ def is_dnp(part: DesignPart) -> bool:
     return (part.value or "").strip().upper() == "DNP"
 
 
-def part_from_row(part_row: dict, attrs: dict[str, str]) -> DesignPart:
-    """Map a Part row + its attributes onto the :class:`DesignPart` contract."""
+def part_from_row(part_row: dict, attrs: dict[str, str],
+                  footprint: dict | None = None) -> DesignPart:
+    """Map a Part row + its attributes onto the :class:`DesignPart` contract.
+
+    The MPN is the ``MPN`` attribute and **only** that. The legacy ``MP`` is NOT
+    an identity and is never read here (Craig, 2026-07-13 — it is being retired):
+    on a real board it said ``MB6S`` where the schematic VALUE said ``MB10S``, and
+    those are a 600 V part and a 1000 V part. A stale SnapEDA import must not get
+    to decide what gets soldered down.
+    """
+    footprint = footprint or {}
     return DesignPart(
         designator=part_row["name"],
-        manufacturer_part=attrs.get("MPN") or attrs.get("MP"),
+        manufacturer_part=attrs.get("MPN"),
         jlc_code=attrs.get("LCSC"),
         value=part_row.get("value"),
         package=attrs.get("PACKAGE"),
+        footprint=footprint.get("name"),
+        footprint_headline=footprint.get("headline"),
         quantity=1,
         attributes=dict(attrs),
     )
@@ -114,9 +132,23 @@ def extract_schematic(bridge: FusionBridge) -> tuple[str, list[DesignPart]]:
             "(board→schematic has no command; click the schematic tab) and check for "
             "open modal dialogs"
         )
-    # device id → has a 2D footprint (rows can repeat; the dict dedupes)
-    device_footprint = {d["object_id"]: bool(d.get("package_object_id"))
-                        for d in bridge.read_all("electronics.Device")}
+    # The library FOOTPRINT, read schematic-side — no BOARD; switch needed. The
+    # device already names its package; joining electronics.Package gives us the
+    # footprint's NAME and, crucially, its HEADLINE, which is where the geometry
+    # lives ("Small Outline package 150 mil"). This used to be thrown away — the
+    # package id was coerced to bool() and discarded — leaving "SO16" as the only
+    # evidence of a land, which is not enough to tell a 3.9mm body from a 7.5mm one.
+    packages = {p["object_id"]: {"name": p.get("name"),
+                                 "headline": (p.get("headline") or "").strip() or None}
+                for p in bridge.read_all("electronics.Package")}
+    devices = bridge.read_all("electronics.Device")
+    # Whether the part is REAL stays keyed on the package id, exactly as before —
+    # never on the joined row. The geometry is an enrichment, and an enrichment
+    # that fails must not delete the BOM: if electronics.Package reads empty, we
+    # lose the headline and still ship every part.
+    device_footprint = {d["object_id"]: bool(d.get("package_object_id")) for d in devices}
+    device_package = {d["object_id"]: packages.get(d.get("package_object_id"))
+                      for d in devices}
     parts: list[DesignPart] = []
     for row in part_rows:
         attr_rows = bridge.read_all(
@@ -126,7 +158,8 @@ def extract_schematic(bridge: FusionBridge) -> tuple[str, list[DesignPart]]:
         attrs = {a["name"]: a["value"] for a in attr_rows}
         has_footprint = device_footprint.get(row.get("device_object_id"), False)
         if not is_pseudo_part(row, attrs, has_footprint):
-            parts.append(part_from_row(row, attrs))
+            parts.append(part_from_row(row, attrs,
+                                       device_package.get(row.get("device_object_id"))))
     parts.sort(key=lambda p: natural_key(p.designator))
     return design, parts
 

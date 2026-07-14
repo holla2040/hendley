@@ -123,6 +123,22 @@ UNPROVABLE_COLUMNS: dict[str, tuple[str, ...]] = {
     "analog_switches": ("channel_type",),
     "capacitors": ("esr_ohms", "ripple_current_amps", "is_polarized",
                    "capacitor_type"),
+    # The index's own CLASS columns, and they disagree with the catalog on the
+    # very parts you are looking at (measured 2026-07-13):
+    #
+    #   code       CATALOG secondTypeName   INDEX subcategory
+    #   C8963      RS-485 / RS-422 ICs      RS-485/RS-422 ICs
+    #   C2692302   RS-485 / RS-422 ICs      "Buffers / Drivers"      ← same family
+    #   C108824    Bridge Rectifiers        Bridge Rectifiers
+    #   C2886577   Bridge Rectifiers        "Diodes - General Purpose" ← same part!
+    #
+    # C2886577 is an MB10S sitting on a real board here. A plan that sieved
+    # `subcategory eq "Bridge Rectifiers"` would have rejected the part already
+    # mounted, while looking like it filtered. The CATALOG's secondTypeName is
+    # consistent across both pairs — it is the INDEX that is wrong — which is
+    # exactly why ADR-0007 says a part's class comes from the catalog and never
+    # from an index column. Same failure mode as `is_schottky`; same rule.
+    "components": ("category", "subcategory"),
     "dacs": ("num_channels",),
     "diodes": ("forward_current", "power_dissipation_watts", "diode_type",
                "is_schottky", "is_zener", "is_tvs"),
@@ -225,7 +241,9 @@ CATEGORY_COLUMNS: dict[str, tuple[str, ...]] = {
     "led_with_ic": ("package",),
     "gas_sensors": ("package",),
     "pcie_m2_connectors": ("key", "is_right_angle"),
-    "components": ("package", "category", "subcategory", "is_basic"),
+    # `category`/`subcategory` are the index's CLASS columns and they are a LIE —
+    # see UNPROVABLE_COLUMNS. The class comes from the catalog's secondTypeName.
+    "components": ("package", "is_basic"),
 }
 
 # Categories the index publishes but which are EMPTY (probed live) — searching

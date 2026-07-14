@@ -47,11 +47,35 @@ def test_pseudo_part_rules():
 def test_part_from_row_maps_attributes():
     p = part_from_row(
         {"name": "R6", "value": "220", "object_id": 5},
-        {"LCSC": "C29719", "MP": "4D03WGJ0221T5E", "PACKAGE": "0603x4"},
+        {"LCSC": "C29719", "MPN": "4D03WGJ0221T5E", "PACKAGE": "0603x4"},
     )
     assert p.jlc_code == "C29719"
-    assert p.manufacturer_part == "4D03WGJ0221T5E"  # MP fallback when MPN absent
+    assert p.manufacturer_part == "4D03WGJ0221T5E"
     assert p.value == "220" and p.package == "0603x4"
+
+
+def test_the_legacy_mp_attribute_is_never_an_identity():
+    # MP is a stale SnapEDA import and is being retired. On a real board it read
+    # MB6S — a 600V bridge — on a part whose schematic VALUE said MB10S, a 1000V
+    # one. It must not get to decide what is soldered down.
+    p = part_from_row(
+        {"name": "U4", "value": "MB10S", "object_id": 9},
+        {"MP": "MB6S", "MF": "ON Semiconductor", "PACKAGE": "SOIC-4"},
+    )
+    assert p.manufacturer_part is None      # NOT "MB6S"
+    assert p.value == "MB10S"               # the design's own word stands
+    assert p.attributes["MP"] == "MB6S"     # still carried, just never obeyed
+
+
+def test_the_footprints_geometry_is_carried_not_thrown_away():
+    # "SO16" is a local name that cannot tell a 3.9mm body from a 7.5mm one. The
+    # headline can, and it is the only thing that can.
+    p = part_from_row(
+        {"name": "U1", "value": "ULN2003", "object_id": 3}, {},
+        {"name": "SO16", "headline": "Small Outline package 150 mil"},
+    )
+    assert p.footprint == "SO16"
+    assert p.footprint_headline == "Small Outline package 150 mil"
 
 
 def test_bom_groups_identical_parts_and_sorts_designators():

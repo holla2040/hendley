@@ -21,6 +21,7 @@ import json
 import os
 import re
 import subprocess
+from collections.abc import Sequence
 from typing import Any
 
 from ..domain.model import SpecKey
@@ -80,11 +81,22 @@ You are the footprint-normalization step of an electronics BOM tool.
 A schematic library carries this footprint name, verbatim:
 {footprint}
 
+The library's OWN description of that footprint (empty if it gives none).
+When it states a body width, a pitch or a span, THAT IS THE ANSWER and it
+outranks anything you would infer from the name — the name is a local
+convention and the geometry is a measurement:
+{headline}
+
 Map it to the industry package it denotes, in catalog spelling:
 - a standard chip size (0201/0402/0603/0805/1206/1210/2010/2512) → that
   size ("C-0603" → "0603").
 - an embedded standard package name → the catalog form as distributors
   list it (e.g. "D-SOD323" → "SOD-323").
+- BODY WIDTH IS PART OF THE PACKAGE, and it is where this goes wrong. A
+  16-pin small-outline part is "SOIC-16" at a 3.9mm body (150 mil) and
+  "SOIC-16-300mil" at a 7.5mm one — different lands, different parts. A
+  name like "SO16" does not say which; a headline reading "150 mil", or
+  "10.32 mm span, 10.30 X 7.50", does. Use it.
 - if no standard package is recognizable, package is "" — the library
   name keys the database instead; never guess.
 Also your best reading of the footprint's physical envelope: mount "smd"
@@ -353,6 +365,80 @@ Answer with ONLY this JSON object, no prose, no code fences:
   "say": "...", "confidence": 0.0}}
 """
 
+FAMILY_PROMPT = """\
+You are the part-identification step of an electronics BOM tool. A designer
+labelled a component with a FAMILY — an incomplete part number — and the
+board carries a footprint. Your job is to say which member of that family
+may actually go on that board, and what would go wrong if the wrong one did.
+
+USE WEB SEARCH. The catalog cannot answer this: it lists what is in stock, not
+what the suffixes MEAN. The manufacturer's datasheet ordering table can.
+
+The family the designer typed (verbatim):
+{family}
+
+The footprint on the board, and the library's own description of it (the
+description is a measurement and outranks the name):
+  name:     {footprint}
+  geometry: {headline}
+
+THE PACKAGES THE CATALOG ACTUALLY STOCKS THIS FAMILY IN, with how many parts
+sit in each. This is the catalog's OWN vocabulary, and it is the only spelling
+that will match anything:
+{packages}
+
+Find, from the datasheet / distributor pages:
+
+0. packages: EVERY catalog package listed above that is THIS SAME LAND — the one
+   the board has. Copy them VERBATIM from that list; a package the catalog does
+   not use finds nothing, however right it looks. Two things go wrong here:
+
+   - GUESSING. A bridge rectifier's land is called "SOIC-4" by the library and
+     "MBS" by the catalog; a 4-pin optocoupler's is "SOP04" in the library and
+     "SOP-4-2.54mm" in the catalog. Neither is guessable — both are in the list.
+
+   - PICKING ONLY ONE. The catalog spells ONE land several ways, and the
+     different spellings hold DIFFERENT parts. The 3.9mm 8-pin body is both
+     "SOIC-8" and "SOP-8": the Basic, 327k-in-stock SP3485 sits under SOIC-8 and
+     a search that chose SOP-8 never sees it. So name them ALL.
+
+   But ONLY the ones that are the same land. BODY WIDTH IS A DIFFERENT LAND:
+   150-mil "SOIC-16" and 300-mil "SOIC-16-300mil" are NOT interchangeable, and
+   nor is a TSSOP, a DIP or a QFN. Use the geometry to decide.
+   If none of them is this footprint, return [] and say why. [] is honest;
+   a wrong package is not.
+
+1. partNumbers: the COMPLETE, orderable part numbers of this family that fit
+   THIS footprint — most-standard first. Decode the suffix: for ULN2003, "D"
+   is a 3.9mm-body SOIC and "NS" is a 5.3mm-body SOP, so a 150-mil land wants
+   a ULN2003ADR and NOT a ULN2003ANSR. Give the base part numbers; do not
+   worry about tape-and-reel suffixes.
+   If you cannot tell which fits, return [] and SAY SO in rationale. An empty
+   list is an honest answer. A guessed part number is not.
+
+2. class: what this part IS, in plain words ("bridge rectifier", "RS-485
+   transceiver", "I2C I/O expander"). For the panel — a label, nothing more.
+
+3. traps: the parts that FIT THE SAME LAND but are NOT the same part. This is
+   the whole point of asking you, and it is where a board gets ruined. Each is
+   {{"part": "<the lookalike>", "why": "<what differs, concretely>"}}. Real
+   examples of exactly what to catch:
+     - PCF8574 vs PCF8574A — a DIFFERENT I2C base address (0x20 vs 0x38).
+       Identical package. The firmware will not find it.
+     - MB10S (1000V) vs MB6S (600V) — same MBS package, 40% less standoff.
+     - LTV-352T (CTR 1000-5000%) vs LTV-357T / EL357N (CTR 50-600%) — same
+       SOP-4 land, 3-5x less current transfer.
+     - a temperature grade (SP3485EN = -40..+85C, SP3485CN = 0..+70C).
+   Only state a trap you actually verified. [] is fine. NEVER invent one.
+
+confidence: 0..1, honest.
+
+Answer with ONLY this JSON object, no prose, no code fences:
+{{"packages": ["..."], "partNumbers": ["..."], "class": "...",
+  "traps": [{{"part": "...", "why": "..."}}],
+  "rationale": "...", "confidence": 0.0}}
+"""
+
 KEY_PROMPT = """\
 You are the bookkeeping step of an electronics BOM tool. The engineer just
 approved a part for a design line. Name the REQUIREMENT that part satisfies
@@ -392,7 +478,7 @@ Answer with ONLY this JSON object, no prose, no code fences:
   "rationale": "one short sentence", "confidence": 0.0}}
 """
 
-SIEVE_OPS = ("eq", "ne", "lte", "gte", "lt", "gt", "contains",
+SIEVE_OPS = ("eq", "ne", "lte", "gte", "lt", "gt", "contains", "in",
              "isTrue", "isFalse")
 TRUTH_OPS = ("isTrue", "isFalse")
 
@@ -455,13 +541,19 @@ class ClaudeCLIInterpreter:
             return None
         return self._parse(obj)
 
-    def interpret_footprint(self, footprint: str) -> dict | None:
+    def interpret_footprint(self, footprint: str,
+                            headline: str = "") -> dict | None:
         """Judge one library footprint name → its catalog package (+envelope).
+
+        ``headline`` is the library's own description of the footprint, and it is
+        the only honest way to tell a 3.9mm body from a 7.5mm one: "SO16" is a
+        local convention, "Small Outline package 150 mil" is a measurement.
 
         Returns ``{"package", "envelope", "confidence", "rationale"}`` or
         None on any failure. An empty ``package`` is a valid, honest answer
         (nothing standard recognizable)."""
-        obj = self._ask(FOOTPRINT_PROMPT.format(footprint=footprint))
+        obj = self._ask(FOOTPRINT_PROMPT.format(
+            footprint=footprint, headline=headline or "(the library gives none)"))
         if obj is None or "package" not in obj:
             return None
         env = obj.get("envelope") or {}
@@ -474,6 +566,75 @@ class ClaudeCLIInterpreter:
             "envelope": {k: v for k, v in env.items() if v not in (None, 0, "")},
             "confidence": confidence,
             "rationale": str(obj.get("rationale") or ""),
+        }
+
+    def read_family(self, family: str, footprint: str = "", headline: str = "",
+                    packages: Sequence[tuple[str, int]] = ()) -> dict | None:
+        """What may go on this board, given a FAMILY and the footprint under it.
+
+        The one judgment that needs the WEB. The catalog lists what is in stock;
+        it does not say what a part-number suffix MEANS, and it will not tell you
+        that a PCF8574A is a different I2C address from a PCF8574 in an identical
+        body. The datasheet's ordering table says both.
+
+        ``packages`` is the catalog's OWN list of packages it stocks this family
+        in, with counts — and handing it over is what makes the answer land. A
+        package judged from the footprint name alone is a plausible guess against
+        the catalog's actual word: the library calls a bridge rectifier's land
+        ``SOIC-4`` and the catalog calls it ``MBS``; the library says ``SOP04``
+        and the catalog says ``SOP-4-2.54mm``. Both guesses return ZERO rows
+        while looking perfectly reasonable. So the agent CHOOSES from the
+        catalog's vocabulary instead of inventing a word in it.
+
+        It chooses **all** the words for one land, not one of them: the catalog
+        spells the 3.9mm 8-pin body both ``SOIC-8`` and ``SOP-8``, and they hold
+        DIFFERENT parts — the Basic, 327k-in-stock SP3485 is under ``SOIC-8``, so
+        a search that had to pick one string would simply never see it.
+
+        Returns ``{"packages", "partNumbers", "class", "traps", "rationale",
+        "confidence"}``, or None if the interpreter is unavailable. An EMPTY
+        ``partNumbers`` is an honest answer, not a failure: the catalog sweep
+        still finds the parts, including the ones the web never names — JLC's
+        house brands, frequently the better buy. What the web adds is knowing
+        WHICH of them is right, and what is merely lurking in the same land.
+        """
+        if not str(family or "").strip():
+            return None
+        offered = {str(p) for p, _ in packages}
+        listing = "\n".join(f"  {p}  ({n} parts)" for p, n in packages)
+        obj = self._ask(
+            FAMILY_PROMPT.format(
+                family=family,
+                footprint=footprint or "(none given)",
+                headline=headline or "(the library gives none)",
+                packages=listing or "  (the catalog stocks none of this family)"),
+            tools="WebSearch",
+        )
+        if obj is None:
+            return None
+        # every package must be one the CATALOG uses. A word it does not use finds
+        # nothing, so an invented one is dropped rather than fired.
+        chosen = [str(p).strip() for p in (obj.get("packages") or [])
+                  if str(p).strip()]
+        packages_out = [p for p in chosen if not offered or p in offered]
+        traps = [
+            {"part": str(t.get("part") or "").strip(),
+             "why": str(t.get("why") or "").strip()}
+            for t in (obj.get("traps") or []) if isinstance(t, dict)
+            and str(t.get("part") or "").strip() and str(t.get("why") or "").strip()
+        ]
+        try:
+            confidence = max(0.0, min(1.0, float(obj.get("confidence") or 0.0)))
+        except (TypeError, ValueError):
+            confidence = 0.0
+        return {
+            "packages": packages_out,
+            "partNumbers": [str(p).strip() for p in (obj.get("partNumbers") or [])
+                            if str(p).strip()],
+            "class": str(obj.get("class") or "").strip(),
+            "traps": traps,
+            "rationale": str(obj.get("rationale") or ""),
+            "confidence": confidence,
         }
 
     def read_part(self, dossier: dict) -> dict | None:
@@ -600,12 +761,22 @@ class ClaudeCLIInterpreter:
                 "rationale": str(obj.get("rationale") or ""),
                 "confidence": confidence}
 
-    def _ask(self, prompt: str) -> dict | None:
-        """Run ``claude -p`` and return the extracted JSON object, or None."""
+    def _ask(self, prompt: str, tools: str = "") -> dict | None:
+        """Run ``claude -p`` and return the extracted JSON object, or None.
+
+        ``tools`` opts one judgment into Claude Code's tools (``"WebSearch"``).
+        It is off by default and stays off for every judgment that the catalog
+        can answer: a web call is slow and costs money, and a judgment that CAN
+        be made from data we hold should never be made from a search result.
+        Only :meth:`read_family` needs it — what a part-number suffix MEANS is
+        in the datasheet's ordering table and nowhere in the catalog.
+        """
+        argv = [self.binary, "-p", prompt, "--output-format", "json"]
+        if tools:
+            argv += ["--allowedTools", tools]
         try:
             proc = subprocess.run(
-                [self.binary, "-p", prompt, "--output-format", "json"],
-                capture_output=True, text=True, timeout=self.timeout,
+                argv, capture_output=True, text=True, timeout=self.timeout,
             )
         except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
             return None

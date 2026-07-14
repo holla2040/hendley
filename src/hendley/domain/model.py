@@ -117,7 +117,17 @@ class RequirementLine:
     quantity_per: int = 1  # per-designator quantity
     dnp: bool = False  # carried + reported, excluded from resolution/output
     comment: str | None = None  # value/description (order-file Comment column)
-    footprint: str | None = None
+    footprint: str | None = None  # the LIBRARY's name for the land, e.g. "SO16"
+    # …and that footprint's own geometry, verbatim from the library. "SO16" cannot
+    # tell a 3.9mm body from a 7.5mm one; "Small Outline package 150 mil" can.
+    footprint_headline: str | None = None
+    # The FAMILY: an incomplete part number the designer typed — "ULN2003",
+    # "MB10S", "SP3485". It is NOT a selection mode and deliberately NOT `mpn`: a
+    # family is a DEFAULT, not a lock. Pinning it (which is what happens today
+    # when it lands in `mpn`) ships a part number nobody can order, unsieved. It
+    # is a discovery seed — family + footprint → package → the parts — and it
+    # coexists with whatever mode the line ends up in.
+    family: str | None = None
     note: str | None = None
     spec: SpecKey | None = None  # requirements-defined → AVL resolution
     mpn: str | None = None  # manufacturer-constrained
@@ -172,6 +182,10 @@ class RequirementLine:
             d["comment"] = self.comment
         if self.footprint is not None:
             d["footprint"] = self.footprint
+        if self.footprint_headline is not None:
+            d["footprintHeadline"] = self.footprint_headline
+        if self.family is not None:
+            d["family"] = self.family
         if self.note is not None:
             d["note"] = self.note
         if self.spec is not None:
@@ -207,6 +221,8 @@ class RequirementLine:
             dnp=bool(d.get("dnp", False)),
             comment=d.get("comment"),
             footprint=d.get("footprint"),
+            footprint_headline=d.get("footprintHeadline"),
+            family=d.get("family"),
             note=d.get("note"),
             spec=spec,
             mpn=d.get("mpn"),

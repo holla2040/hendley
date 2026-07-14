@@ -828,3 +828,288 @@ def test_a_plan_that_sieves_on_a_lying_column_is_thrown_away(tmp_path):
     assert interp.plans == 1
     assert not any(t["field"] == "is_polarized" for t in got["planned"]["sieve"])
     assert [c["code"] for c in got["candidates"]] == ["C_OK"]
+
+
+# --------------------------------------------------------------------------
+# The FAMILY (ADR-0008). A designer types "ULN2003" into the schematic VALUE.
+# That is not a part: it ships in five packages and the board decides which one.
+# --------------------------------------------------------------------------
+
+# the real catalog rows for this family (measured 2026-07-13)
+ULN2003_ROWS = [
+    {"code": "C7512", "package": "SOIC-16"},          # D suffix: 3.9mm body
+    {"code": "C94832", "package": "SOIC-16"},
+    {"code": "C2859910", "package": "SO-16-208mil"},  # NS suffix: WIDE body
+    {"code": "C126289", "package": "TSSOP-16"},
+    {"code": "C93000", "package": "DIP-16"},
+]
+
+FAMILY_LINE = {
+    "designators": ["U1"], "quantityPer": 1, "comment": "ULN2003",
+    "family": "ULN2003", "footprint": "SO16",
+    "footprintHeadline": "Small Outline package 150 mil",
+}
+
+
+class FamilyInterpreter:
+    """Reads the footprint's geometry, and knows what the web knows."""
+
+    name = "family"
+
+    def __init__(self):
+        self.footprint_calls = 0
+        self.family_calls = 0
+        self.saw_headline = []
+        self.saw_packages = []
+
+    def interpret_part(self, ctx):
+        from hendley.ai.interpreter import Interpretation
+
+        return Interpretation()
+
+    def interpret_footprint(self, footprint, headline=""):
+        self.footprint_calls += 1
+        return {"package": "SOIC-16", "envelope": {"mount": "smd"},
+                "confidence": 0.95, "rationale": "150 mil ⇒ the 3.9mm body"}
+
+    def read_family(self, family, footprint="", headline="", packages=()):
+        self.family_calls += 1
+        self.saw_packages.append(list(packages))
+        self.saw_headline.append(headline)
+        # the package is CHOSEN from the catalog's own list, never invented
+        assert ("SOIC-16", 2) in packages
+        return {"packages": ["SOIC-16"],
+                "partNumbers": ["ULN2003ADR"],
+                "class": "darlington transistor array",
+                "traps": [{"part": "ULN2003ANSR",
+                           "why": "the NS suffix is the 5.3mm wide body"}],
+                "rationale": "D = SOIC 3.9mm", "confidence": 0.9}
+
+    def plan_search(self, ctx):
+        raise AssertionError("a family line needs no plan — it already has one")
+
+
+def _family_app(tmp_path, interp, rows=None):
+    from test_search_executor import LyingIndex
+
+    src = LyingIndex(rows if rows is not None else ULN2003_ROWS)
+    app = HendleyApp(db_path=tmp_path / "parts.db", outdir=tmp_path / "out",
+                     datasource_factory=lambda: src,
+                     interpreter_factory=lambda: interp,
+                     draft_path=tmp_path / "draft.json",
+                     cache_path=tmp_path / "cache.json")
+    return app, src
+
+
+def test_a_family_line_searches_itself_with_no_words_typed(tmp_path):
+    # The designer already typed "ULN2003" and the board already states the land.
+    # There is nothing left for the engineer to type — asking them to would be
+    # asking them to repeat the schematic back to us. And no agent plans it: every
+    # term is already known (ADR-0008 — Python composes THIS query, and only this).
+    interp = FamilyInterpreter()
+    app, src = _family_app(tmp_path, interp)
+    got = app.api_search({"lineIndex": 0,
+                          "requirements": {"lines": [FAMILY_LINE]}})
+    assert got["planned"]["net"] == {"search": "ULN2003", "package": "SOIC-16"}
+    # two calls: first the catalog is asked which packages it stocks this family
+    # in (its own vocabulary), then the real search fires with the chosen one
+    assert src.queries == [
+        {"category": "components", "params": {"search": "ULN2003"}},
+        {"category": "components", "params": {"search": "ULN2003",
+                                              "package": "SOIC-16"}},
+    ]
+    assert got["judged"] is False
+
+
+def test_the_catalogs_vocabulary_is_asked_for_once_then_cached(tmp_path):
+    interp = FamilyInterpreter()
+    app, src = _family_app(tmp_path, interp)
+    for _ in range(3):
+        app.api_search({"lineIndex": 0, "requirements": {"lines": [FAMILY_LINE]}})
+    probes = [q for q in src.queries if "package" not in q["params"]]
+    assert len(probes) == 1        # the vocabulary probe never runs again
+
+
+def test_the_package_is_chosen_from_the_catalogs_own_vocabulary(tmp_path):
+    # THE BUG THIS FIXES. A package judged from the library's footprint name is a
+    # guess AT the catalog's word, not a reading OF it — and they disagree exactly
+    # where it hurts: the library calls a bridge rectifier's land "SOIC-4" and the
+    # catalog calls it "MBS". `package=SOIC-4` returns ZERO rows while looking
+    # entirely reasonable. So the agent picks from the list the catalog gives.
+    MB10S = [{"code": "C2886577", "package": "MBS"},
+             {"code": "C2488", "package": "MBS"},
+             {"code": "C350537", "package": "SMD-4P"}]
+
+    class Rectifier(FamilyInterpreter):
+        def interpret_footprint(self, footprint, headline=""):
+            self.footprint_calls += 1     # would say "SOIC-4" — a word JLC never uses
+            return {"package": "SOIC-4", "envelope": {}, "confidence": 0.9,
+                    "rationale": "a 4-pin small-outline land"}
+
+        def read_family(self, family, footprint="", headline="", packages=()):
+            self.family_calls += 1
+            assert ("MBS", 2) in packages          # the catalog's own word
+            return {"packages": ["MBS"], "partNumbers": ["MB10S"],
+                    "class": "bridge rectifier",
+                    "traps": [{"part": "MB6S", "why": "600V, not 1000V"}],
+                    "rationale": "the catalog calls this land MBS",
+                    "confidence": 0.9}
+
+    interp = Rectifier()
+    app, _ = _family_app(tmp_path, interp, rows=MB10S)
+    line = {**FAMILY_LINE, "family": "MB10S", "footprint": "SOIC-4",
+            "footprintHeadline": None}
+    got = app.api_search({"lineIndex": 0, "requirements": {"lines": [line]}})
+    assert got["planned"]["net"] == {"search": "MB10S", "package": "MBS"}
+    assert [c["code"] for c in got["candidates"]] == ["C2886577", "C2488"]
+
+
+def test_the_footprints_geometry_reaches_the_judgment(tmp_path):
+    interp = FamilyInterpreter()
+    app, _ = _family_app(tmp_path, interp)
+    app.api_search({"lineIndex": 0, "requirements": {"lines": [FAMILY_LINE]}})
+    assert interp.saw_headline == ["Small Outline package 150 mil"]
+
+
+def test_a_package_the_catalog_does_not_use_is_never_fired(tmp_path):
+    # if the web answers with a package the catalog has never heard of, it is
+    # dropped — firing it would return nothing while looking like a real search
+    class Inventing(FamilyInterpreter):
+        def read_family(self, family, footprint="", headline="", packages=()):
+            self.family_calls += 1
+            return {"packages": ["SOIC-16-NARROW"],   # not a word JLC uses
+                    "partNumbers": [], "class": "", "traps": [],
+                    "rationale": "", "confidence": 0.9}
+
+    interp = Inventing()
+    app, _ = _family_app(tmp_path, interp)
+    got = app.api_search({"lineIndex": 0,
+                          "requirements": {"lines": [FAMILY_LINE]}})
+    # it fell back to the footprint judgment, which the catalog DOES use
+    assert got["planned"]["net"]["package"] == "SOIC-16"
+    assert interp.footprint_calls == 1
+
+
+def test_a_family_search_offers_only_what_fits_the_land(tmp_path):
+    # The wide body, the TSSOP and the DIP all answer to the name "ULN2003" and
+    # none of them can go on this board. The index ANDs the words against part
+    # NAMES, so if it quietly dropped `package` — which is what it does to every
+    # param it doesn't know — a DIP-16 part would be offered for a 150-mil land
+    # and nothing on screen would say so. The sieve re-asserts it and proves it.
+    from test_search_executor import LyingIndex
+
+    class IgnoresPackage(LyingIndex):
+        def discover(self, query):
+            self.queries.append(query)
+            return list(self.rows)
+
+    interp = FamilyInterpreter()
+    app, _ = _family_app(tmp_path, interp)
+    app._datasource_factory = lambda: IgnoresPackage(ULN2003_ROWS)
+    got = app.api_search({"lineIndex": 0,
+                          "requirements": {"lines": [FAMILY_LINE]}})
+    assert [c["code"] for c in got["candidates"]] == ["C7512", "C94832"]
+    rejected = {c["code"]: c["failed"][0]["field"] for c in got["misses"]}
+    assert set(rejected) == {"C2859910", "C126289", "C93000"}
+    assert set(rejected.values()) == {"package"}     # named, with a reason
+
+
+def test_the_web_names_the_right_variant_and_the_traps(tmp_path):
+    interp = FamilyInterpreter()
+    app, _ = _family_app(tmp_path, interp)
+    got = app.api_search({"lineIndex": 0,
+                          "requirements": {"lines": [FAMILY_LINE]}})
+    assert got["family"]["partNumbers"] == ["ULN2003ADR"]
+    [trap] = got["family"]["traps"]
+    assert trap["part"] == "ULN2003ANSR" and "wide body" in trap["why"]
+
+
+def test_the_family_is_read_from_the_web_once_ever(tmp_path):
+    # what a part-number suffix MEANS does not change; a web call is slow and
+    # costs money. Asked once per (family, footprint), then cached forever.
+    interp = FamilyInterpreter()
+    app, _ = _family_app(tmp_path, interp)
+    for _ in range(3):
+        app.api_search({"lineIndex": 0, "requirements": {"lines": [FAMILY_LINE]}})
+    assert interp.family_calls == 1
+    # and the footprint judgment never ran at all: the web read the package off
+    # the catalog's own list, which is a better answer than a name can give
+    assert interp.footprint_calls == 0
+
+
+def test_a_family_whose_package_nobody_can_name_asks_rather_than_guessing(tmp_path):
+    # Neither the web nor the footprint judgment can say which of the catalog's
+    # packages this land is. Guessing would fire a query that returns nothing and
+    # looks like "JLC doesn't stock it". Instead: say so, and NAME the packages
+    # the catalog does have, so the engineer can choose.
+    from hendley.app.server import ApiError
+
+    class Baffled(FamilyInterpreter):
+        def interpret_footprint(self, footprint, headline=""):
+            return {"package": "", "envelope": {}, "confidence": 0.95,
+                    "rationale": "nothing standard recognizable"}
+
+        def read_family(self, family, footprint="", headline="", packages=()):
+            self.family_calls += 1
+            return {"packages": [], "partNumbers": [], "class": "", "traps": [],
+                    "rationale": "cannot tell", "confidence": 0.2}
+
+    app, _ = _family_app(tmp_path, Baffled())
+    line = {**FAMILY_LINE, "footprint": "WEIRD-LOCAL-THING"}
+    with pytest.raises(ApiError) as e:
+        app.api_search({"lineIndex": 0, "requirements": {"lines": [line]}})
+    assert "SOIC-16" in str(e.value)      # the catalog's own packages, named
+
+
+def test_the_web_being_down_does_not_stop_the_catalog_sweep(tmp_path):
+    # the sweep is family + package and needs no agent. If read_family is
+    # unavailable we lose the traps — we do NOT lose the parts.
+    class WebDown(FamilyInterpreter):
+        def read_family(self, family, footprint="", headline="", packages=()):
+            return None
+
+    app, _ = _family_app(tmp_path, WebDown())
+    got = app.api_search({"lineIndex": 0,
+                          "requirements": {"lines": [FAMILY_LINE]}})
+    assert got["family"] == {}
+    # the footprint judgment carried it, and the parts still arrive
+    assert got["planned"]["net"]["package"] == "SOIC-16"
+    assert [c["code"] for c in got["candidates"]] == ["C7512", "C94832"]
+
+
+def test_a_land_with_two_catalog_names_fires_one_request_each(tmp_path):
+    # SOIC-8 and SOP-8 are the same 3.9mm body. The index takes ONE package per
+    # request, and it caps a listing at 100 rows and will not go higher (measured:
+    # 1N4148, LM358 and AMS1117 all return exactly 100; limit=500 changes nothing).
+    # So we fire one narrow request per spelling rather than widening the net to
+    # the bare family, which would quietly truncate a popular part.
+    SP3485 = [{"code": "C8963", "package": "SOIC-8"},        # Basic, big stock
+              {"code": "C668205", "package": "SOP-8"},       # same land
+              {"code": "C5199842", "package": "MSOP-8"}]     # a DIFFERENT land
+
+    class TwoNames(FamilyInterpreter):
+        def read_family(self, family, footprint="", headline="", packages=()):
+            self.family_calls += 1
+            return {"packages": ["SOIC-8", "SOP-8"],
+                    "partNumbers": ["SP3485EN-L"], "class": "RS-485 transceiver",
+                    "traps": [{"part": "MAX485", "why": "a +5V part, same pinout"}],
+                    "rationale": "one land, two of the catalog's words",
+                    "confidence": 0.9}
+
+    app, src = _family_app(tmp_path, TwoNames(), rows=SP3485)
+    line = {**FAMILY_LINE, "family": "SP3485", "footprint": "IC-SO8",
+            "footprintHeadline": "D (R-PDSO-G8)"}
+    got = app.api_search({"lineIndex": 0, "requirements": {"lines": [line]}})
+
+    # one request per spelling, each narrow — never a bare-family net
+    assert got["queries"] == [
+        {"category": "components", "params": {"search": "SP3485",
+                                              "package": "SOIC-8"}},
+        {"category": "components", "params": {"search": "SP3485",
+                                              "package": "SOP-8"}},
+    ]
+    # ONE table: the engineer is picking a part, not reading a query log
+    assert [c["code"] for c in got["candidates"]] == ["C8963", "C668205"]
+    # and every part is proven against the LAND, not the spelling that fetched it
+    assert got["proved"] == [{"field": "package", "op": "in",
+                              "value": ["SOIC-8", "SOP-8"]}]

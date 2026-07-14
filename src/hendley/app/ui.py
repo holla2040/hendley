@@ -211,6 +211,12 @@ details.unconf > summary { cursor:pointer; color:var(--pad);
   width:max-content; font:600 12px var(--mono); }
 details.unconf > summary:hover { background:rgba(217,164,65,.12); }
 .note { color:var(--tin); font-size:12.5px; margin:10px 0 0; }
+.note.warn { color:var(--err); }
+/* The lookalikes. They fit the land and would ruin the board, and the catalog
+   would never have told you — so they read as a warning, not as small print. */
+.traps { margin:6px 0 0; padding-left:18px; color:var(--tin); font-size:12.5px; }
+.traps li { margin:3px 0; }
+.traps b { color:var(--err); font-family:var(--mono); }
 .alert { color:var(--err); font-size:13px; margin:10px 0; }
 input[type=radio], input[type=checkbox] { accent-color:var(--pad);
   width:16px; height:16px; cursor:pointer; }
@@ -293,6 +299,11 @@ const S = {
   manualDnp: {},       // lineKey -> true — DNP for this run only (draft-persisted)
   acks: {},            // lineKey -> the unnamed part was looked at (draft)
   results: {},         // lineKey ("" = overview) -> the last search's result
+  familyTried: {},     // lineKey -> the family search has been fired ONCE.
+                       // Kept apart from `results` because a FAILED family search
+                       // leaves no result, and "no result" is exactly the
+                       // condition that fires it — without this it would retry on
+                       // every render, forever, against a live API.
   busySearch: null,    // lineKey currently searching
   categories: [],      // the catalog's tables + their filterable columns
   catPick: {},         // lineKey -> the part type YOU chose ("" = auto)
@@ -371,6 +382,7 @@ async function hydrate(data, readAt) {
   S.readings = {};
   S.typed = {};
   S.staged = {};
+  S.familyTried = {};   // a fresh read of the design searches its families afresh
   if (d.draft) {
     if (d.draft.productionQuantity) $("qty").value = d.draft.productionQuantity;
     const valid = new Set(S.requirements.lines.map(lineKey));
@@ -858,8 +870,46 @@ function detailHtml(i) {
     esc(l.designators.join(" ")) + '</span><span class="spec">' + esc(title) +
     '</span>' + badge + titleActionsHtml(i) + '</h2>' +
     ackHtml(i) + body + search +
-    '<div class="pane-scroll">' + (l.dnp ? "" : resultsHtml(i, key)) +
+    '<div class="pane-scroll">' + (l.dnp ? "" : familyHtml(i, key)) +
+    (l.dnp ? "" : resultsHtml(i, key)) +
     placementHtml(i) + "</div>";
+}
+
+/* WHAT FITS THIS LAND, AND WHAT MERELY LOOKS LIKE IT.
+
+   A family (ULN2003, MB10S, SP3485) is not a part, and the catalog cannot tell
+   you which member of it belongs on your board — it lists what is in stock, not
+   what a part-number suffix MEANS. The datasheet's ordering table does, so the
+   agent reads it once per family and remembers.
+
+   The TRAPS are the reason this block exists, and they go ABOVE the table, not
+   under it: they are the parts that fit the same land and are NOT the same part.
+   A PCF8574A solders down perfectly and answers on a different I2C address. A
+   MAX485 is the +5V part on the identical SOIC-8 pinout. An MB6S is 600V where
+   your MB10S is 1000V. Every one of them would pass a package check and ruin a
+   board, and no amount of catalog data would have warned you. */
+function familyHtml(i, key) {
+  if (i == null) return "";
+  const rl = S.requirements.lines[i];
+  const r = S.results[key];
+  const f = r && r.family;
+  if (!rl.family || !f || (!(f.partNumbers || []).length && !(f.traps || []).length))
+    return "";
+  const pn = (f.partNumbers || []).length
+    ? '<p class="note"><b>' + esc(rl.family) + "</b> in " +
+      esc(rl.footprint || "this land") + " is <b>" +
+      esc(f.partNumbers.join(" · ")) + "</b>" +
+      (f.class ? " — " + esc(f.class) : "") + "</p>"
+    : "";
+  const traps = (f.traps || []).map(t =>
+    '<li><b>' + esc(t.part) + "</b> — " + esc(t.why) + "</li>").join("");
+  return '<div class="sect family">' +
+    '<p class="eyebrow">What fits this land</p>' + pn +
+    (traps
+      ? '<p class="note warn"><b>Fits the same land, is NOT the same part:</b></p>' +
+        '<ul class="traps">' + traps + "</ul>"
+      : "") +
+    "</div>";
 }
 
 /* an unnamed part (no schematic VALUE, no MPN) resolved from memory — say so
@@ -951,6 +1001,13 @@ function seedFor(i) {
   const rl = S.requirements.lines[i];
   const key = lineKey(rl);
   if (S.typed[key]) return S.typed[key];
+  // A FAMILY line's box stays EMPTY, and that is the point: empty means "search
+  // what the design says" — the family the designer typed, in the land the board
+  // carries. Seeding it with "ULN2003 SO16" would make Search send WORDS, which
+  // go to the agent and know nothing about the footprint, so you would get the
+  // DIP and the wide-body back. Type something and it becomes a normal search:
+  // your words outrank the design line, always.
+  if (rl.family) return "";
   const read0 = S.readings[key];
   if (read0 && read0.search) return read0.search;
   const u = uninterpFor(i);
@@ -1007,6 +1064,16 @@ function noTypeHintHtml(i, key) {
     "that.</p>";
 }
 
+/* What an EMPTY box will do. On a family line it is not "nothing" — it is the
+   design's own search, and the box must say so rather than look unfilled. */
+function searchHint(i) {
+  const rl = i == null ? null : S.requirements.lines[i];
+  if (rl && rl.family)
+    return "empty = " + rl.family + " that fits " + (rl.footprint || "this land")
+      + " — or type anything to search for yourself";
+  return "22k 0603 1% · 10uF 0805 X7R 25V · 1N4148WS · C25804";
+}
+
 function searchHtml(i) {
   const key = i == null ? "" : lineKey(S.requirements.lines[i]);
   const busy = S.busySearch === key;
@@ -1018,7 +1085,7 @@ function searchHtml(i) {
       'placeholder="reading this part — asking the catalog what it is …" ' +
       'aria-label="reading this part">'
     : '<input id="sf-terms" class="grow" value="' + esc(seedFor(i)) +
-      '" placeholder="22k 0603 1% · 10uF 0805 X7R 25V · 1N4148WS · C25804" ' +
+      '" placeholder="' + esc(searchHint(i)) + '" ' +
       'aria-label="search in-stock parts">';
   const label = reading ? "Reading …" : busy ? "Searching …" : "Search";
   // Everything BELOW the search line — what the part was read to be, the actual
@@ -1102,18 +1169,26 @@ function queryHtml(i, key) {
   const plan = r ? r.planned : S.readings[key].plan;
   const shown = r ? (r.proved || []) : seedTerms(key);
   const cat = r ? ((r.query || {}).category || "") : (plan.category || "");
+  // EVERY request that fired, not just the first. One land can need more than
+  // one of them — the catalog spells the 3.9mm 8-pin body both "SOIC-8" and
+  // "SOP-8", and the index takes one package per request — and showing one of
+  // two would be a half-truth about what was actually asked.
+  const asked = q => esc(q.category) + "?" + Object.entries(q.params || {})
+    .map(([k, v]) => esc(k) + "=" + esc(v)).join("&");
+  const fired = r ? (r.queries || (r.query ? [r.query] : [])) : [];
   const req = r
-    ? (r.query
-        ? esc(r.query.category) + "?" + Object.entries(r.query.params || {})
-            .map(([k, v]) => esc(k) + "=" + esc(v)).join("&")
+    ? (fired.length
+        ? fired.map(asked).join("<br>")
         : plan.mode === "code"
           ? "the part number, looked up directly"
           : "nothing — no query was sent")
     : requestFor(cat, shown, words);
+  // a term may name a SET — one land, several of the catalog's words for it
+  const val = v => Array.isArray(v) ? v.join(" or ") : String(v);
   const terms = shown.map((t, n) =>
     '<tr><td class="mono">' + esc(t.field) + "</td>" +
     '<td class="mono op">' + esc(OPS[t.op] || t.op) + "</td>" +
-    '<td class="mono">' + esc(String(t.value)) + esc(t.unit || "") + "</td>" +
+    '<td class="mono">' + esc(val(t.value)) + esc(t.unit || "") + "</td>" +
     '<td><button class="btn mini" data-drop="' + n + '">drop</button></td></tr>')
     .join("");
   const cols = (S.categories.find(c => c.slug === cat) || {}).columns || [];
@@ -1151,7 +1226,8 @@ function queryHtml(i, key) {
 }
 
 const OPS = {eq: "=", ne: "≠", lte: "≤", gte: "≥", lt: "<", gt: ">",
-             contains: "contains", isTrue: "is true", isFalse: "is false"};
+             contains: "contains", in: "is one of", isTrue: "is true",
+             isFalse: "is false"};
 
 /* a query param and the column that proves it (the index calls them different
    things: you ask for `capacitance`, the row publishes `capacitance_farads`) */
@@ -1677,7 +1753,9 @@ function wireMain() {
     delete S.manualDnp[lineKey(S.requirements.lines[S.selected])];
     run("re-resolving", resolveNow);
   };
-  if (S.selected != null) { ensureReading(S.selected); ensureAvl(S.selected); }
+  if (S.selected != null) {
+    ensureReading(S.selected); ensureAvl(S.selected); ensureFamily(S.selected);
+  }
 }
 
 /* OPENING A PART READS IT. Every part, every time — pinned, spec, unnamed
@@ -1715,6 +1793,40 @@ async function ensureReading(i) {
   if (S.selected === i) render();
 }
 
+/* OPENING A FAMILY PART SEARCHES IT. There is nothing for the engineer to type:
+   the designer already wrote "ULN2003" on the schematic and the board already
+   states the land, so open → the parts you can order are there. (Anything they
+   DO type takes over — their words outrank the design line, as everywhere else.)
+
+   Once, then cached in S.results like any other search; a second click on the
+   part does not fire it again. */
+async function ensureFamily(i) {
+  const rl = S.requirements.lines[i];
+  const l = S.resolution.lines[i];
+  if (!rl || !rl.family || l.dnp) return;
+  const key = lineKey(rl);
+  if (S.familyTried[key] || key in S.results || S.busySearch === key ||
+      S.typed[key]) return;
+  S.familyTried[key] = true;   // once, whatever happens — see S.familyTried
+  S.busySearch = key;
+  render();
+  msg("finding the " + rl.family + "s that fit " + (rl.footprint || "this land") + " …");
+  try {
+    S.results[key] = await api("/api/search", {
+      lineIndex: i, requirements: S.requirements});
+    const n = (S.results[key].candidates || []).length;
+    msg(n ? n + " part(s) fit this land — pick one"
+          : "nothing in the catalog fits this land — see what was rejected", n ? "ok" : "warn");
+  } catch (e) {
+    // e.g. the footprint maps to no package the catalog uses: the server says
+    // WHICH packages it does stock, and the engineer searches for themselves
+    msg(e.message, "warn");
+  } finally {
+    S.busySearch = null;
+  }
+  if (S.selected === i) render();
+}
+
 /* any spec line's panel: fetch the approved list once (provenance, makers,
    backups), then re-render with the cache warm */
 async function ensureAvl(i) {
@@ -1740,7 +1852,11 @@ async function ensureAvl(i) {
    the agent's, always. */
 async function doSearch(i, override) { await run("searching", async () => {
   const t = $("sf-terms").value.trim();
-  if (!t) throw new Error("type what you want, then Search");
+  // A FAMILY line needs no words. The designer typed "ULN2003" on the schematic
+  // and the board states the land — demanding they retype it would be asking
+  // them to read the schematic back to us. The server searches it from the line.
+  if (!t && !(i != null && S.requirements.lines[i].family))
+    throw new Error("type what you want, then Search");
   const key = i == null ? "" : lineKey(S.requirements.lines[i]);
   const cat = $("sf-cat") ? $("sf-cat").value : "";
   // The terms shown ARE the search. If they still speak for what's in the box,

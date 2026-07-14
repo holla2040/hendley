@@ -68,7 +68,17 @@ class DesignPart:
     jlc_code: str | None = None  # JLC/LCSC code (e.g. "C2040"), if set
     quantity: int = 1
     value: str | None = None
-    package: str | None = None
+    package: str | None = None  # the PACKAGE *attribute* — often a placeholder
+    # The library FOOTPRINT the device actually carries, read schematic-side by
+    # joining electronics.Device → electronics.Package. Distinct from `package`
+    # above (a library-authored attribute string, frequently absent or "Package ").
+    footprint: str | None = None  # e.g. "SO16", "SOIC127P1032X265-16N"
+    # …and the footprint's own GEOMETRY, which is the only honest narrow-vs-wide
+    # discriminator. "SO16" is a local name that means nothing; its headline says
+    # "Small Outline package 150 mil", and SOIC127P1032X265-16N's says "10.30 X
+    # 7.50" — a 300-mil body. Without this a ULN2003 in SO16 is a coin-flip
+    # between SOIC-16 (3.9mm) and SO-16-208mil, and they are different parts.
+    footprint_headline: str | None = None
     attributes: dict[str, str] = field(default_factory=dict)  # raw Fusion attrs
 
     @classmethod
@@ -82,6 +92,8 @@ class DesignPart:
             quantity=int(d.get("quantity", 1) or 1),
             value=d.get("value"),
             package=d.get("package"),
+            footprint=d.get("footprint"),
+            footprint_headline=d.get("footprintHeadline"),
             attributes=dict(d.get("attributes") or {}),
         )
 

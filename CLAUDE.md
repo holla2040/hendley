@@ -9,6 +9,34 @@ speed up JLCPCB **PCBA** order submissions. It is a Python reimplementation of
 JLCPCB's official Java OpenAPI SDK. (Named after James Garner's character
 Hendley, "the Scrounger", in *The Great Escape*.)
 
+## Glossary — say these words, and only these
+
+Agreed with Craig on 2026-07-13, because one loose word ("anchor") had already cost a
+round-trip of confusion. **If you coin a new word for any of these, put it here or do
+not use it.** Walked through a real part, `MB10S`:
+
+| word | for `MB10S` | what it is |
+|---|---|---|
+| **value** | `MB10S` | the schematic VALUE field the designer typed |
+| **family** | `MB10S` | the **incomplete** part number: whatever is in **value**, or in the **MPN attribute** if they filled that instead — **the MPN attribute wins**. `MP`/`MF` are NEVER a family (stale SnapEDA imports; `MP` once said `MB6S`, a 600 V part, where the value said `MB10S`, a 1000 V one). |
+| **land** | the 4 pads under it | the **physical** copper the part solders to. The thing that actually constrains what may be ordered. It has TWO names — one in the library, one in the catalog — and telling them apart is most of this job. |
+| **footprint** | `SOIC-4` | the **library's** name for the land, *plus its geometry* from the library's own headline (`"150 mil"`, `"10.30 X 7.50"`). A local convention: it cannot tell a 3.9 mm body from a 7.5 mm one. The geometry can. |
+| **package** | `MBS` | the **catalog's** name for that same land. What jlcsearch filters on. **Never guess it** — the library says `SOIC-4` and the catalog says `MBS`; ask the catalog for its own list. One land can have SEVERAL package words (`SOIC-8` *and* `SOP-8`), and they hold different parts, so take them all. |
+| **class** | `Bridge Rectifiers` | the **catalog's** `secondTypeName`. What the part *is*. **A label — never a search term, never a sieve term.** The catalog's class is consistent; the *index's* `subcategory` is NOT (it files C2886577, an MB10S on a real board here, as `Diodes - General Purpose`), which is why it lives in `UNPROVABLE_COLUMNS`. |
+| **trap** | `MB6S` | a part that **fits the same land and is NOT the same part**. It solders down perfectly and ruins the board. `MB6S` is 600 V where `MB10S` is 1000 V; `PCF8574A` is a different I²C address; `MAX485` is the +5 V part on the identical SOIC-8 pinout. Only the datasheet knows — the catalog never will. Traps are **shown, never silently substituted**. |
+| **part** | `C2886577` | a full MPN + LCSC code you can actually **order** |
+
+**The sentence: family + footprint → package → the parts.** The class tells you which
+traps to watch; it finds nothing and rejects nothing.
+
+A **family is not a part** and must never be pinned as one — that is ADR-0008, and it
+is the bug that shipped `ULN2003` to the resolver as if you could order it.
+
+(Pre-existing and unchanged, from ADR-0007: the **net** is the coarse query the index
+actually honours; the **sieve** is every constraint, proven per part over data we hold.
+A **house brand** is a JLC-only clone — `PCF8574DWR(UMW)`, `ULN2003ADTR(XBLW)` — which
+the web will never name and which is frequently the better buy.)
+
 ## Architecture / file map
 
 The package follows `docs/architecture.md` §13: ingestion → domain →
@@ -52,6 +80,21 @@ concrete `providers/*` or `datasources/jlc` — only the base protocols.
   given (no agent call) and the request is rebuilt from the terms, so a dropped
   term can't sneak back in as a net param. Deterministic R/C lookups still
   auto-run at Refresh — into the same table, showing their query the same way.
+  **A FAMILY line searches itself (ADR-0008)**: the designer already typed
+  `ULN2003` and the board already states the land, so there is nothing left for
+  the engineer to type — asking them to would be asking them to repeat the
+  schematic back to us. `/api/search` with no `terms` on a line carrying a
+  `family` fires `search=<family>&package=<package>` and returns the panel's
+  `family` block: the complete part number for this land, the class (a LABEL),
+  and the **traps** — shown, never silently substituted. The package is read off
+  the CATALOG'S OWN LIST for that family (asked once, then cached), never guessed
+  from the footprint name: the library says `SOIC-4` where the catalog says
+  `MBS`, and firing the guess returns zero rows while looking exactly like a part
+  JLC doesn't stock. **A land is a SET of the catalog's words** — `SOIC-8` and
+  `SOP-8` are the same 3.9mm body and hold DIFFERENT parts (the Basic 327k-stock
+  SP3485 is under `SOIC-8`), so the sieve's `in` op carries all of them and the
+  net widens to the family alone. A different BODY is still a different land:
+  150-mil `SOIC-16` ≠ 300-mil `SOIC-16-300mil`.
   **The results are ONE comparison table, and it holds only the parts you can
   ORDER**: every part that satisfies EVERY term and covers the run, with its
   actual value under each criterion as a column (`value = 10uF`,
@@ -110,7 +153,15 @@ concrete `providers/*` or `datasources/jlc` — only the base protocols.
   (ADR-0007): a coarse net, then an honest sieve.** jlcsearch honours only
   `package` + one value param (`resistance`/`capacitance`) and **silently
   ignores every other param** — ask it for X7R/25V and it returns a 100n/50V
-  X5R part with no complaint, so a query proves NOTHING. `run_search()` fires
+  X5R part with no complaint, so a query proves NOTHING. (Measured 2026-07-13:
+  the keyword table `components` honours **`search` + `package` + `is_basic`**,
+  and **silently ignores `stock_min`** — `stock_min=999999999` still returns
+  every row. That `package` is what makes a FAMILY searchable: `search=ULN2003`
+  gives 64 rows across five packages, `&package=SOIC-16` gives the 11 that fit
+  the land.) **Both bugs that made an FTS search prove nothing are fixed**:
+  `_query()` dropped every net param but `search`, and `_full_sieve()` returned
+  early unless the mode was `parametric`, so the package was never re-asserted.
+  `run_search()` fires
   the agent's `net`, live-verifies every hit, then proves each candidate
   against every `sieve` term by pure comparison over data we hold, in order of
   authority: the **live-verified fact** → the index row's typed column (matched
@@ -150,13 +201,34 @@ concrete `providers/*` or `datasources/jlc` — only the base protocols.
   designator grouping, DNP flag, LCSC/MPN pass-through, and auto-spec for
   generic R/C/L via `specs.py` — deterministic ONLY for the trivially
   unambiguous; do NOT grow its regexes: ambiguity belongs to the AI tier).
+  **It also routes the FAMILY (ADR-0008)**: a `U`/`D`/`Q` part with no LCSC and
+  a footprint names an incomplete part number — `ULN2003`, `MB10S` — in its MPN
+  attribute or (far more often) its schematic VALUE. That becomes
+  `line.family`, a discovery seed. It is deliberately **NOT** `line.mpn`:
+  landing there PINNED it, and Hendley shipped a part number nobody can order,
+  unsieved, to the resolver. `family_of()` holds the rule; `FAMILY_PREFIXES`
+  the designators.
 - `src/hendley/ai/` — the interpretation tier (ADR-0005/0006/0007):
   `Interpreter` protocol + `claude_cli.py` (`claude -p`, rides the
-  subscription, `HENDLEY_CLAUDE_BIN` override). Four judgments, all cached:
+  subscription, `HENDLEY_CLAUDE_BIN` override). Judgments, all cached:
   `interpret_part` (ad-hoc values: `47u/50V` → value `47u`, qualifier `50V`),
   `interpret_footprint` (**normalize to catalog packages**: `D-SOD323` →
   `SOD-323`, `C-0603` → `0603`; verbatim only when nothing standard is
-  recognizable, e.g. `C-E-5`), **`plan_search`** (the engineer's words → a
+  recognizable, e.g. `C-E-5`. **It is given the footprint's GEOMETRY, not just
+  its name** — `SO16` cannot say whether the body is 3.9 mm or 7.5 mm, and those
+  are different catalog packages holding different parts; the library's own
+  headline, `Small Outline package 150 mil`, says it outright),
+  **`read_family`** (ADR-0008 — **the only judgment allowed the WEB**, via
+  `--allowedTools WebSearch`: a family + the footprint under it → the complete
+  part numbers that fit THIS land (the datasheet's suffix decoder: ULN2003 `D` =
+  3.9 mm SOIC, `NS` = 5.3 mm SOP), the class (a LABEL, never a filter), and the
+  **traps** — the lookalikes that fit the same land and are not the same part:
+  `PCF8574A` is a different I²C address, `MB6S` is 600 V where `MB10S` is 1000 V,
+  `MAX485` is a +5 V part on the identical SOIC-8 pinout. Cached per
+  (family, footprint): what a suffix MEANS does not change. Empty `partNumbers`
+  is an honest answer — the catalog sweep still finds the parts, including the
+  house brands the web never names),
+  **`plan_search`** (the engineer's words → a
   catalog query plan: `net` + `sieve` + `say`; the prompt carries the MEASURED
   index facts — which params actually filter, and **ONE TERM PER FIELD**, since
   an index column and a catalog parameter differing only in case are the same
@@ -257,7 +329,7 @@ concrete `providers/*` or `datasources/jlc` — only the base protocols.
     jlcsearch matches `package` (and other string filters) by **exact
     equality, no wildcards**; the fuzzy escape hatch is `--category components
     -p search=…` (FTS). `CATEGORIES` holds the 44 jlcsearch category slugs.
-    **`UNPROVABLE_COLUMNS` — the 46 columns the index publishes that are a
+    **`UNPROVABLE_COLUMNS` — the 48 columns the index publishes that are a
     LIE.** Measured live (100+ rows per category, re-probed across distinct
     packages so a stock-skewed sample couldn't fool us): each is constant,
     always-null, so sparsely populated that a term on it rejects nearly
@@ -280,6 +352,19 @@ concrete `providers/*` or `datasources/jlc` — only the base protocols.
     `secondTypeName`; its specs come from the catalog's `parameters`. A category
     left with only `package` is an honest answer, not a gap: the index cannot
     filter that part type, so the catalog must do the proving.
+    **`components.category` and `components.subcategory` joined the list on
+    2026-07-13** — the index's own CLASS columns, and they disagree with the
+    catalog on the very parts in front of us. The catalog files BOTH SP3485s as
+    `RS-485 / RS-422 ICs` and BOTH MB10S parts as `Bridge Rectifiers`; the index
+    calls C2692302 a `Buffers / Drivers` and **C2886577 a `Diodes - General
+    Purpose` — and C2886577 is an MB10S mounted on a real board here**. A plan
+    sieving on `subcategory` would have rejected the part already on the board.
+    Note which side is wrong: the CATALOG is consistent, the INDEX is not. That
+    is exactly why the class comes from `secondTypeName` and never from a column.
+    **The index's listing cap is a hard 100 rows and `limit=` will not raise it**
+    (measured: `1N4148`, `LM358`, `AMS1117` all return exactly 100 with
+    `limit=500`) — so never widen a net to a bare family name; keep the `package`
+    on it and fire one request per package spelling.
 - `src/hendley/ingestion/fusion/` — reading designs out of Fusion:
   - `bridge.py` — `FusionBridge`: the committed HTTP client for Fusion's local
     endpoint. Encodes the full verified handshake (gateway IP with spoofed
@@ -346,6 +431,14 @@ concrete `providers/*` or `datasources/jlc` — only the base protocols.
   house: the strategy/adapter contracts, identity via provider refs, the
   honest-unverified shape, wiring points, and the required tests (PCBWay is
   the reference implementation).
+- `docs/adr/0008-a-family-is-not-a-part.md` — **a family is a discovery seed,
+  never a selection mode.** Records the ONE authorized deviation from ADR-0006:
+  Python composes `components?search=<family>&package=<package>` — the words are
+  the designer's own and the package is a judgment already made, so there is
+  nothing left to plan. Also records the two things that must never be done:
+  the class is a LABEL (not a query, not a sieve term — JLC files one MB10S
+  under `Diodes - General Purpose`), and the web names the reference part but
+  never the house brands that are often the better buy.
 - `docs/adr/` — architecture decision records (ranking synthesis, SQLite,
   app-first interface, …).
 - `sdk/` — reference JLCPCB Java SDK jars (Core + Business).
