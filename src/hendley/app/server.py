@@ -521,12 +521,21 @@ class HendleyApp:
         engineer would have no way to know why. So a plan naming a column that
         cannot prove anything is not a plan: throw it away and read the part
         again. Costs one judgment, once, and the DB heals itself.
+
+        ⚠️ SCOPED TO THE PLAN'S OWN CATEGORY. It used to test against a flat union
+        of every category's dead columns, and a column is only dead IN A CATEGORY:
+        ``color`` proves nothing on a 7-segment display and proves plenty on an
+        LED; ``has_i2c`` is a lie on an accelerometer and is the whole point of an
+        io_expander. The union condemned 16 categories' honest columns, so every
+        LED, LDO, MCU, ADC and I/O-expander plan was discarded on sight and the
+        agent re-asked from scratch, for ever. A cache that never hits is not a
+        cache, and this one was paying for a judgment on every single search.
         """
         from ..datasources.jlc.alternates import UNPROVABLE_COLUMNS
 
-        dead = {c for cols in UNPROVABLE_COLUMNS.values() for c in cols}
-        return any(str(t.get("field")) in dead
-                   for t in ((plan or {}).get("sieve") or []))
+        plan = plan or {}
+        dead = set(UNPROVABLE_COLUMNS.get(str(plan.get("category") or ""), ()))
+        return any(str(t.get("field")) in dead for t in (plan.get("sieve") or []))
 
     def _reading_spec(self, line: dict) -> dict | None:
         """The SpecKey the READ already produced for this line, if it can stand

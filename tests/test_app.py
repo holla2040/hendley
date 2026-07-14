@@ -1113,3 +1113,28 @@ def test_a_land_with_two_catalog_names_fires_one_request_each(tmp_path):
     # and every part is proven against the LAND, not the spelling that fetched it
     assert got["proved"] == [{"field": "package", "op": "in",
                               "value": ["SOIC-8", "SOP-8"]}]
+
+
+def test_a_dead_column_is_dead_only_in_its_own_category(tmp_path):
+    # A column is a lie IN A CATEGORY, not everywhere. `color` proves nothing on
+    # a 7-segment display and proves plenty on an LED; `has_i2c` is a lie on an
+    # accelerometer and is the whole point of an io_expander. Testing against a
+    # FLAT UNION condemned 16 categories' honest columns — every LED, LDO, MCU,
+    # ADC and I/O-expander plan was discarded on sight and the agent re-asked
+    # from scratch, for ever. A cache that never hits is not a cache.
+    app = HendleyApp(db_path=tmp_path / "parts.db", outdir=tmp_path / "out",
+                     draft_path=tmp_path / "draft.json",
+                     cache_path=tmp_path / "cache.json")
+    honest = {"category": "leds",
+              "sieve": [{"field": "color", "op": "eq", "value": "red"}]}
+    assert not app._stale_plan(honest)          # `color` is real on an LED
+
+    lie = {"category": "capacitors",
+           "sieve": [{"field": "is_polarized", "op": "isTrue"}]}
+    assert app._stale_plan(lie)                 # and false on every electrolytic
+
+    # the family search's own table: the index's class columns are a lie there
+    klass = {"category": "components",
+             "sieve": [{"field": "subcategory", "op": "eq",
+                        "value": "Bridge Rectifiers"}]}
+    assert app._stale_plan(klass)               # would reject the MB10S on the board
