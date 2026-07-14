@@ -254,7 +254,7 @@ def apply_approvals(store: PartsDb, approvals: list[dict]) -> list[dict]:
         provider_refs = dict(a.get("providerRefs") or {})
         if a.get("lcsc"):
             provider_refs.setdefault("jlcpcb", a["lcsc"])
-        recorded.append(store.record(
+        choice = store.record(
             spec,
             mpn=a.get("mpn"),
             manufacturer=a.get("manufacturer"),
@@ -263,5 +263,14 @@ def apply_approvals(store: PartsDb, approvals: list[dict]) -> list[dict]:
             description=a.get("description"),
             design=a.get("design"),
             note=a.get("note"),
-        ))
+        )
+        recorded.append(choice)
+        # Search candidates were live-verified before the engineer could tick
+        # them. Preserve that snapshot as advisory display data; BOM resolution
+        # still verifies independently when an order decision depends on it.
+        ref = provider_refs.get("jlcpcb")
+        if ref and "liveStock" in a:
+            store.update_verified(
+                ref, a.get("liveStock"), a.get("unitPrice"),
+                mpn=a.get("mpn"), manufacturer=a.get("manufacturer"))
     return recorded

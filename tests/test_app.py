@@ -193,13 +193,25 @@ def test_full_resolution_flow_intake_to_emit(client, tmp_path):
     assert entry["candidates"][0]["manufacturer"] == "MFR-C_NEW"
 
     # approve the ranked candidate → re-resolve clean
-    client("/api/approve", {"approvals": [{
+    approved = client("/api/approve", {"approvals": [{
         "spec": entry["spec"], "lcsc": "C_NEW", "mpn": "MPN-C_NEW",
+        "liveStock": 90_000, "unitPrice": 0.001,
         "design": "demo", "note": "queue pick"}]})
+    approved_choices = {
+        c["lcscCode"]: c
+        for c in approved["approvedLists"][0]["housePart"]["choices"]
+    }
+    assert approved_choices["C_NEW"]["lastStock"] == 90_000
     resolved = client("/api/resolve", {"requirements": req,
                                        "placements": intake["placements"]})
     assert resolved["resolution"]["escalations"] == []
     assert resolved["resolution"]["lines"][0]["ref"] == "C_NEW"
+    [approved] = resolved["approvedLists"]
+    assert approved["spec"] == spec
+    choices = {c["lcscCode"]: c for c in approved["housePart"]["choices"]}
+    # This is the same live snapshot resolution just used. The browser can put
+    # it straight in the upper table instead of calling verify a second time.
+    assert choices["C_NEW"]["lastStock"] == 90_000
 
     # 7c: emit — files + gate + snapshot
     emitted = client("/api/emit", {"resolution": resolved["resolution"]})
@@ -1037,6 +1049,45 @@ def test_the_family_is_read_from_the_web_once_ever(tmp_path):
     assert interp.footprint_calls == 0
 
 
+def test_a_cached_generic_spec_cannot_overwrite_a_family_line(tmp_path):
+    interp = FamilyInterpreter()
+    app, _ = _family_app(tmp_path, interp)
+    app._store().put_interpretation(
+        "part", {"spec": {"kind": "ic", "value": "GENERIC48",
+                           "package": "LQFP-48", "qualifier": ""}},
+        "llm", kind_hint="U", raw_value="GENERIC48", footprint="LOCAL-48")
+    from hendley.domain.model import RequirementsBom
+
+    reqs = RequirementsBom.from_dict({"productionQuantity": 1, "lines": [{
+        "designators": ["U42"], "comment": "GENERIC48", "family": "GENERIC48",
+        "footprint": "LOCAL-48",
+    }]})
+    app._interpret_lines(reqs, consult_interpreter=False)
+
+    assert reqs.lines[0].family == "GENERIC48"
+    assert reqs.lines[0].spec is None
+    assert reqs.lines[0].mode is None
+
+
+def test_a_cached_diode_spec_replaces_its_provisional_family(tmp_path):
+    app, _ = _family_app(tmp_path, FamilyInterpreter())
+    app._store().put_interpretation(
+        "part", {"spec": {"kind": "diode", "value": "3.3V",
+                           "package": "SOD-323", "qualifier": "zener"}},
+        "llm", kind_hint="D", raw_value="3V3", footprint="D-SOD323")
+    from hendley.domain.model import RequirementsBom
+
+    reqs = RequirementsBom.from_dict({"productionQuantity": 1, "lines": [{
+        "designators": ["D42"], "comment": "3V3", "family": "3V3",
+        "footprint": "D-SOD323",
+    }]})
+    app._interpret_lines(reqs, consult_interpreter=False)
+
+    assert reqs.lines[0].family is None
+    assert reqs.lines[0].spec.value == "3.3V"
+    assert reqs.lines[0].mode == "spec"
+
+
 def test_a_family_whose_package_nobody_can_name_asks_rather_than_guessing(tmp_path):
     # Neither the web nor the footprint judgment can say which of the catalog's
     # packages this land is. Guessing would fire a query that returns nothing and
@@ -1059,6 +1110,29 @@ def test_a_family_whose_package_nobody_can_name_asks_rather_than_guessing(tmp_pa
     with pytest.raises(ApiError) as e:
         app.api_search({"lineIndex": 0, "requirements": {"lines": [line]}})
     assert "SOIC-16" in str(e.value)      # the catalog's own packages, named
+
+
+def test_an_ambiguous_function_label_is_not_presented_as_a_family(tmp_path):
+    from hendley.app.server import ApiError
+
+    class FunctionalLabel(FamilyInterpreter):
+        def read_family(self, family, footprint="", headline="", packages=()):
+            return {"packages": ["SOIC-8"], "partNumbers": ["PART3V3", "PART5V"],
+                    "class": "bus transceiver", "traps": [],
+                    "rationale": "the design does not state 3.3V or 5V",
+                    "confidence": 0.75}
+
+    app, src = _family_app(tmp_path, FunctionalLabel(), rows=[
+        {"code": "C_3V3", "package": "SOIC-8"},
+        {"code": "C_5V", "package": "SOIC-8"},
+    ])
+    line = {**FAMILY_LINE, "family": "BUS TRANSCEIVER", "footprint": "SO8"}
+
+    with pytest.raises(ApiError, match="not specific enough"):
+        app.api_search({"lineIndex": 0, "requirements": {"lines": [line]}})
+    # Only the vocabulary probe ran; neither plausible but electrically
+    # incompatible candidate was presented as an orderable answer.
+    assert len(src.queries) == 1
 
 
 def test_the_web_being_down_does_not_stop_the_catalog_sweep(tmp_path):

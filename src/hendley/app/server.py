@@ -341,6 +341,14 @@ class HendleyApp:
         for i, line in enumerate(requirements.lines):
             if line.dnp:
                 continue
+            # Families have their own bounded judgment and search pipeline.
+            # Feeding them through the generic part interpreter as well can
+            # replay an old SpecKey onto the line, leaving two competing truths
+            # (and making the resolver silently choose the spec). A family stays
+            # mode-less until the engineer selects and approves an actual part.
+            if line.family and _kind_hint(line.designators[0]) == "U":
+                line.spec = None
+                continue
             hint = _kind_hint(line.designators[0])
             raw_value = line.comment or ""
             footprint = line.footprint or ""
@@ -368,6 +376,7 @@ class HendleyApp:
                 # the record is what the approved-parts list is keyed by, so a
                 # line carrying a staler spec would look up nothing at all
                 line.spec = SpecKey.from_dict(cached["result"]["spec"])
+                line.family = None
                 continue
             if line.spec is not None:
                 continue        # the normalizer's own reading, nothing recorded
@@ -382,6 +391,7 @@ class HendleyApp:
                     interpreter_dead = True  # binary missing/broken: stop retrying
                 elif interp.spec and interp.confidence >= CONFIDENCE_THRESHOLD:
                     line.spec = interp.spec
+                    line.family = None
                     store.put_interpretation(
                         "part", interp.to_dict(), "llm", kind_hint=hint,
                         raw_value=raw_value, footprint=footprint,
@@ -439,7 +449,23 @@ class HendleyApp:
                          datasource=datasource or _NullSource(), strategy=strategy)
         if body.get("placements"):
             result["placements"] = body["placements"]
-        out = {"resolution": result}
+        # ``resolve`` has just live-verified every active choice in one batch and
+        # refreshed its stock/price cache. Return those same approved lists to
+        # the page: asking /api/part?verify=1 immediately afterward would verify
+        # the identical choices a second time and make a checkbox look stalled.
+        approved_lists = []
+        seen_specs: set[tuple[str, str, str, str]] = set()
+        for line in requirements.lines:
+            if line.dnp or line.spec is None:
+                continue
+            key = (line.spec.kind, line.spec.value,
+                   line.spec.package, line.spec.qualifier)
+            if key in seen_specs:
+                continue
+            seen_specs.add(key)
+            approved_lists.append({"spec": line.spec.to_dict(),
+                                   "housePart": store.lookup(line.spec)})
+        out = {"resolution": result, "approvedLists": approved_lists}
         if result["escalations"] and datasource is not None:
             # only the deterministic auto-discovery runs here; the engineer's
             # own searches are their own act, on /api/search
@@ -886,6 +912,14 @@ class HendleyApp:
                     f"stocks {family} in: "
                     + ", ".join(p for p, _ in offered[:8])
                     + " — search with the package you want.")
+        confidence = fam.get("confidence")
+        if (confidence is not None
+                and float(confidence) < CONFIDENCE_THRESHOLD):
+            why = str(fam.get("rationale") or "").strip()
+            raise ApiError(
+                f"“{family}” is not specific enough to choose an orderable part"
+                + (f": {why}" if why else "")
+                + " — describe the required voltage, function, or exact family.")
         # ONE land, but the catalog may spell it several ways — SOIC-8 and SOP-8
         # are the same 3.9mm body and hold DIFFERENT parts. The index takes only
         # one `package` per request, so we fire ONE REQUEST PER SPELLING and union
@@ -986,7 +1020,18 @@ class HendleyApp:
         if not isinstance(approvals, list) or not approvals:
             raise ApiError("'approvals' must be a non-empty list")
         try:
-            return {"recorded": apply_approvals(self._store(), approvals)}
+            store = self._store()
+            recorded = apply_approvals(store, approvals)
+            approved_lists = []
+            seen: set[tuple[str, str, str, str]] = set()
+            for approval in approvals:
+                spec = SpecKey.from_dict(approval["spec"])
+                key = (spec.kind, spec.value, spec.package, spec.qualifier)
+                if key not in seen:
+                    seen.add(key)
+                    approved_lists.append({"spec": spec.to_dict(),
+                                           "housePart": store.lookup(spec)})
+            return {"recorded": recorded, "approvedLists": approved_lists}
         except (KeyError, ValueError) as exc:
             raise ApiError(str(exc))
 

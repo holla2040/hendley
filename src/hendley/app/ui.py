@@ -457,6 +457,11 @@ async function resolveNow() {
     placements: S.placements, provider: provider()});
   S.resolution = data.resolution;
   S.queue = data.queue || null;
+  // Resolve already verified every approved choice in one live batch. Reuse
+  // that exact snapshot in the upper table instead of making ensureAvl() issue
+  // a second live verification before a newly checked alternate can appear.
+  for (const x of (data.approvedLists || []))
+    S.avlCache[JSON.stringify(x.spec)] = x.housePart;
   S.altSort = {key: null, dir: -1};
   S.staged = {};   // committed state changed — staged diffs are stale
   adoptAutoLookups();
@@ -2002,8 +2007,12 @@ async function applyStaged(i, ack) { await run("saving", async () => {
       if (!(code in st.checks) || st.checks[code] === com.has(code)) continue;
       if (st.checks[code]) {
         if (firstPick && code === pick) continue;      // rank 1 covers it
+        const candidate = candFor(i, code) || {};
         approvals.push({spec: rl.spec, lcsc: code,
           mpn: modelFor(i, code) || undefined, rank: 999,  // clamps to end
+          manufacturer: candidate.manufacturer || undefined,
+          liveStock: candidate.liveStock,
+          unitPrice: candidate.unitPrice1,
           design: S.design || undefined,
           note: "approved alt in the app"});
       } else {
@@ -2011,7 +2020,28 @@ async function applyStaged(i, ack) { await run("saving", async () => {
       }
     }
   }
-  if (approvals.length) await api("/api/approve", {approvals: approvals});
+  let approved = null;
+  if (approvals.length)
+    approved = await api("/api/approve", {approvals: approvals});
+  // A backup checkbox on an already-resolved line cannot change what mounts.
+  // The row was live-verified by the search that displayed the checkbox, so
+  // record and show that snapshot immediately: no resolve and no second JLC
+  // request. Radio picks, removals and unresolved lines still re-resolve.
+  const backupOnly = !st.radio && !e && approvals.length && !removals.length;
+  if (backupOnly) {
+    for (const x of (approved.approvedLists || [])) {
+      const house = x.housePart;
+      for (const choice of ((house && house.choices) || [])) {
+        const candidate = candFor(i, choice.lcscCode);
+        if (candidate) choice.libraryType = candidate.libraryType;
+      }
+      S.avlCache[JSON.stringify(x.spec)] = house;
+    }
+    delete S.staged[key];
+    render();
+    msg("saved — " + approvals.length + " approved", "ok");
+    return;
+  }
   for (const code of removals)
     await api("/api/remove", {spec: rl.spec, ref: code,
                               note: code === committedRadio(i)
