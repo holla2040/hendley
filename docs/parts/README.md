@@ -1,11 +1,13 @@
 # Part-class notes — what this shop knows about each kind of part
 
 There is no one way to search for a part, and pretending there is has cost us
-real searches. A resistor's power is milliwatts in the index and `"100mW"` in the
-catalog. An electrolytic hides its can dimensions inside the package string. A
-diode's family — small-signal, Schottky, zener, avalanche — is something the
-parts index **cannot tell you at all**: `is_schottky` is `false` on every schottky
-in the catalog.
+real searches. A resistor's index column `resistance` has the SAME NAME as the
+catalog's `Resistance`, so a plan that states both ends up asking "10000 =
+`10kΩ`" and rejects every part alive — while a capacitor, whose column is
+`capacitance_farads`, must state both. An electrolytic hides its can dimensions
+inside the package string. A diode's family — small-signal, Schottky, zener,
+avalanche — is something the parts index **cannot tell you at all**:
+`is_schottky` is `false` on every schottky in the catalog.
 
 Every class has its own traps, and the cost of not knowing one is a search that
 returns the wrong parts, or none, while looking like it worked.
@@ -61,9 +63,12 @@ Everything in the electrolytic note was measured, not guessed:
   `secondTypeName` and its exact `parameters` names.
 - The index's columns and their fill rates are measured against
   `jlcsearch.tscircuit.com/<category>/list.json`. A column that is **constant,
-  always-null, or sparsely populated proves nothing** — those live in
-  `UNPROVABLE_COLUMNS` in `src/hendley/datasources/jlc/alternates.py`, and there
-  are 44 of them.
+  always-null, sparsely populated, or carries no consistent UNIT proves
+  nothing** — those live in `UNPROVABLE_COLUMNS` in
+  `src/hendley/datasources/jlc/alternates.py`, and there are 46 of them.
+  Probe more than one package: `resistors.power_watts` looks like a clean,
+  fully-populated milliwatt column until you read a 2512 and find `1`, meaning
+  one watt.
 
 ## No note is not a failure
 
@@ -71,9 +76,13 @@ A class nobody has written up yet simply gets no special knowledge, and the agen
 stays conservative. **Never invent a note** — an unmeasured "fact" here is worse
 than silence, because the agent will believe it.
 
+## Written
+
+- [Aluminium electrolytic capacitors](aluminium-electrolytic-capacitors.md)
+- [Chip resistors (surface mount)](chip-resistors.md)
+
 ## Still to write
 
 - MOSFETs
-- Resistors (thick-film chip)
 - The diode families — small-signal, Schottky, zener, avalanche/TVS — which the
   catalog's `secondTypeName` distinguishes and the index does not.

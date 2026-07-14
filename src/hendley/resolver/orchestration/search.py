@@ -52,6 +52,18 @@ NET_COLUMNS = {
 
 NUMERIC_OPS = ("lte", "gte", "lt", "gt")
 
+# One field, two vocabularies that do NOT collapse to the same name on their
+# own. The index's ``tolerance_fraction`` IS the catalog's ``Tolerance`` (0.01
+# is "±1%"), and without this the term proves SILENTLY: it earns no column,
+# because a column is only granted to a field the catalog names — so the
+# engineer sets 0.01, reads "±0.1%" in a read-only column, and nothing on
+# screen connects the two.
+#
+# ``capacitance_farads`` is deliberately NOT aliased: a capacitor states
+# ``Capacitance`` as its own term (docs/parts/aluminium-electrolytic-…), and an
+# alias here would hand one field two columns.
+CATALOG_ALIAS = {"tolerancefraction": "Tolerance"}
+
 
 def run_search(datasource: DataSource, plan: dict,
                exclude: tuple[str, ...] = ()) -> dict:
@@ -111,14 +123,48 @@ def _query(plan: dict) -> dict | None:
     return {"category": category, "params": net} if category else None
 
 
+def _provable(term: dict) -> bool:
+    """Can this term's VALUE be compared against a typed column at all?
+
+    A number can. A string that declares its unit can ("63V" + unit "V"). A
+    bare string carrying an SI prefix — ``"10kΩ"`` — cannot: ``10k`` is not a
+    number in Ω, so nothing it is compared against can ever match it.
+    """
+    value = term.get("value")
+    if isinstance(value, bool):
+        return True
+    return isinstance(value, (int, float)) or bool(term.get("unit"))
+
+
 def _full_sieve(plan: dict) -> list[dict]:
-    """The agent's sieve, plus its own net params re-asserted as terms."""
-    sieve = [dict(p) for p in (plan.get("sieve") or [])]
+    """The agent's sieve, plus its own net params re-asserted as terms.
+
+    ONE TERM PER FIELD. The index column ``resistance`` and the catalog's
+    ``Resistance`` are the same field — they differ only in case — and stating
+    both is not belt-and-braces, it is a contradiction the sieve cannot honour:
+    ``_field()`` resolves either to the index's NUMBER (10000) and the
+    catalog-worded value ("10kΩ") then misses on every part in the catalog. So
+    duplicates collapse, and the survivor is the one that can actually be
+    PROVEN — a number, or a value that declares its unit. Choosing between two
+    terms the agent wrote is not composing a query; it is refusing to run a
+    comparison that cannot come out true.
+    """
+    sieve: list[dict] = []
+    seen: dict[str, int] = {}
+    for term in (plan.get("sieve") or []):
+        key = _squash(term.get("field"))
+        if key in seen:
+            at = seen[key]
+            if _provable(term) and not _provable(sieve[at]):
+                sieve[at] = dict(term)      # the provable one wins, whatever the order
+            continue
+        seen[key] = len(sieve)
+        sieve.append(dict(term))
     if plan.get("mode") != "parametric":
         return sieve            # a keyword/code search states no terms to prove
-    stated = {str(p.get("field")) for p in sieve}
     for param, column in NET_COLUMNS.items():
-        if param in (plan.get("net") or {}) and column not in stated:
+        if param in (plan.get("net") or {}) and _squash(column) not in seen:
+            seen[_squash(column)] = len(sieve)
             sieve.append({"field": column, "op": "eq",
                           "value": plan["net"][param], "fromNet": True})
     return sieve
@@ -151,7 +197,9 @@ def _sift(sieve: list[dict], row: dict, cand: dict) -> list[dict]:
         want = term.get("value")
         unit = str(term.get("unit") or "")
         have = _field(field, row, cand)
-        catalog = next((v for k, v in published.items() if _same(k, field)), None)
+        alias = CATALOG_ALIAS.get(_squash(field), "")
+        catalog = next((v for k, v in published.items()
+                        if _same(k, field) or (alias and _same(k, alias))), None)
         entry: dict[str, Any] = {"field": field, "op": op, "unit": unit,
                                  "catalog": catalog is not None}
         if want is not None:

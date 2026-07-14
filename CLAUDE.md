@@ -52,15 +52,28 @@ concrete `providers/*` or `datasources/jlc` — only the base protocols.
   given (no agent call) and the request is rebuilt from the terms, so a dropped
   term can't sneak back in as a net param. Deterministic R/C lookups still
   auto-run at Refresh — into the same table, showing their query the same way.
-  **The results are ONE comparison table**: every part the query found, with its
+  **The results are ONE comparison table, and it holds only the parts you can
+  ORDER**: every part that satisfies EVERY term and covers the run, with its
   actual value under each criterion as a column (`value = 10uF`,
   `voltage ≥ 50V`, `Diameter = 5mm`), so a part is picked by reading DOWN a
-  column, not by opening fifty datasheets. A part that fails a term keeps its
-  row and all its numbers — only the failing cell goes red (`35V`) — and is
-  still pickable, because 35 V may be fine on that rail; short STOCK is not a
-  judgment call, so those sort last with red stock. Column rule: a term earns a
+  column, not by opening fifty datasheets. **A part that fails a term, or is
+  short of the run, is NOT a row** — it cannot go on the board, and the goal is
+  open → refresh → assign → alternates → export, not browsing the catalog. So
+  **the table carries no red cell at all**. Nothing is hidden, though: the
+  say-line counts them (`100 looked at · 12 you can order · 88 can't be used
+  (24 short of 500, 64 fail a term)`) and **`show the N you can't use`** puts
+  them back with their red reasons — which matters in exactly one case, when
+  NOTHING is orderable and the app must name the term that did the killing (a
+  bad term rejecting 100 good parts looks just like an empty catalog otherwise).
+  Column rule: a term earns a
   column iff the CATALOG names the field (`package`/`capacitance_farads` are
-  query plumbing and don't). `show all N specs` adds every other catalog
+  query plumbing and don't; `tolerance_fraction` IS the catalog's `Tolerance`
+  and does — via `CATALOG_ALIAS`, or the engineer sets `0.01` and reads `±1%`
+  with nothing on screen tying the two together). **ONE TERM PER FIELD**: the
+  sieve collapses names that differ only in case or punctuation (`resistance` /
+  `Resistance`), keeping the term that can actually be proven — stating both
+  compares `10000` against `"10kΩ"` and rejects every part alive.
+  `show all N specs` adds every other catalog
   parameter. Headers are the shop's words (`value`, `voltage`, `temp_co`,
   `tol`) with the constraint stacked underneath; the field's real name is what
   the sieve, the sort and the term list still use.
@@ -145,8 +158,10 @@ concrete `providers/*` or `datasources/jlc` — only the base protocols.
   `SOD-323`, `C-0603` → `0603`; verbatim only when nothing standard is
   recognizable, e.g. `C-E-5`), **`plan_search`** (the engineer's words → a
   catalog query plan: `net` + `sieve` + `say`; the prompt carries the MEASURED
-  index facts — which params actually filter, `power_watts` is milliwatts —
-  because a hallucinated param is silently ignored and looks like a filter),
+  index facts — which params actually filter, and **ONE TERM PER FIELD**, since
+  an index column and a catalog parameter differing only in case are the same
+  field — because a hallucinated param is silently ignored and looks like a
+  filter, and a duplicated one rejects every part alive),
   and **`derive_key`** (the AVL's SpecKey for a pick, from the design line +
   search words + the picked part's verified facts; leaves `value` empty when
   the part has none — never invents one).
@@ -168,8 +183,10 @@ concrete `providers/*` or `datasources/jlc` — only the base protocols.
   Python never composes searches, invents filters, or parses names.**
 - `src/hendley/ai/partnotes.py` + **`docs/parts/`** — **the part-class knowledge
   base.** There is no one way to search for a part, and pretending there is has
-  cost us real searches: a resistor's power is milliwatts in the index and
-  `"100mW"` in the catalog; an electrolytic hides its can dimensions inside the
+  cost us real searches: a resistor's index column `resistance` has the SAME NAME
+  as the catalog's `Resistance` (so a plan stating both asks "10000 = `10kΩ`" and
+  rejects every part alive), while a capacitor — column `capacitance_farads` —
+  must state both; an electrolytic hides its can dimensions inside the
   package string; a diode's family (small-signal / Schottky / zener / avalanche)
   is something the index **cannot tell you at all**. So the knowledge lives in
   `docs/parts/` — one markdown note per class, human-editable, pasted whole into
@@ -180,8 +197,11 @@ concrete `providers/*` or `datasources/jlc` — only the base protocols.
   `HENDLEY_PART_NOTES` → `docs/parts` beside the source → none. Stdlib only.
   **No note = no special knowledge**: the agent stays conservative rather than
   guessing, and an unmeasured "fact" in a note is worse than silence because the
-  agent will believe it. Written so far: aluminium electrolytics (the only class
-  validated end-to-end). Still to write: MOSFETs, resistors, the diode families.
+  agent will believe it. Written so far: aluminium electrolytics
+  (`aluminium-electrolytic-capacitors.md`) and chip resistors
+  (`chip-resistors.md` — the `Resistance` name collision, `tolerance_fraction`
+  is a FRACTION and wants `lte`, and **never sieve on power**). Still to write:
+  MOSFETs, the diode families.
 - `src/hendley/knowledge/partsdb.py` — the house-parts DB (SQLite v4 at
   `~/.hendley/parts.db`, `HENDLEY_DB` to override): House Parts (opaque id +
   spec-tuple index), ranked Part Choices (deliberate rank, `active|removed`),
@@ -237,11 +257,16 @@ concrete `providers/*` or `datasources/jlc` — only the base protocols.
     jlcsearch matches `package` (and other string filters) by **exact
     equality, no wildcards**; the fuzzy escape hatch is `--category components
     -p search=…` (FTS). `CATEGORIES` holds the 44 jlcsearch category slugs.
-    **`UNPROVABLE_COLUMNS` — the 44 columns the index publishes that are a
+    **`UNPROVABLE_COLUMNS` — the 46 columns the index publishes that are a
     LIE.** Measured live (100+ rows per category, re-probed across distinct
     packages so a stock-skewed sample couldn't fool us): each is constant,
-    always-null, or so sparsely populated that a term on it rejects nearly
-    everything. `capacitors.is_polarized` is **`false` on every aluminium
+    always-null, so sparsely populated that a term on it rejects nearly
+    everything — or **numerically meaningless**: `resistors.power_watts` is the
+    catalog's string with its UNIT THROWN AWAY, so a 0603 reads `100`
+    (milliwatts) and a 2512 reads `1` (a WATT), and `power_watts gte 100` rejects
+    every 1 W part while passing a 250 mW one. A column whose unit is not
+    constant proves nothing, however well populated it looks.
+    `capacitors.is_polarized` is **`false` on every aluminium
     electrolytic**; `diodes.is_schottky`, `is_zener` and `is_tvs` are `false` on
     every schottky, zener and TVS; `capacitor_type` is `"unknown"` and
     `diode_type` is `"general_purpose"` for all of them. They are the most

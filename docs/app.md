@@ -86,11 +86,18 @@ part by reading *down* a column, not by opening fifty datasheets:
   ○ ☐  C2992591   KNSCHA        RVT10UF25V67RV0020  10uF    [25V]   [6.3mm]  5.4mm         3,957
 ```
 
-A part that **fails a term keeps its row and all its numbers** — only the value
-that failed goes red — and it is **still pickable**, because 35 V may be fine on
-your rail and that is your call, not the tool's. Above the table: what the agent
-understood, how many parts it looked at, how many matched, and how many were
-rejected. Nothing is hidden.
+**The table is the parts you can order.** A part that fails a term, or that
+hasn't the stock to fill this run, does not get a row — it cannot go on the
+board, and the job is to get the order out, not to browse the catalog. So there
+is no red cell in the table: every part in it satisfies every term and covers
+your board count.
+
+Nothing is *hidden*, though — the say-line above the table counts them
+(`100 looked at · 12 you can order · 88 can't be used (24 short of 500, 64 fail
+a term)`), and **show the 88 you can't use** puts them back with their reasons in
+red. That matters in exactly one case: when nothing is orderable, the app names
+the term that did the killing — a bad term rejecting 100 good parts otherwise
+looks identical to an empty catalog.
 
 Note the 63 V part. It is *over-rated*, drops straight into a 50 V slot, and an
 exact-match search would never have shown it to you — which is the whole reason

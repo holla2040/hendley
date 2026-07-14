@@ -28,7 +28,9 @@ overturned the obvious approach:
    **silently ignore every other param** — including invented ones
    (`made_of=cheese` changed nothing). A "10uF 0805 X7R 25V" query returns 100
    rows whose top hit is a **100 nF 50 V X5R** part. No error, no warning; it
-   simply looks filtered. Column names lie too: `power_watts` is milliwatts.
+   simply looks filtered. Column names lie too: `power_watts` is the catalog's
+   string with its UNIT DROPPED — a 0603 reads `100` (milliwatts), a 2512 reads
+   `1` (a watt) — so it can prove nothing at all.
 2. **Full-text search is worse the harder you try.** `components?search=` ANDs
    tokens against part *names*: `22k 0603` mixes a 2.2 nF capacitor into the
    resistors, and `10uF 0805 X7R 25V` — the more you specify, the fewer
@@ -50,8 +52,11 @@ words — plus the design line they were typed against — into a **plan**:
 - **net** — only the params the index actually honours. A coarse net to fetch
   fewer rows. Nothing is trusted about it.
 - **sieve** — typed predicates (`tolerance_fraction ≤ 0.01`,
-  `temperature_coefficient = X7R`, `power_watts ≥ 250`) covering **every**
-  constraint the engineer stated, *including the ones already in the net*.
+  `temperature_coefficient = X7R`, `Voltage Rating ≥ 50V`) covering **every**
+  constraint the engineer stated, *including the ones already in the net* — and
+  **one term per field**: an index column and a catalog parameter that differ
+  only in case are the SAME field, and stating both compares `10000` against
+  `"10kΩ"` and rejects every part alive.
 - **lookingFor** / **say** — the agent's reading, for the screen only.
 
 Python fires the net, live-verifies every hit against the JLC API, and then
@@ -163,21 +168,43 @@ names one is thrown away rather than replayed, or the bug would outlive its fix.
 
 ### There is no one approach across part types — so stop looking for one
 
-Resistors put power in milliwatts; electrolytics hide the can dimensions inside
-the package string; diodes split into families the index cannot distinguish at
-all. That is knowledge, and it belongs written down: `docs/parts/`, one note per
-class, read into the prompt when the agent opens a part of that class. It works —
-the agent now leaves `Tolerance` out of an electrolytic's sieve *on its own*,
-because `eq ±20%` would reject a better ±10% part, and says so.
+A resistor's index column `resistance` collides with the catalog's `Resistance`,
+so it must state ONE term where a capacitor (column `capacitance_farads`) states
+two; electrolytics hide the can dimensions inside the package string; diodes
+split into families the index cannot distinguish at all. That is knowledge, and
+it belongs written down: `docs/parts/`, one note per class, read into the prompt
+when the agent opens a part of that class. It works — the agent now leaves
+`Tolerance` out of an electrolytic's sieve *on its own*, because `eq ±20%` would
+reject a better ±10% part, and says so.
+
+The cost of *not* writing a class up is not hypothetical either: with no resistor
+note, the agent duplicated the resistance term and sieved on `power_watts`, and a
+stock 10 kΩ 0603 came back `0 matched · 100 rejected`. The note
+(`chip-resistors.md`) is the fix; the code guards are the belt.
 
 ### The results are a comparison table, and selections save themselves
 
 A list of parts with a *reason string* on each rejection cannot be used to choose
 between them; the engineer would have to open fifty datasheets. The results are
 now ONE table with the criteria as **columns** — a part is picked by reading down
-a column, and a failing part keeps its row and all its numbers with only the
-failing cell red. Rejects stay pickable (35 V may be fine on that rail); short
-STOCK is not a judgment call, so it sorts last and is marked.
+a column.
+
+**Revised 2026-07-13 — the table holds only the parts you can ORDER.** This ADR
+originally kept a failing part's row (only the failing cell red, still pickable
+— "35 V may be fine on that rail") and sorted short stock last. In use that was
+wrong, and the engineer said so plainly: *"showing me parts that can't possibly
+be used for this order is stupid."* The goal of the project is **open → refresh →
+assign → alternates → export**, and a table you must filter with your eyes slows
+every one of those steps. So a part that fails a term, or that cannot cover the
+run, **is not a row**, and the table carries no red cell at all.
+
+They are still never *silently* dropped: the say-line counts them (`100 looked at
+· 12 you can order · 88 can't be used (24 short of 500, 64 fail a term)`) and one
+click restores them with their reasons. That count is load-bearing in exactly one
+case — when NOTHING is orderable, the app names the term that did the rejecting,
+because a bad term rejecting 100 good parts is otherwise indistinguishable from an
+empty catalog. (It happened: a `Resistance = "10kΩ"` term rejected all 100 hits of
+a stock 10 k 0603 while every cell on screen read `10kΩ`.)
 
 The **Update button is gone**. Ticking a checkbox records the alternate; the
 radio records the pick. Both are a SQLite write, and the staging gate was buying

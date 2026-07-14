@@ -231,3 +231,19 @@ def test_the_shipped_electrolytic_note_is_wired_up():
     assert note and "SMD,D5xL5.4mm" in note
     assert "is_polarized" in note          # names the poison
     assert "Tolerance" in note             # and the ±20%-rejects-±10% trap
+
+
+def test_the_shipped_chip_resistor_note_is_wired_up():
+    """The resistor note reaches the agent on the real catalog class string.
+
+    A resistor search that plans without this note re-learns the collision the
+    hard way: it states `Resistance = "10kΩ"` alongside `resistance = 10000`
+    and rejects all 100 parts.
+    """
+    from hendley.ai.partnotes import note_for
+
+    note = note_for("Chip Resistor - Surface Mount")
+    assert note
+    assert "NEVER also state it in the catalog's words" in note
+    assert "power_watts" in note           # names the unit-dropped column
+    assert "tolerance_fraction" in note    # a FRACTION, and lte

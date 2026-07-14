@@ -171,8 +171,9 @@ td { padding:7px 12px 7px 0; border-bottom:1px solid var(--line); font-size:13px
      vertical-align:top; }
 td code, .mono { font:12.5px var(--mono); }
 tr.picked td { background:rgba(217,164,65,.07); }
-/* the comparison table: a rejected part keeps its row and all its numbers —
-   only the ONE value that failed is red. That is the cell you scan for. */
+/* the comparison table holds only parts you can ORDER, so nothing in it is red.
+   These styles are for the one view that shows the rejects — "show the N you
+   can't use" — where the ONE value that failed is what you scan for. */
 table.results td.bad { color:var(--err); font-weight:600; }
 table.results tr.reject td { opacity:.66; }
 table.results tr.reject:hover td { opacity:1; }
@@ -299,6 +300,9 @@ const S = {
                        // default; it is the biggest thing on a laptop screen and
                        // the criteria are on the table's column headers anyway
   showSpecs: false,    // the comparison table's other catalog parameters
+  showRejects: false,  // the parts that FAIL a term or can't fill the run. OFF:
+                       // the table is what you can order. They are counted on
+                       // the say-line and one click away — never silently gone
   readings: {},        // lineKey -> what the agent read this part to BE
   reading: null,       // lineKey being read right now
   seed: {},            // lineKey -> the seeded terms, as YOU edited them before
@@ -1154,14 +1158,16 @@ const OPS = {eq: "=", ne: "≠", lte: "≤", gte: "≥", lt: "<", gt: ">",
 const NET_COL = {package: "package", resistance: "resistance",
                  capacitance: "capacitance_farads"};
 
-/* THE COMPARISON TABLE.
+/* THE COMPARISON TABLE — the parts you can ORDER.
 
-   Every part the query found, in ONE table, with its ACTUAL values under the
-   criteria you searched on. This is how a part gets picked: you read down a
-   column. A part that fails a term keeps its row and all its numbers — only the
-   cell that failed goes red — because "35V" in a column you can scan beats a
-   sentence saying "is 35, not ≥ 50V" at the far right of a row, and it beats
-   opening fifty datasheets one at a time. */
+   Every part that satisfies EVERY term AND covers this run, in ONE table, with
+   its actual values under the criteria you searched on. This is how a part gets
+   picked: you read down a column, not by opening fifty datasheets.
+
+   Parts that fail a term, and parts too short to fill the run, are NOT rows.
+   They can't go on the board, and a table you have to filter with your eyes is
+   a table that slows the order down. They are counted on the say-line and one
+   click away ("show the N you can't use") — where the red cells live. */
 
 function allRows(r) {
   return (r.candidates || []).concat(r.misses || []);
@@ -1177,16 +1183,30 @@ function specCols(r) {
 }
 
 /* Everything else the catalog publishes for these parts — ripple current, ESR,
-   lifetime. Not searched on, but often what decides it. */
+   lifetime. Not searched on, but often what decides it.
+
+   "Else" is the whole job: a criterion named `power_watts` and a catalog
+   parameter named `Power(Watts)` are ONE field, and matching the raw strings
+   put it on screen twice — once with its constraint, once bare. Squash the
+   names, exactly as the sieve does when it proves the term. */
 function extraCols(r, criteria) {
-  const named = new Set(criteria.map(t => t.field));
+  const named = new Set();
+  criteria.forEach(t => {
+    const k = squash(t.field);
+    named.add(k);
+    // the sieve's CATALOG_ALIAS: `tolerance_fraction` IS the catalog's
+    // `Tolerance`, and its column already shows it under the constraint
+    if (CRIT_ALIAS[k]) named.add(CRIT_ALIAS[k]);
+  });
   const out = [];
   for (const row of allRows(r))
     for (const p of (row.parameters || []))
-      if (!named.has(p.parameterName) && out.indexOf(p.parameterName) < 0)
+      if (!named.has(squash(p.parameterName)) &&
+          out.indexOf(p.parameterName) < 0)
         out.push(p.parameterName);
   return out;
 }
+const CRIT_ALIAS = {tolerancefraction: "tolerance"};
 
 function proofOf(c) {
   const m = {};
@@ -1239,6 +1259,7 @@ const HEAD_LABEL = {
   "Voltage Rating": "voltage",           // also the index's `voltage_rating`
   "Temperature Coefficient": "temp_co",  // also `temperature_coefficient`
   "Tolerance": "tol",
+  "tolerance_fraction": "tol",           // the index's spelling of the same field
 };
 
 /* One field, two spellings: the catalog says "Temperature Coefficient", the
@@ -1328,37 +1349,67 @@ function resultsHtml(i, key) {
   const criteria = specCols(r);
   const others = extraCols(r, criteria);
   const extras = S.showSpecs ? others : [];
-  // Three tiers, in the order you can act on them: the parts you can ORDER; the
-  // ones that match but have too few in stock to fill this run; the ones that
-  // fail a term. Nothing is hidden — a part 20 units short is still worth seeing
-  // — but a part you cannot buy must never sit among the ones you can.
+  // THE TABLE IS THE PARTS YOU CAN ORDER. Nothing else earns a row.
+  //
+  // A part that fails a term, or that cannot fill this run, cannot go on the
+  // board — and the job is to get the order out, not to browse the catalog. It
+  // was once argued that a part 20 units short is "still worth seeing"; it is
+  // not, at 5:45pm with a board to place. So the misses and the short-stock
+  // parts are COUNTED (never silently dropped) and kept one click away, and the
+  // table itself carries no red cell at all.
   const covers = c => (c.liveStock || 0) >= need;
-  const hits = (r.candidates || []).filter(covers);
+  const usable = (r.candidates || []).filter(covers);
   const shortStock = (r.candidates || []).filter(c => !covers(c));
   const rejects = r.misses || [];
-  const rows = sortRows(hits).concat(sortRows(shortStock), sortRows(rejects));
+  const unusable = shortStock.concat(rejects);
+  // Best-stocked first, until a header says otherwise.
+  const byStock = rs => S.altSort.key ? sortRows(rs)
+    : rs.slice().sort((a, b) => (b.liveStock || 0) - (a.liveStock || 0));
+  const rows = S.showRejects ? byStock(usable).concat(byStock(unusable))
+                             : byStock(usable);
 
   const say = '<p class="say">' + esc(r.planned.say || r.terms) +
-    ' <span class="count">' + r.scanned + " looked at · " + hits.length +
-    " matched" +
-    (shortStock.length ? " · " + shortStock.length + " short of " + fmt(need)
-                       : "") +
-    " · " + rejects.length + " rejected" +
+    ' <span class="count">' + r.scanned + " looked at · " + usable.length +
+    " you can order" +
+    (unusable.length ? " · " + unusable.length + " can’t be used (" +
+      (shortStock.length ? shortStock.length + " short of " + fmt(need) +
+        (rejects.length ? ", " : "") : "") +
+      (rejects.length ? rejects.length + " fail a term" : "") + ")" : "") +
     (r.truncated ? " · the index stops at the 100 best-stocked — narrow it "
                  + "down if what you want isn’t here" : "") + "</span></p>";
 
-  if (!rows.length)
-    return say + '<p class="alert">the query came back empty — nothing in the ' +
-      "catalog matched even the request. Loosen a term, or change the part " +
-      "type, and search again.</p>";
+  // The one time the rejects matter: there is nothing to order, and WHY is the
+  // whole question. Name the term that did the killing — a bad term rejecting
+  // 100 good parts looks exactly like a genuinely empty catalog otherwise.
+  const blame = () => {
+    const by = {};
+    for (const c of rejects)
+      for (const f of (c.failed || [])) by[f.field] = (by[f.field] || 0) + 1;
+    const worst = Object.keys(by).sort((a, b) => by[b] - by[a]);
+    return worst.length
+      ? " What did the rejecting: " +
+        worst.map(f => esc(headLabel(f)) + " ×" + by[f]).join(", ") +
+        ". If a term is wrong, drop it in “the actual search” above."
+      : "";
+  };
 
-  // no instructions: the table says it itself — a red cell is what a part fails,
-  // red stock is too little of it, and the controls are a radio and a checkbox
-  const toggle = others.length
-    ? '<p class="note"><button class="btn mini" id="show-specs">' +
-      (S.showSpecs ? "hide the other specs" : "show all " + others.length +
-       " specs") + "</button></p>"
+  const peek = unusable.length
+    ? '<button class="btn mini" id="show-rejects">' +
+      (S.showRejects ? "hide the " + unusable.length + " you can’t use"
+                     : "show the " + unusable.length + " you can’t use") +
+      "</button>"
     : "";
+
+  if (!usable.length && !S.showRejects)
+    return say + '<p class="alert">nothing here can fill this run.' +
+      (shortStock.length ? " " + shortStock.length + " part(s) match but are " +
+        "short of " + fmt(need) + "." : "") + blame() + "</p>" +
+      (peek ? '<p class="note">' + peek + "</p>" : "");
+
+  const toggle = '<p class="note">' +
+    (others.length ? '<button class="btn mini" id="show-specs">' +
+      (S.showSpecs ? "hide the other specs" : "show all " + others.length +
+       " specs") + "</button> " : "") + peek + "</p>";
 
   return say + '<div class="sect">' + toggle +
     '<div class="tablewrap"><table class="results">' +
@@ -1539,6 +1590,8 @@ function wireMain() {
   });
   const specs = $("show-specs");
   if (specs) specs.onclick = () => { S.showSpecs = !S.showSpecs; render(); };
+  const rej = $("show-rejects");
+  if (rej) rej.onclick = () => { S.showRejects = !S.showRejects; render(); };
   const upd = $("update-btn");
   if (upd) upd.onclick = () => applyStaged(parseInt(upd.dataset.line, 10), true);
   const terms = $("terms-search");

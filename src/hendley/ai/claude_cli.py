@@ -165,19 +165,28 @@ Barrier Diodes (SBD)", "Chip Resistor - Surface Mount"). Read it there. If you
 need a class you cannot prove, say so in "say" — do not fake it with a flag.
 
 Column traps:
-  - resistors.power_watts is MILLIWATTS (0603 = 100, 1206 = 250). 1/4W = 250.
+  - power_watts is the catalog's string WITH THE UNIT DROPPED, so its unit is
+    not constant: 0603 = 100 (mW) but 2512 = 1, 2, 3 (WATTS), and 1206 holds
+    both 250 and 1. It is also NULL on some rows. NEVER sieve on it — "gte 100"
+    rejects every 1 W part, which is strictly better. Show it; do not prove it.
   - tolerance_fraction: 0.01 means ±1%. "1%" means "1% or better" → lte 0.01.
   - capacitance_farads is the row column; "capacitance" is the net param.
   - Prefer the INDEX column when the catalog's string carries an SI prefix
     (resistance "1.5kΩ", capacitance "10uF") — the column is already a number
     and comparable. Prefer the CATALOG for everything the index doesn't type.
+  - ONE TERM PER FIELD. An index column and a catalog parameter that differ only
+    in case or punctuation are the SAME FIELD (resistance / "Resistance";
+    voltage_rating / "Voltage Rating"). Stating both is not belt-and-braces: the
+    string one ("10kΩ") is compared against the column's NUMBER and misses on
+    every part alive. Capacitance is the exception — its column is
+    capacitance_farads, a different name, so a cap may state both.
 
 Categories and their sieve columns — this list is MEASURED. A column not named
 here either does not exist or cannot prove anything; either way, do not use it.
-  resistors: resistance, tolerance_fraction, power_watts(mW), package,
-    max_overload_voltage, is_basic
-  resistor_arrays: resistance, tolerance_fraction, power_watts(mW), package,
-    number_of_resistors, number_of_pins, topology
+  resistors: resistance, tolerance_fraction, package, max_overload_voltage,
+    is_basic  (power_watts exists but CANNOT be proved — see the traps above)
+  resistor_arrays: resistance, tolerance_fraction, package,
+    number_of_resistors, number_of_pins, topology  (power_watts: as above)
   capacitors: capacitance_farads, tolerance_fraction, voltage_rating,
     temperature_coefficient(X7R/X5R/C0G/NP0 — NULL on electrolytics), package
   diodes: forward_voltage, reverse_voltage, recovery_time_ns, package,

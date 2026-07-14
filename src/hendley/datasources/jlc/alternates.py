@@ -97,8 +97,13 @@ CATEGORIES: tuple[str, ...] = (
 
 # Columns the index publishes that CANNOT PROVE ANYTHING — measured live
 # (2026-07-13: 100+ rows per category, then re-probed across distinct packages so
-# a stock-skewed sample could not fool us). Each is constant, always null, or so
-# sparsely populated that a term on it rejects nearly everything.
+# a stock-skewed sample could not fool us). Each is constant, always null, so
+# sparsely populated that a term on it rejects nearly everything — or, worse,
+# NUMERICALLY MEANINGLESS: ``resistors.power_watts`` is the catalog's string with
+# its unit thrown away, so a 0603 reads ``100`` (milliwatts) and a 2512 reads
+# ``1`` (a WATT). ``power_watts gte 100`` therefore rejects every 1 W part while
+# passing a 250 mW one, and it is null on ~3% of rows besides. A column whose
+# unit is not constant can prove nothing, however well populated it looks.
 #
 # These are the most dangerous thing in the index, because they LOOK like the
 # answer. ``capacitors.is_polarized`` is ``false`` on every aluminium
@@ -132,7 +137,8 @@ UNPROVABLE_COLUMNS: dict[str, tuple[str, ...]] = {
                          "supply_voltage_max", "has_uart", "has_i2c", "has_spi",
                          "has_can"),
     "potentiometers": ("pin_variant", "is_surface_mount"),
-    "resistors": ("is_surface_mount",),
+    "resistor_arrays": ("power_watts",),
+    "resistors": ("is_surface_mount", "power_watts"),
     "risc_v_processors": ("cpu_core",),
     "switches": ("is_latching",),
     "voltage_regulators": ("quiescent_current", "topology"),
@@ -141,20 +147,19 @@ UNPROVABLE_COLUMNS: dict[str, tuple[str, ...]] = {
 # The filterable columns each category publishes, as MEASURED from the index
 # (probed live, 2026-07-13), with every UNPROVABLE_COLUMNS entry stripped out.
 # These are what a search term can be PROVEN against — the engineer picks from
-# them when editing a query, so nobody has to guess a field name. Traps worth
-# knowing: ``power_watts`` is milliwatts (0603 = 100), ``tolerance_fraction``
-# 0.01 means ±1%. Categories absent here publish nothing beyond ``package`` (or
+# them when editing a query, so nobody has to guess a field name. A trap worth
+# knowing: ``tolerance_fraction`` 0.01 means ±1%, so "1% or better" is
+# ``lte 0.01``. Categories absent here publish nothing beyond ``package`` (or
 # are empty in the index — use keyword search).
 #
 # A category can end up with only ``package``: that is an honest answer, not a
 # gap. It means the index cannot filter this part type, and everything the
 # engineer asks for must be proven against the catalog's own parameters instead.
 CATEGORY_COLUMNS: dict[str, tuple[str, ...]] = {
-    "resistors": ("resistance", "tolerance_fraction", "power_watts", "package",
+    "resistors": ("resistance", "tolerance_fraction", "package",
                   "max_overload_voltage", "is_basic"),
-    "resistor_arrays": ("resistance", "tolerance_fraction", "power_watts",
-                        "package", "number_of_resistors", "number_of_pins",
-                        "topology"),
+    "resistor_arrays": ("resistance", "tolerance_fraction", "package",
+                        "number_of_resistors", "number_of_pins", "topology"),
     "capacitors": ("capacitance_farads", "tolerance_fraction", "voltage_rating",
                    "temperature_coefficient", "package"),
     "diodes": ("forward_voltage", "reverse_voltage", "recovery_time_ns",

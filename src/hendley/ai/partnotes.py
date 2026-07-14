@@ -1,7 +1,8 @@
 """What this shop knows about a class of part — read into the agent's prompt.
 
-There is no one way to search for a part. A resistor's power is milliwatts in
-the index and "100mW" in the catalog; an electrolytic hides its can dimensions
+There is no one way to search for a part. A resistor's ``resistance`` column has
+the same name as the catalog's ``Resistance``, so asking for both spells "10000
+= 10kΩ" and rejects every part alive; an electrolytic hides its can dimensions
 inside the package string; a diode's family — small-signal, Schottky, zener,
 avalanche — is something the index cannot tell you at all. Every class has its
 own traps, and the cost of not knowing one is a search that returns the wrong

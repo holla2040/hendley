@@ -268,3 +268,63 @@ def test_an_unverifiable_part_has_no_workings_to_show():
     [miss] = got["misses"]
     assert miss["proof"] == []          # nothing was proven — say nothing
     assert miss["failed"][0]["why"] == "not in the live catalog"
+
+
+# The index column `resistance` and the catalog parameter `Resistance` are ONE
+# field spelled two ways. A plan that states both is not being careful — the
+# string term ("10kΩ") gets compared against the column's NUMBER (10000) and
+# misses on every part in the catalog. This is not hypothetical: it rejected all
+# 100 candidates for a stock 10k 0603 while every column on screen read "10kΩ".
+RES = [{"code": "R_10K", "package": "0603", "resistance": 10000,
+        "tolerance_fraction": 0.01},
+       {"code": "R_10K_5PC", "package": "0603", "resistance": 10000,
+        "tolerance_fraction": 0.05},          # ±5% — fails "1% or better"
+       {"code": "R_1K", "package": "0603", "resistance": 1000,
+        "tolerance_fraction": 0.01}]          # wrong value; the index ignored it
+
+RES_CATALOG = {"R_10K": {"Resistance": "10kΩ", "Tolerance": "±1%"},
+               "R_10K_5PC": {"Resistance": "10kΩ", "Tolerance": "±5%"},
+               "R_1K": {"Resistance": "1kΩ", "Tolerance": "±1%"}}
+
+
+def _res_plan(sieve):
+    return {"mode": "parametric", "category": "resistors",
+            "net": {"package": "0603", "resistance": 10000}, "sieve": sieve}
+
+
+def test_one_field_spelled_two_ways_is_proved_once():
+    src = LyingIndex(RES, catalog=RES_CATALOG)
+    got = run_search(src, _res_plan([
+        {"field": "resistance", "op": "eq", "value": 10000},
+        {"field": "Resistance", "op": "eq", "value": "10kΩ"}]))
+    assert [c["code"] for c in got["candidates"]] == ["R_10K", "R_10K_5PC"]
+    fields = [p["field"] for p in got["candidates"][0]["proof"]]
+    assert fields.count("resistance") + fields.count("Resistance") == 1
+
+
+def test_the_provable_twin_wins_whatever_order_it_was_written_in():
+    # the string term first: keeping "first wins" would still reject every part
+    src = LyingIndex(RES, catalog=RES_CATALOG)
+    got = run_search(src, _res_plan([
+        {"field": "Resistance", "op": "eq", "value": "10kΩ"},
+        {"field": "resistance", "op": "eq", "value": 10000}]))
+    assert [c["code"] for c in got["candidates"]] == ["R_10K", "R_10K_5PC"]
+    assert got["misses"][0]["code"] == "R_1K"   # and the wrong value still dies
+
+
+def test_tolerance_fraction_earns_the_catalogs_own_column():
+    # 0.01 IS "±1%", and `lte` is "1% or better" — a ±0.1% part passes. But the
+    # engineer must be able to SEE that: a column is only granted to a field the
+    # catalog names, and without the alias this term proved invisibly, leaving
+    # `0.01` on screen with nothing to tie it to the "±1%" being read.
+    src = LyingIndex(RES, catalog=RES_CATALOG)
+    got = run_search(src, _res_plan([
+        {"field": "resistance", "op": "eq", "value": 10000},
+        {"field": "tolerance_fraction", "op": "lte", "value": 0.01}]))
+    assert [c["code"] for c in got["candidates"]] == ["R_10K"]
+    tol = next(p for p in got["candidates"][0]["proof"]
+               if p["field"] == "tolerance_fraction")
+    assert tol["catalog"] is True       # → it earns a column
+    assert tol["shown"] == "±1%"        # → in the catalog's own words
+    loose = next(c for c in got["misses"] if c["code"] == "R_10K_5PC")
+    assert loose["failed"][0]["field"] == "tolerance_fraction"
