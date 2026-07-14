@@ -39,6 +39,8 @@ tool's canonical vocabulary.
 Part context (verbatim from the design):
 {context}
 
+{part_notes}
+
 Rules:
 - kind: lowercase category noun (resistor, capacitor, inductor, diode, led,
   fuse, switch, connector, ic, transistor, crystal, ...). Use the
@@ -387,6 +389,8 @@ sit in each. This is the catalog's OWN vocabulary, and it is the only spelling
 that will match anything:
 {packages}
 
+{family_notes}
+
 Find, from the datasheet / distributor pages:
 
 0. packages: EVERY catalog package listed above that is THIS SAME LAND — the one
@@ -548,7 +552,14 @@ class ClaudeCLIInterpreter:
         self.timeout = timeout
 
     def interpret_part(self, ctx: dict) -> Interpretation | None:
-        prompt = PROMPT.format(context=json.dumps(ctx, indent=2, ensure_ascii=False))
+        designator = str(ctx.get("designator") or "")
+        prefix = "".join(c for c in designator if c.isalpha()).upper()
+        note = note_for(designator=prefix)
+        prompt = PROMPT.format(
+            context=json.dumps(ctx, indent=2, ensure_ascii=False),
+            part_notes=("SHOP KNOWLEDGE — apply it conservatively; a local alias "
+                        "must still be confirmed by the engineer:\n\n" + note)
+            if note else "")
         obj = self._ask(prompt)
         if obj is None:
             return None
@@ -625,7 +636,10 @@ class ClaudeCLIInterpreter:
                 family=family,
                 footprint=footprint or "(none given)",
                 headline=headline or "(the library gives none)",
-                packages=listing or "  (the catalog stocks none of this family)"),
+                packages=listing or "  (the catalog stocks none of this family)",
+                family_notes=("REPOSITORY FAMILY GUIDANCE — measured knowledge "
+                              "that outranks generic examples:\n\n" +
+                              (note_for(judgment="family") or "(none)"))),
             tools="WebSearch",
         )
         if obj is None:

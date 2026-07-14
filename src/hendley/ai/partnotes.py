@@ -73,7 +73,9 @@ def _hit(values: list[str], want: str) -> bool:
 
 
 def note_for(second_type: str | None = None,
-             category: str | None = None) -> str | None:
+             category: str | None = None, *,
+             designator: str | None = None,
+             judgment: str | None = None) -> str | None:
     """The note for this part class, or None if nobody has written one.
 
     The CATALOG's class wins: it is the only thing that knows a TVS from a
@@ -85,6 +87,7 @@ def note_for(second_type: str | None = None,
     if not directory:
         return None
     weak: str | None = None
+    contextual: str | None = None
     for path in sorted(directory.glob("*.md")):
         if path.name.lower() == "readme.md":
             continue
@@ -97,7 +100,12 @@ def note_for(second_type: str | None = None,
             continue
         if second_type and _hit(keys.get("catalogType", []), second_type):
             return body
+        if judgment and _hit(keys.get("judgment", []), judgment):
+            contextual = contextual or body
+        if (designator and not second_type
+                and _hit(keys.get("designator", []), designator)):
+            contextual = contextual or body
         if not second_type and category and _hit(keys.get("category", []),
                                                  category):
             weak = weak or body
-    return weak
+    return contextual or weak

@@ -247,3 +247,29 @@ def test_the_shipped_chip_resistor_note_is_wired_up():
     assert "NEVER also state it in the catalog's words" in note
     assert "power_watts" in note           # names the unit-dropped column
     assert "tolerance_fraction" in note    # a FRACTION, and lte
+
+
+def test_the_zener_note_reaches_diode_interpretation(monkeypatch):
+    seen = []
+    answer = {"kind": "diode", "value": "10V", "package": "SOD-323",
+              "qualifier": "zener", "envelope": {"mount": "smd"},
+              "confidence": 0.9, "rationale": "shop alias, engineer confirms"}
+
+    def fake_run(cmd, **kw):
+        seen.append(cmd[2])
+        return subprocess.CompletedProcess(
+            cmd, 0, stdout=_cli_envelope(json.dumps(answer)), stderr="")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    got = ClaudeCLIInterpreter(binary="claude-fake").interpret_part(
+        {"designator": "D9", "value": "VZ10", "footprint": "D-SOD323"})
+
+    assert got.spec.value == "10V" and got.spec.qualifier == "zener"
+    assert "VZ10" in seen[0] and "10V0" in seen[0] and "shop conventions" in seen[0]
+
+
+def test_the_family_note_is_selected_by_judgment_not_one_boards_class():
+    from hendley.ai.partnotes import note_for
+
+    note = note_for(judgment="family")
+    assert note and "WORLD knows" in note

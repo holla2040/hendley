@@ -132,6 +132,8 @@ def test_root_serves_html(tmp_path):
                 f"http://127.0.0.1:{server.server_port}/") as res:
             body = res.read().decode()
         assert res.status == 200 and "<title>Hendley</title>" in body
+        assert 'if (rl.family && !l.ref) return "pick"' in body
+        assert 'if (state === "pick") return "unpicked"' in body
     finally:
         server.shutdown()
         server.server_close()

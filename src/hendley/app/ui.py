@@ -92,6 +92,7 @@ body.busy, body.busy * { cursor:wait !important; }
 .comp .stat { font-variant-numeric:tabular-nums; white-space:nowrap; }
 .comp.st-ok    { background:var(--ok-bg);  color:var(--chip-fg); }
 .comp.st-short { background:var(--err-bg); color:var(--chip-fg); }
+.comp.st-pick  { background:var(--warn-bg); color:var(--chip-fg); }
 .comp.st-conf  { background:var(--warn-bg); color:var(--chip-fg); }
 .comp.st-dnp   { background:transparent; color:var(--tin);
                  border:1px dashed var(--line); }
@@ -544,8 +545,12 @@ function needsAck(i) {
 }
 function lineState(i) {
   const l = S.resolution.lines[i];
+  const rl = S.requirements.lines[i];
   if (l.dnp) return "dnp";
   if (needsAck(i)) return "conf";
+  // A family with no approved choice is waiting for an engineering selection;
+  // no stock decision has happened yet, so calling it "short" is a lie.
+  if (rl.family && !l.ref) return "pick";
   if (escFor(i)) return "short";
   if (l.ref || l.mpn) {
     if ((l.checks || []).some(c => c.check === "unverified")) return "na";
@@ -596,13 +601,14 @@ function stagedDirty(i) {
 
 function render() { renderRail(); renderExport(); renderMain(); }
 
-const STATE_BADGE = {ok: "ok", short: "short", conf: "conf", na: "na",
+const STATE_BADGE = {ok: "ok", short: "short", pick: "conf", conf: "conf", na: "na",
                      dnp: null};
 
 function railStat(i, state) {
   const l = S.resolution.lines[i];
   if (state === "dnp") return isManualDnp(i) ? "DNP · this run" : "DNP";
   if (state === "conf") return "confirm";
+  if (state === "pick") return "unpicked";
   if (state === "na") return "unverified";
   if (state === "short") return "short";
   // The ✓ goes LAST, always. The rail is read by running your eye down its right
@@ -847,7 +853,8 @@ function detailHtml(i) {
   const state = lineState(i);
   const badge = STATE_BADGE[state]
     ? '<span class="badge ' + STATE_BADGE[state] + '">' +
-      (state === "conf" ? "confirm" : state === "na" ? "unverified" : state) +
+      (state === "conf" ? "confirm" : state === "pick" ? "unpicked" :
+       state === "na" ? "unverified" : state) +
       '</span>' : "";
   // the schematic's own words — never the app's reading of them
   const title = designWords(i).join(" · ");

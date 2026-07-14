@@ -85,9 +85,12 @@ than silence, because the agent will believe it.
   part. The only keyword surface (`components?search=`), why its stock is a lie,
   reading the footprint's *geometry* instead of its name, and the substitutions
   that fit the land but break the circuit.
+- [Zener diodes and local voltage labels](zener-diodes.md) — the shop aliases
+  `VZ10`, `10V0`, and `10.0`, why they are specifications rather than families,
+  and the catalog-class boundary that keeps Schottky/TVS parts separate.
 
 ## Still to write
 
 - MOSFETs
-- The diode families — small-signal, Schottky, zener, avalanche/TVS — which the
-  catalog's `secondTypeName` distinguishes and the index does not.
+- The remaining diode families — small-signal, Schottky, avalanche/TVS — which
+  the catalog's `secondTypeName` distinguishes and the index does not.

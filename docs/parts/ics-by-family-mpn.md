@@ -1,4 +1,5 @@
 ```applies-to
+judgment: family
 catalogType: Darlington Transistor Arrays
 catalogType: I/O Expanders
 catalogType: RS-485 / RS-422 ICs
