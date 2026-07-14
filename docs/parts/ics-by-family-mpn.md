@@ -173,6 +173,28 @@ footprint into an expected MPN shape. Measured examples:
 - **SP3485** — `EN-L` = industrial (−40…+85 °C) · `CN-L` = commercial (0…+70 °C).
   Same narrow SOIC-8 body: here the suffix is a **temperature grade**, not a package.
 
+## ⚠️ A trap is about FUNCTION. Never about the package.
+
+The agent that names the traps **can slander a good part**, and it did (2026-07-13). On a
+PCF8574 in a 300-mil land it warned:
+
+> *"PCF8574T — a NARROW 3.9 mm body (150 mil). It will not reach the 7.5 mm-body land on
+> this board. Wrong land, not wrong part."*
+
+That is **false**. C7605 *is* a `PCF8574T`, and the catalog lists its package as
+`SOIC-16-300mil` — the wide body, which is exactly what the board has. (NXP's "SO16" for
+the `T` suffix is the 7.5 mm SOT162-1. The datasheet says so.)
+
+Nothing broke, because the **catalog** proves the package and the sieve was unmoved: the
+good part stayed on the table. But the engineer would have read the warning and skipped
+the genuine NXP part — the one they should have bought.
+
+**So a trap may only speak about what the package CANNOT show**: the I²C address, the
+voltage, the gain, the CTR, the temperature grade, the register model. The catalog proves
+the land, exactly, for every part, and it **outranks the agent**. A trap that talks about
+bodies, pin counts or lands is not protecting anyone; it is condemning a good part with a
+guess. (Enforced in `FAMILY_PROMPT`; if you rewrite that prompt, keep this rule.)
+
 ## The traps that are not packages
 
 The package sieve is necessary and **not sufficient**. Three real ones, measured:
@@ -185,11 +207,26 @@ The package sieve is necessary and **not sufficient**. Three real ones, measured
   neighbours `LTV-357T` (50–600 %) and `EL357N` (200–400 %) are **not drop-ins** —
   the current transfer ratio is 3–5× lower and the LED drive must be rechecked.
 - **`MB10S` (1000 V) vs `MB6S` (600 V)** share the `MBS` package. Same land, 40 %
-  less reverse standoff.
+  less reverse standoff. (`MB8S` is 800 V — the same trap, one step milder.)
+- **`SP3485` (3.3 V) vs `SP485` / `MAX485` / `SN75176` (5 V)** — the identical SOIC-8
+  land AND the identical 75176 pinout. It is a *supply voltage* difference, and nothing
+  about the footprint or the package will ever hint at it.
+- **`PCA9554` vs `PCF8574` — the subtlest one on this board.** Pin-to-pin compatible,
+  and it shares the 0x20–0x27 address range, so it solders down and it even **ACKs**.
+  But it is **register-based**: every access needs a command byte selecting
+  input/output/polarity/configuration, and its ports **power up as INPUTS**. PCF8574
+  firmware — a bare byte write — will not drive it at all. It answers, and does nothing.
+- **Temperature grade**: `SP3485EN` is −40…+85 °C, `SP3485CN` is 0…+70 °C. Same body,
+  same part number stem, one letter.
 
 So: sieve on package, then read the *catalog's* `parameters` for the spec that
 actually defines the part (CTR, address, V_R, temp grade) and say out loud what
 changes if the engineer takes the substitute.
+
+**Traps are shown, never silently substituted, and never auto-excluded.** A trap part
+stays an orderable row with the warning above it, and that is deliberate: the agent's
+part-name claims can be WRONG (see the `PCF8574T` slander above), so auto-excluding on
+one would silently kill a good part. Warn loudly; let the engineer decide.
 
 ## Consolidate identical parts
 
@@ -197,6 +234,28 @@ Two designators with the same family and the same footprint should usually get t
 **same LCSC code**. JLCPCB's feeder/loading fee is charged **per unique part type**,
 so a needless second code costs money for nothing. Check the rest of the design
 before recommending a fresh part for a designator whose twin is already resolved.
+
+## ⚠️ A library VALUE is not always a family
+
+`D1` on this board has VALUE `VZ10` and footprint `D-SOD323`. `VZ10` looks exactly like a
+family — but it is **this shop's name for a 10 V zener**, not a part number anyone sells.
+Searched by name it matches nothing sensible: the catalog's package list for "VZ10" comes
+back as **electrolytic can sizes** (`SMD,D6.3xL7.7mm`), because those are the parts whose
+NAMES happen to contain it.
+
+The pipeline refuses honestly — *"can't tell which package `D-SOD323` is"* — and names the
+packages the catalog does stock, so nothing wrong is ever offered. But it does not resolve.
+
+**That part needs the SPEC path, not the family path**: `kind=zener, value=10V,
+package=SOD-323`, sieved against the `diodes` category's real columns. The judgment
+"`VZ10` means a 10 V zener" is a **shop convention** — it belongs where the other
+conventions live (read by the agent, confirmed once by the engineer, cached in
+`interpretations` for ever). **Do not hardcode `VZ10`.** The next library will have its
+own private words.
+
+The lesson generalizes: **a family is a part number the WORLD knows. A value is a name
+only this shop knows.** They are indistinguishable by looking, and only the catalog can
+tell you which one you are holding.
 
 ## The anchor
 

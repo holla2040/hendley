@@ -15,6 +15,43 @@ speed up JLCPCB **PCBA** order submissions. It is a Python reimplementation of
 JLCPCB's official Java OpenAPI SDK. (Named after James Garner's character
 Hendley, "the Scrounger", in *The Great Escape*.)
 
+## The product intent — the zero-touch flow (Craig, 2026-07-11)
+
+**This is what Hendley is for. Measure every design decision against it.**
+
+The tool opens the schematic, pulls the parts, and looks through the database for the
+approved ones. Parts with no assignment → the tool finds the candidates and presents
+them; the engineer picks a first choice plus a couple of backups; done. From then on,
+**every re-pull of that BOM resolves automatically.**
+
+**Never part of the workflow:** editing JSON by hand, typing part data into forms, or
+any manual step for a part whose kind / value / package the schematic already states
+(designator prefix + value + footprint). Inferring that is the TOOL's job, not the
+user's. This rule exists because the tool once had Craig hand-editing requirement JSON
+and typing a part into a record form; he called it out hard — *"what kind of workflow is
+that?"* Manual forms are for deliberate curation only.
+
+## Working with Craig (holla@solohm.com) — the project owner, a hardware designer
+
+- **Keep responses SHORT.** His words: *"I don't want to read 10,000 pages of shit."* A
+  few lines. No step-by-step essays unless he asks.
+- **Lead with a recommendation.** He tends to take it. Present the real options, but say
+  which one you'd pick and why.
+- **Design before code.** *"We're coming up with the work to be done, not doing the
+  work."* Do not start implementing while the conversation is in design mode; he will
+  say when to switch.
+- **Honest uncertainty beats hedged guessing.** "I'm not confident — let me verify" lands
+  well. A confident guess does not.
+- He is comfortable delegating **long autonomous runs** once a design is signed off, with
+  per-task commits and a decision log to review afterwards.
+- **Sourcing bias:** high inventory = popular = supply-chain-safe, and he will pay a
+  little more for it — the opposite of "cheapest". **Same package is the top priority**
+  (changing it changes the PCB).
+- **⛔ No memory files.** He works on several machines and this is a team project.
+  Anything worth remembering goes **in the repo** — `CLAUDE.md`, `HANDOFF.md`, an ADR, or
+  a `docs/parts/` note. A note in `~/.claude/` is invisible to him everywhere else and to
+  everyone else, always.
+
 ## Glossary — say these words, and only these
 
 Agreed with Craig on 2026-07-13, because one loose word ("anchor") had already cost a
@@ -371,6 +408,14 @@ concrete `providers/*` or `datasources/jlc` — only the base protocols.
     (measured: `1N4148`, `LM358`, `AMS1117` all return exactly 100 with
     `limit=500`) — so never widen a net to a bare family name; keep the `package`
     on it and fire one request per package spelling.
+    ⚠️ **A column is dead IN A CATEGORY, not everywhere.** `color` proves nothing
+    on a 7-segment display and proves plenty on an LED; `has_i2c` is a lie on an
+    accelerometer and is the whole point of an `io_expander`. `Server._stale_plan()`
+    once tested a plan against a FLAT UNION of every category's dead columns and
+    so condemned **16 categories' honest columns** — every `leds`, `ldos`,
+    `microcontrollers`, `adcs`, `io_expanders` plan was discarded on sight and the
+    agent re-asked from scratch on every search, for ever. It is **scoped to the
+    plan's own category** now. Keep it that way.
 - `src/hendley/ingestion/fusion/` — reading designs out of Fusion:
   - `bridge.py` — `FusionBridge`: the committed HTTP client for Fusion's local
     endpoint. Encodes the full verified handshake (gateway IP with spoofed
@@ -747,6 +792,21 @@ part" — jlcsearch is the discovery surface.
 
 All component routes are `POST` with a JSON body, even getter-shaped names.
 Null body fields are omitted to match the Java SDK's `toJSON()`.
+
+## ⚠️ Before ANY Fusion read — ask, and WAIT
+
+Before any schematic read (bridge `electronics.Part` reads, `hendley app` intake,
+`hendley pcba`): **tell Craig to bring the schematic view to the front in Fusion, then
+STOP and wait for his confirmation.** One short line — *"Bring the schematic to the front
+in Fusion — say go."* Do not read first and diagnose afterwards.
+
+**Why:** the `BOARD;` switch is **one-way** and an open dialog silently blocks reads — they
+come back **empty, not erroring**. He asked for this gate explicitly after getting a wall
+of diagnosis instead of a one-line ask.
+
+**And you usually get ONE read per session.** Spend it on a full Refresh, which caches the
+whole design to `~/.hendley/design-cache.json` — then work from that cache indefinitely
+(`scripts/ui_check.py --live` does exactly this). See `HANDOFF.md`.
 
 ## Fusion access from WSL (read side)
 

@@ -122,7 +122,23 @@ not.** That is precisely why ADR-0007 says a part's class comes from `secondType
 never from an index column. `components.category` and `components.subcategory` are
 therefore in `UNPROVABLE_COLUMNS` and are no longer offered to the agent.
 
-**2. The web names the reference part, not the field.** It will say `PCF8574DWR` (TI). It
+**2. A TRAP IS ABOUT FUNCTION, NEVER ABOUT THE PACKAGE.** The agent that names the traps
+can slander a good part, and it did: it warned that `PCF8574T` was "a narrow 3.9 mm body
+that will not reach this land" — while the catalog lists that very part (C7605) as
+`SOIC-16-300mil`, the wide body the board actually has. Nothing broke (the catalog proves
+the package, so the sieve kept the part) but the engineer would have read the warning and
+skipped the one part they should have bought.
+
+The catalog proves the land exactly, for every part, and it **outranks the agent**. So a
+trap may only speak about what the package cannot show — the I²C address, the voltage, the
+gain, the CTR, the temperature grade, the register model. A trap that talks about bodies or
+pin counts is not protecting anyone; it is condemning a good part with a guess.
+
+And for the same reason, **traps are never auto-excluded**: a trap part stays an orderable
+row with the warning above it. Auto-excluding on a claim the agent can get wrong would
+silently kill good parts. Warn loudly; let the engineer decide.
+
+**3. The web names the reference part, not the field.** It will say `PCF8574DWR` (TI). It
 will never say `PCF8574DWR(UMW)` or `ULN2003ADTR(XBLW)` — JLC's house brands, which are
 frequently the better buy (UMW: 9,910 in stock against NXP's 5,673). So the catalog sweep
 is the field and the web's answer is the reference row that says which of them is right.
