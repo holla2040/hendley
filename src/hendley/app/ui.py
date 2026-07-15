@@ -408,7 +408,7 @@ async function refresh() {
     $("main").innerHTML =
       '<p class="sub">Reading the open Fusion design …</p>';
     await run(
-    "reading Fusion (interpreting new parts can take a minute)", async () => {
+    "reading Fusion", async () => {
     const data = await api("/api/intake", {productionQuantity: qty()});
     await hydrate(data, new Date());
     msg("read “" + (S.design || "design") + "” — " +
@@ -1770,18 +1770,17 @@ function wireMain() {
   }
 }
 
-/* OPENING A PART READS IT. Every part, every time — pinned, spec, unnamed
-   alike; the old code read some lines and not others, and the ones it skipped
-   (the ones the schematic pinned, which carry a part number and are therefore
-   the BEST known parts in the design) fell back to showing you raw schematic
-   text in the search box. The agent gets everything: the schematic's words,
-   this shop's designator conventions, and — when a part number is pinned or
-   mounted — that part's own record from the live catalog. Judged once, cached
-   forever. */
+/* OPENING AN UNRESOLVED PART READS IT. Refresh itself is cache-only and exact,
+   deterministic, cached, and family lines need no generic agent judgment.
+   Opening a yellow/red uncached line pays for one reading, applies its SpecKey,
+   and caches it for every later Refresh. */
 async function ensureReading(i) {
   const rl = S.requirements.lines[i];
   const l = S.resolution.lines[i];
-  if (!rl || l.dnp) return;
+  // Exact, deterministic, cached and family lines need no generic agent read.
+  // Families have their own bounded discovery below. Only an unresolved
+  // yellow/red interpretation is paid for when the engineer opens that part.
+  if (!rl || l.dnp || !uninterpFor(i)) return;
   const key = lineKey(rl);
   if (key in S.readings || S.reading === key) return;
   S.reading = key;
@@ -1794,7 +1793,13 @@ async function ensureReading(i) {
       // the catalog answer instead of the agent guessing
       code: (rl.providerRefs || {}).jlcpcb || l.ref || undefined});
     S.readings[key] = d.reading;      // null = the agent couldn't be reached
-    if (d.reading) msg("read: " + d.reading.is, "ok");
+    if (d.reading && d.requirementSpec) {
+      rl.spec = d.requirementSpec;
+      delete rl.family;
+      S.uninterpreted = S.uninterpreted.filter(x => x.lineIndex !== i);
+      msg("read: " + d.reading.is, "ok");
+      await resolveNow();
+    } else if (d.reading) msg("read: " + d.reading.is, "ok");
     else msg("");
   } catch (e) {
     S.readings[key] = null;
@@ -1815,7 +1820,10 @@ async function ensureReading(i) {
 async function ensureFamily(i) {
   const rl = S.requirements.lines[i];
   const l = S.resolution.lines[i];
-  if (!rl || !rl.family || l.dnp) return;
+  // Some diode-looking strings are provisional families until the lazy read
+  // decides whether they are actually specs (VZ10, 18V TVS, bare voltage).
+  // Never race that generic judgment with family discovery.
+  if (!rl || !rl.family || l.dnp || uninterpFor(i)) return;
   const key = lineKey(rl);
   if (S.familyTried[key] || key in S.results || S.busySearch === key ||
       S.typed[key]) return;

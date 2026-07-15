@@ -253,7 +253,12 @@ concrete `providers/*` or `datasources/jlc` — only the base protocols.
   the designators.
 - `src/hendley/ai/` — the interpretation tier (ADR-0005/0006/0007):
   `Interpreter` protocol + `claude_cli.py` (`claude -p`, rides the
-  subscription, `HENDLEY_CLAUDE_BIN` override). Judgments, all cached:
+  subscription, `HENDLEY_CLAUDE_BIN` override). **Refresh is cache-only:** it
+  reads Fusion, applies exact/deterministic/cached knowledge, and never launches
+  `claude -p`. An uncached unresolved part is judged only when the engineer
+  opens its red/yellow panel; that one lazy read supplies the SpecKey and is
+  cached for every later Refresh. Family panels go directly to their bounded
+  family discovery instead of generic interpretation. Judgments, all cached:
   `interpret_part` (ad-hoc values: `47u/50V` → value `47u`, qualifier `50V`),
   `interpret_footprint` (**normalize to catalog packages**: `D-SOD323` →
   `SOD-323`, `C-0603` → `0603`; verbatim only when nothing standard is
@@ -280,7 +285,10 @@ concrete `providers/*` or `datasources/jlc` — only the base protocols.
   and **`derive_key`** (the AVL's SpecKey for a pick, from the design line +
   search words + the picked part's verified facts; leaves `value` empty when
   the part has none — never invents one).
-  `interpret_footprint()` serves schematic-pinned parts. Every judgment is
+  Interpretation cache identity includes meaningful schematic attributes, so
+  `VALUE=10V, TYPE=Zener` cannot reuse the reading for bare `VALUE=10V`.
+  Administrative/import attributes (`LCSC`, `MP`, `MF`, etc.) do not invalidate
+  electrical meaning. Every judgment is
   cached in the DB (`interpretations`, provenance user > llm >
   deterministic — user answers are never overwritten or re-asked); failures
   degrade to one-time confirm cards in the app, never break the flow.

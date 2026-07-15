@@ -287,6 +287,7 @@ class CountingInterpreter:
 
     def __init__(self, confidence=0.9):
         self.calls = 0
+        self.read_calls = 0
         self.keys = 0
         self.confidence = confidence
 
@@ -301,6 +302,15 @@ class CountingInterpreter:
             envelope={"mount": "tht", "maxDiaMm": 10, "leadSpacingMm": 5},
             confidence=self.confidence,
             rationale="electrolytic, 5mm lead spacing")
+
+    def read_part(self, dossier):
+        self.read_calls += 1
+        assert dossier["schematic"]["value"] == "47u/50V"
+        return {"is": "47 uF 50 V capacitor", "search": "47uF 50V",
+                "spec": {"kind": "capacitor", "value": "47u",
+                         "package": "C-E-5", "qualifier": "50V"},
+                "plan": {}, "rationale": "read lazily",
+                "confidence": self.confidence}
 
     def derive_key(self, ctx):
         self.keys += 1
@@ -336,20 +346,55 @@ def _mystery_app(tmp_path, interp):
     return call, server
 
 
-def test_llm_interprets_and_caches_once(tmp_path):
+def test_refresh_defers_interpretation_until_open_then_caches_once(tmp_path):
     interp = CountingInterpreter(confidence=0.9)
     call, server = _mystery_app(tmp_path, interp)
     try:
         data = call("/api/intake", {"productionQuantity": 5})
-        assert data["uninterpreted"] == []
-        c7 = next(ln for ln in data["requirements"]["lines"]
-                  if "C7" in ln["designators"])
-        assert c7["spec"] == {"kind": "capacitor", "value": "47u",
-                              "package": "C-E-5", "qualifier": "50V"}
-        assert interp.calls == 1
-        # second intake: cache hit, the LLM is never asked again
-        call("/api/intake", {"productionQuantity": 5})
-        assert interp.calls == 1
+        assert [u["designators"] for u in data["uninterpreted"]] == [["C7"]]
+        assert interp.calls == 0 and interp.read_calls == 0
+
+        got = call("/api/read", {"lineIndex": 0,
+                                  "requirements": data["requirements"]})
+        assert got["reading"]["spec"]["value"] == "47u"
+        assert got["requirementSpec"]["value"] == "47u"
+        assert interp.calls == 0 and interp.read_calls == 1
+
+        # The lazy read also seeds cache-only intake; no second agent call.
+        again = call("/api/intake", {"productionQuantity": 5})
+        assert again["uninterpreted"] == []
+        assert again["requirements"]["lines"][0]["spec"]["value"] == "47u"
+        call("/api/read", {"lineIndex": 0,
+                           "requirements": again["requirements"]})
+        assert interp.read_calls == 1
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_part_cache_identity_includes_meaningful_attributes_only():
+    from hendley.app.server import _part_cache_value
+
+    plain = _part_cache_value("10V", {})
+    zener = _part_cache_value("10V", {"TYPE": "Zener"})
+    tvs = _part_cache_value("10V", {"TYPE": "TVS"})
+    assert plain == "10V"
+    assert len({plain, zener, tvs}) == 3
+    # Provider/import bookkeeping cannot invalidate an electrical reading.
+    assert _part_cache_value("10V", {"LCSC": "C1", "MP": "stale"}) == plain
+
+
+def test_low_confidence_lazy_read_does_not_resolve_or_seed_refresh(tmp_path):
+    interp = CountingInterpreter(confidence=0.4)
+    call, server = _mystery_app(tmp_path, interp)
+    try:
+        intake = call("/api/intake", {"productionQuantity": 5})
+        got = call("/api/read", {"lineIndex": 0,
+                                  "requirements": intake["requirements"]})
+        assert got["reading"]["spec"]["kind"] == "capacitor"
+        assert got["requirementSpec"] is None
+        again = call("/api/intake", {"productionQuantity": 5})
+        assert [u["designators"] for u in again["uninterpreted"]] == [["C7"]]
     finally:
         server.shutdown()
         server.server_close()
@@ -403,9 +448,7 @@ class PartialThenComplete:
             confidence=0.9, rationale="clear")
 
 
-def test_an_incomplete_reading_does_not_kill_the_interpreter(tmp_path):
-    # regression: an answer that isn't a complete spec used to look like a
-    # dead interpreter, so every later part in the design went unjudged
+def test_refresh_never_sweeps_multiple_unresolved_parts(tmp_path):
     interp = PartialThenComplete()
     app = HendleyApp(db_path=tmp_path / "parts.db", outdir=tmp_path / "out",
                      datasource_factory=lambda: FakeSource({}),
@@ -414,17 +457,8 @@ def test_an_incomplete_reading_does_not_kill_the_interpreter(tmp_path):
                      draft_path=tmp_path / "draft.json",
                      cache_path=tmp_path / "cache.json")
     data = app.api_intake({"productionQuantity": 5})
-    assert interp.seen == ["C7", "D6"]   # D6 still got asked
-    d6 = next(ln for ln in data["requirements"]["lines"]
-              if "D6" in ln["designators"])
-    assert d6["spec"]["package"] == "SOD-323"
-    # C7's partial reading rides onto the card as prefill
-    [card] = data["uninterpreted"]
-    assert card["designators"] == ["C7"]
-    assert card["guess"]["spec"] is None
-    assert card["guess"]["partial"] == {"kind": "capacitor", "package": "C-E-5"}
-    # the package was already read — no second judgment call is spent
-    assert "judgedPackage" not in card
+    assert interp.seen == []
+    assert [u["designators"] for u in data["uninterpreted"]] == [["C7"], ["D6"]]
 
 
 class JudgingInterpreter:
@@ -448,22 +482,14 @@ class JudgingInterpreter:
                 "confidence": 0.9, "rationale": "catalog form of the name"}
 
 
-def test_confirm_card_carries_the_judged_catalog_package(tmp_path):
-    # the card must never seed the raw library footprint as the package —
-    # the agent-judged catalog form rides along for the prefill
+def test_refresh_does_not_eagerly_judge_an_uncached_footprint(tmp_path):
     interp = JudgingInterpreter(package="SMD-5x5")
     call, server = _mystery_app(tmp_path, interp)
     try:
         data = call("/api/intake", {"productionQuantity": 5})
         [card] = data["uninterpreted"]
-        assert card["judgedPackage"] == "SMD-5x5"
-        assert card["judgedEnvelope"] == {"mount": "smd"}
-        assert interp.footprint_calls == 1
-        # judged once, ever — the cache answers on the next intake
-        data = call("/api/intake", {"productionQuantity": 5})
-        [card] = data["uninterpreted"]
-        assert card["judgedPackage"] == "SMD-5x5"
-        assert interp.footprint_calls == 1
+        assert "judgedPackage" not in card
+        assert interp.footprint_calls == 0
     finally:
         server.shutdown()
         server.server_close()
@@ -486,30 +512,30 @@ def test_guess_with_a_package_skips_the_footprint_judgment(tmp_path):
 
 
 def test_judged_nothing_standard_gives_no_prefill(tmp_path):
-    # '' is the valid "nothing standard recognizable" answer — the card
-    # falls back to the raw footprint, per the verbatim convention
+    # Refresh never asks what the footprint means merely to populate a card.
     interp = JudgingInterpreter(package="")
     call, server = _mystery_app(tmp_path, interp)
     try:
         data = call("/api/intake", {"productionQuantity": 5})
         [card] = data["uninterpreted"]
         assert "judgedPackage" not in card
-        assert interp.footprint_calls == 1
+        assert interp.footprint_calls == 0
     finally:
         server.shutdown()
         server.server_close()
 
 
 def test_low_confidence_leaves_the_line_unread_for_the_search_box(tmp_path):
-    # nothing is invented and nothing is demanded: the line simply has no key
-    # yet, and the search box (seeded from what WAS read) is how it gets one
+    # Confidence cannot matter until the engineer opens the line: Refresh does
+    # not launch the interpreter at all.
     interp = CountingInterpreter(confidence=0.4)  # honest doubt
     call, server = _mystery_app(tmp_path, interp)
     try:
         data = call("/api/intake", {"productionQuantity": 5})
         [card] = data["uninterpreted"]
         assert card["designators"] == ["C7"] and card["value"] == "47u/50V"
-        assert card["guess"]["spec"]["kind"] == "capacitor"   # seeds the box
+        assert card["guess"]["spec"] is None
+        assert interp.calls == 0
         c7 = next(ln for ln in data["requirements"]["lines"]
                   if "C7" in ln["designators"])
         assert "spec" not in c7 or not c7["spec"]

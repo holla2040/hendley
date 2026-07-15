@@ -20,6 +20,9 @@ remaining work, and decisions that require Craig.
 
 - Reads the active Fusion schematic and board through `FusionBridge`; Refresh caches the
   full intake at `~/.hendley/design-cache.json`.
+- Refresh is cache-only and launches no agent processes. Opening an uncached
+  red/yellow part performs one lazy reading and caches its SpecKey; family lines
+  go directly to bounded family discovery.
 - Keeps exact provider codes, manufacturer MPNs, incomplete families, specifications,
   local labels, DNP parts, and unresolved parts distinct.
 - Resolves approved part lists against live JLC stock and exports gated BOM/CPL files.

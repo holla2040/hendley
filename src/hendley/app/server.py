@@ -105,6 +105,30 @@ def _kind_hint(designator: str) -> str:
     return (m.group(1) if m else "").upper()
 
 
+_NON_INTERPRETATION_ATTRIBUTES = {
+    "DNP", "LCSC", "JLC", "JLCPCB", "OLDLCSC", "MANUFACTURER", "MP", "MF",
+}
+
+
+def _part_cache_value(raw_value: str, attributes: dict | None = None) -> str:
+    """Cache identity for a schematic meaning, including meaningful attributes.
+
+    Empty/administrative attributes retain the historical raw-value key, so old
+    cache entries remain useful. Electrical hints such as TYPE=Zener create a
+    distinct key and changing them necessarily causes a fresh reading.
+    """
+    meaningful = {
+        str(k).strip().upper(): str(v).strip()
+        for k, v in (attributes or {}).items()
+        if str(k).strip().upper() not in _NON_INTERPRETATION_ATTRIBUTES
+        and str(v).strip()
+    }
+    if not meaningful:
+        return raw_value
+    return raw_value + "\x1e" + json.dumps(
+        meaningful, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+
+
 def _library_type(fact) -> str | None:
     """Basic or Extended, off a live-verified fact. It is an ORDER-level fee
     attribute, not part policy, so it is never stored — only reported."""
@@ -278,7 +302,10 @@ class HendleyApp:
         except Exception as exc:  # bridge errors are operational, not bugs
             raise ApiError(f"Fusion read failed: {exc}", status=502)
         requirements = requirements_from_design(design, parts, n, placements)
-        uninterpreted = self._interpret_lines(requirements)
+        # Refresh is a design read, never an agent sweep. Deterministic specs
+        # and cached judgments apply immediately; an uncached yellow/red line is
+        # read only when the engineer opens that part.
+        uninterpreted = self._interpret_lines(requirements, consult_interpreter=False)
         out = {
             "requirements": requirements.to_dict(),
             "uninterpreted": uninterpreted,
@@ -352,7 +379,8 @@ class HendleyApp:
             hint = _kind_hint(line.designators[0])
             raw_value = line.comment or ""
             footprint = line.footprint or ""
-            cached = store.get_interpretation("part", hint, raw_value, footprint)
+            cache_value = _part_cache_value(raw_value, line.attributes)
+            cached = store.get_interpretation("part", hint, cache_value, footprint)
             pinned = bool(line.mpn or line.provider_refs)
             if pinned:
                 # The schematic names an exact part, and that is normally the end
@@ -394,7 +422,7 @@ class HendleyApp:
                     line.family = None
                     store.put_interpretation(
                         "part", interp.to_dict(), "llm", kind_hint=hint,
-                        raw_value=raw_value, footprint=footprint,
+                        raw_value=cache_value, footprint=footprint,
                         confidence=interp.confidence)
                     if interp.envelope:
                         store.put_interpretation(
@@ -502,7 +530,8 @@ class HendleyApp:
         key = {"kind_hint": prefix,
                # the part number belongs in the key: change it in the schematic
                # and this is a different part, which must be read again
-               "raw_value": f"{line.get('value') or ''}\x1f{code}",
+               "raw_value": (f"{_part_cache_value(line.get('value') or '', line.get('attributes'))}"
+                             f"\x1f{code}"),
                "footprint": line.get("footprint") or ""}
         cached = store.get_interpretation("read", **key)
         result = (cached or {}).get("result") or {}
@@ -513,7 +542,20 @@ class HendleyApp:
         # a lie is worse than none: it would reject every good part, for ever.
         if (result.get("search") and "catalog" in result
                 and not self._stale_plan(result.get("plan"))):
-            return {"reading": result, "cached": True}
+            accepted_spec = (result.get("spec")
+                             if float(result.get("confidence") or 0)
+                             >= CONFIDENCE_THRESHOLD else None)
+            if accepted_spec:
+                store.put_interpretation(
+                    "part", {"spec": accepted_spec,
+                             "rationale": result.get("rationale") or ""},
+                    "llm", kind_hint=prefix,
+                    raw_value=_part_cache_value(line.get("value") or "",
+                                                line.get("attributes")),
+                    footprint=line.get("footprint") or "",
+                    confidence=result.get("confidence"))
+            return {"reading": result, "requirementSpec": accepted_spec,
+                    "cached": True}
 
         dossier = {
             "schematic": {
@@ -523,6 +565,7 @@ class HendleyApp:
                 "footprint": line.get("footprint") or "",
                 "mpn": ln.get("mpn") or "",
                 "code": code,
+                "attributes": dict(ln.get("attributes") or {}),
             },
             "catalog": self._catalog_record(code),
             "convention": self._convention(line.get("designator") or ""),
@@ -541,7 +584,23 @@ class HendleyApp:
         reading["catalog"] = dossier["catalog"]
         store.put_interpretation("read", reading, "llm",
                                  confidence=reading.get("confidence"), **key)
-        return {"reading": reading, "cached": False}
+        # This same lazy read has already named the canonical requirement. Feed
+        # it to the cache-only intake path; do not wake a second agent next
+        # Refresh merely to obtain the same SpecKey in another JSON envelope.
+        accepted_spec = (reading.get("spec")
+                         if float(reading.get("confidence") or 0)
+                         >= CONFIDENCE_THRESHOLD else None)
+        if accepted_spec:
+            store.put_interpretation(
+                "part", {"spec": accepted_spec,
+                         "rationale": reading.get("rationale") or ""},
+                "llm", kind_hint=prefix,
+                raw_value=_part_cache_value(line.get("value") or "",
+                                            line.get("attributes")),
+                footprint=line.get("footprint") or "",
+                confidence=reading.get("confidence"))
+        return {"reading": reading, "requirementSpec": accepted_spec,
+                "cached": False}
 
     def _stale_plan(self, plan: dict | None) -> bool:
         """Was this plan written against a column we now know is a lie?
@@ -585,7 +644,8 @@ class HendleyApp:
         read = (self._store().get_interpretation(
             "read",
             kind_hint=_kind_hint(line.get("designator") or ""),
-            raw_value=f"{line.get('value') or ''}\x1f{line.get('code') or ''}",
+            raw_value=(f"{_part_cache_value(line.get('value') or '', line.get('attributes'))}"
+                       f"\x1f{line.get('code') or ''}"),
             footprint=line.get("footprint") or "",
         ) or {}).get("result") or {}
         spec = read.get("spec")
@@ -755,6 +815,7 @@ class HendleyApp:
         return {"designator": (ln.get("designators") or [""])[0],
                 "value": ln.get("comment") or "",
                 "footprint": ln.get("footprint") or "",
+                "attributes": dict(ln.get("attributes") or {}),
                 # the family the designer typed ("ULN2003") and the footprint's
                 # own geometry — the two things that decide which part may mount
                 "family": ln.get("family") or "",
@@ -1061,7 +1122,8 @@ class HendleyApp:
             raise ApiError("'part' (the approved part) is required")
         store = self._store()
         key = {"kind_hint": _kind_hint(line.get("designator") or ""),
-               "raw_value": line.get("value") or "",
+               "raw_value": _part_cache_value(line.get("value") or "",
+                                               line.get("attributes")),
                "footprint": line.get("footprint") or ""}
         terms = str(body.get("terms") or "").strip()
         remembered = (store.get_interpretation("part", **key) or {}).get("result") or {}

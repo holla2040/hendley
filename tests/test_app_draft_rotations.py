@@ -135,11 +135,11 @@ def test_intake_cache_repopulates_with_later_corrections(tmp_path):
 
     cached = app.api_intake_cache({})["cached"]
     assert cached["design"] == "demo" and cached["savedAt"]
-    # still unanswered: the card survives WITH the read-time guess prefill,
-    # and the LLM is never consulted on a cache load
+    # Still unanswered: Refresh and cache load both preserve the card without
+    # launching the agent. The guess remains empty until this line is opened.
     [ccard] = cached["uninterpreted"]
-    assert ccard["guess"]["spec"]["kind"] == "capacitor"
-    assert interp.calls == calls
+    assert ccard["guess"]["spec"] is None
+    assert interp.calls == calls == 0
 
     # the answer arrives after the read — the engineer picked a part, and the
     # AGENT named the requirement from it (no form was ever shown)
@@ -156,7 +156,7 @@ def test_intake_cache_repopulates_with_later_corrections(tmp_path):
     assert interp.calls == calls
 
 
-def test_intake_cache_keeps_the_judged_package_without_new_calls(tmp_path):
+def test_intake_cache_does_not_eagerly_judge_a_package(tmp_path):
     from test_app import FakeSource, JudgingInterpreter, MysteryBridge
 
     interp = JudgingInterpreter(package="SMD-5x5")
@@ -169,15 +169,15 @@ def test_intake_cache_keeps_the_judged_package_without_new_calls(tmp_path):
                      cache_path=tmp_path / "cache.json")
     intake = app.api_intake({"productionQuantity": 5})
     [card] = intake["uninterpreted"]
-    assert card["judgedPackage"] == "SMD-5x5"
+    assert "judgedPackage" not in card
     calls = interp.footprint_calls
 
-    # a cache load answers from the cache alone — judgment included
+    # A cache load also stays cache-only; neither path invents a prefill.
     cached = app.api_intake_cache({})["cached"]
     [ccard] = cached["uninterpreted"]
-    assert ccard["judgedPackage"] == "SMD-5x5"
-    assert ccard["judgedEnvelope"] == {"mount": "smd"}
-    assert interp.footprint_calls == calls
+    assert "judgedPackage" not in ccard
+    assert "judgedEnvelope" not in ccard
+    assert interp.footprint_calls == calls == 0
 
 
 class _Planner:

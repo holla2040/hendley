@@ -24,6 +24,9 @@ same library the CLI uses:
   guesses would be a rail you couldn't check. On page load the app
   repopulates from the last read (`~/.hendley/design-cache.json`) with every
   correction re-applied — no Fusion round-trip until you want one.
+  Refresh itself is deliberately **cache-only**: it never launches Claude.
+  Exact identities, deterministic passives, and prior readings resolve at once;
+  a new ambiguous part remains red/yellow until you open it.
 - **Design Overview** (nothing selected): one row per part — LCSC code
   (linked to its product page), stock/need, unit and order cost, JLC
   Basic/Extended class — with the per-board parts cost on the title line.
@@ -35,6 +38,9 @@ same library the CLI uses:
   **live-verifies its whole list in one batched call** — every number is
   current as of that click; when live access is down the cells say `????`
   rather than dressing cached values as current.
+  Opening an uncached red/yellow part runs one lazy agent reading, records its
+  requirement, and re-resolves that row. Later opens and Refreshes reuse the
+  cache. Family lines skip generic reading and open their bounded family search.
 - **Selections save themselves.** Tick a checkbox and that part is on the
   approved list; untick it and it is pruned (audited). Pick a radio and that
   part mounts. There is no button to press — it is a database write, and it
