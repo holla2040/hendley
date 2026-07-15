@@ -134,8 +134,9 @@ class Interpreter(Protocol):
     def read_part(self, dossier: dict) -> dict | None:
         """Work out what a design's part actually IS, from everything known.
 
-        Called when the engineer opens a part — for EVERY part, whatever the
-        schematic does or doesn't say about it. ``dossier`` carries every
+        Called when the engineer opens an uncached unresolved part. Exact,
+        deterministic, cached, and family lines bypass this generic judgment.
+        ``dossier`` carries every
         fact the app holds::
 
             {"schematic": {"designators", "prefix", "value", "footprint",

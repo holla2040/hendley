@@ -89,10 +89,29 @@ def _default_bridge(host: str | None):
     return FusionBridge(host=host)
 
 
-def _default_interpreter():
-    from ..ai.claude_cli import ClaudeCLIInterpreter
+def _default_interpreter(backend: str | None = None):
+    import os
 
-    return ClaudeCLIInterpreter()
+    backend = (backend or os.environ.get("HENDLEY_INTERPRETER", "codex")).strip().lower()
+    if backend == "codex":
+        from ..ai.codex_cli import CodexCLIInterpreter
+
+        return CodexCLIInterpreter()
+    if backend == "claude":
+        from ..ai.claude_cli import ClaudeCLIInterpreter
+
+        return ClaudeCLIInterpreter()
+    raise ApiError(
+        f"unknown HENDLEY_INTERPRETER {backend!r}; expected 'codex' or 'claude'",
+        status=503)
+
+
+def interpreter_description(backend: str | None = None) -> str:
+    """Human-readable backend/model without launching an agent process."""
+    interpreter = _default_interpreter(backend)
+    name = "Codex" if interpreter.name == "codex-cli" else "Claude"
+    model = getattr(interpreter, "model", "") or "CLI default"
+    return f"{name}; model: {model}"
 
 
 CONFIDENCE_THRESHOLD = 0.8
@@ -1419,10 +1438,13 @@ def _open_browser_quietly(url: str) -> bool:
             os.close(fd)
 
 
-def run_app(app: HendleyApp, port: int = 8341, open_browser: bool = True) -> None:
+def run_app(app: HendleyApp, port: int = 8341, open_browser: bool = True,
+            interpreter: str | None = None) -> None:
     server = ThreadingHTTPServer(("127.0.0.1", port), make_handler(app))
     url = f"http://127.0.0.1:{server.server_port}/"
     print(f"Hendley app: {url}  (Ctrl-C to stop)")
+    if interpreter:
+        print(f"Interpreter: {interpreter}")
     if open_browser and not _open_browser_quietly(url):
         print(f"(no local browser found — open {url} yourself)")
     try:

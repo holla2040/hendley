@@ -158,7 +158,7 @@ to land in Fusion, and that is this workflow.
 There is **one** design-change workflow. A part needs to change — it's **out of
 stock**, you want a **different package**, or a **different value** — and the
 path is the same each time; only the trigger differs. It runs as an interactive
-[Claude Code](https://claude.com/claude-code) session in this repo: Claude reads
+Codex session in this repo: Codex reads
 the live design and does the JLC lookups, **you** make the design decision, and
 **Fusion** is where the change is written (the Electronics *object* API is
 read-only, but the `.scr` can be applied either manually or fired over the bridge

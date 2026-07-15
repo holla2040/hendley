@@ -252,10 +252,12 @@ concrete `providers/*` or `datasources/jlc` — only the base protocols.
   unsieved, to the resolver. `family_of()` holds the rule; `FAMILY_PREFIXES`
   the designators.
 - `src/hendley/ai/` — the interpretation tier (ADR-0005/0006/0007):
-  `Interpreter` protocol + `claude_cli.py` (`claude -p`, rides the
-  subscription, `HENDLEY_CLAUDE_BIN` override). **Refresh is cache-only:** it
+  `Interpreter` protocol + `codex_cli.py` (default: ephemeral, read-only
+  `codex exec`, rides the user's Codex login; `HENDLEY_CODEX_BIN` and optional
+  `HENDLEY_CODEX_MODEL` overrides). `HENDLEY_INTERPRETER=claude` retains the
+  `claude_cli.py` compatibility backend. **Refresh is cache-only:** it
   reads Fusion, applies exact/deterministic/cached knowledge, and never launches
-  `claude -p`. An uncached unresolved part is judged only when the engineer
+  an agent process. An uncached unresolved part is judged only when the engineer
   opens its red/yellow panel; that one lazy read supplies the SpecKey and is
   cached for every later Refresh. Family panels go directly to their bounded
   family discovery instead of generic interpretation. Judgments, all cached:

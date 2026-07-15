@@ -1,4 +1,4 @@
-# ADR-0005 — LLM interpretation tier: judgment via `claude -p`, cached forever
+# ADR-0005 — LLM interpretation tier: replaceable CLI judgment, cached forever
 
 **Status:** Accepted (settled in discussion with Craig, 2026-07-11).
 §5 superseded by ADR-0006 (single-radio picks); §4's package rule extended by
@@ -19,12 +19,14 @@ Two realities broke deterministic intake on the first real design pull:
 
 ## Decision
 
-1. **Interpreter = headless Claude Code (`claude -p … --output-format
-   json`)**, behind a replaceable `Interpreter` protocol
-   (`hendley/ai/`). It rides the user's existing subscription — no API key,
-   no separate billing, already authenticated on every machine he works on.
-   `HENDLEY_CLAUDE_BIN` overrides the binary. Any failure (missing binary,
-   timeout, non-JSON) degrades to the fallback, never breaks the flow.
+1. **Interpreter = a replaceable CLI adapter behind the `Interpreter` protocol**
+   (`hendley/ai/`). Codex is the default transport: ephemeral, read-only
+   `codex exec`, riding the user's existing Codex login with no API key. Use
+   `HENDLEY_CODEX_BIN` and optional `HENDLEY_CODEX_MODEL` overrides. Set
+   `HENDLEY_INTERPRETER=claude` to use the original Claude CLI compatibility
+   backend (`claude -p … --output-format json`), where `HENDLEY_CLAUDE_BIN`
+   overrides the binary. Any failure (missing binary, timeout, non-JSON)
+   degrades to the fallback, never breaks the flow.
 2. **Every judgment is cached** in the knowledge DB (`interpretations`
    table, schema v4) keyed by the verbatim strings, with provenance
    `deterministic < llm < user` — a weaker source never overwrites a
@@ -52,5 +54,5 @@ Two realities broke deterministic intake on the first real design pull:
 - AI remains advisory, optional, replaceable (PRD §13): it proposes specs
   and envelopes with confidence + rationale; below 0.8 confidence the
   engineer decides.
-- Interpretation latency (seconds per unique string via `claude -p`) is a
-  first-pull cost only.
+- Interpretation latency is paid lazily the first time the engineer opens an
+  uncached unresolved line; the result is reused thereafter.

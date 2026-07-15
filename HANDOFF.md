@@ -23,6 +23,8 @@ remaining work, and decisions that require Craig.
 - Refresh is cache-only and launches no agent processes. Opening an uncached
   red/yellow part performs one lazy reading and caches its SpecKey; family lines
   go directly to bounded family discovery.
+- Codex is the default interpretation backend (`codex exec --ephemeral` in a
+  read-only sandbox). `HENDLEY_INTERPRETER=claude` retains the former backend.
 - Keeps exact provider codes, manufacturer MPNs, incomplete families, specifications,
   local labels, DNP parts, and unresolved parts distinct.
 - Resolves approved part lists against live JLC stock and exports gated BOM/CPL files.

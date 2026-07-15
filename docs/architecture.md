@@ -671,8 +671,8 @@ Decided so far (see `docs/adr/`):
 - ~~concrete app form~~ — **ADR-0004**: a local stdlib web app served by the
   CLI (`hendley app`, `src/hendley/app/`).
 - ~~AI interpretation~~ — **ADR-0005**: the replaceable `Interpreter`
-  protocol (`hendley.ai`), `claude -p` as the first implementation, judgments
-  cached in the DB (schema v4) with provenance.
+  protocol (`hendley.ai`), Codex CLI as the default implementation with Claude
+  CLI compatibility, judgments cached in the DB (schema v4) with provenance.
 - ~~discovery/search composition~~ — **ADR-0006**: judgment belongs to the
   agent and the engineer; searches are human-fired, deterministic
   auto-discovery only.
@@ -685,8 +685,8 @@ The following remain intentionally unresolved:
 - plugin packaging and discovery
 - ranking configuration model (the weights/format engineers may edit)
 - PCBWay data acquisition
-- multi-vendor AI provider selection (the `Interpreter` seam exists per
-  ADR-0005; alternatives beyond `claude -p` are unexplored)
+- broader AI provider selection beyond the current Codex default and Claude
+  compatibility backend
 - project/user/organization knowledge precedence
 - requirement-signature algorithm
 - open-source license and transition plan

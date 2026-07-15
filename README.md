@@ -40,7 +40,9 @@ cd hendley
 ./hendley app
 ```
 
-The app serves `http://127.0.0.1:8341/` and opens your browser. The Windows
+The app serves `http://127.0.0.1:8341/` and opens your browser. Codex is the
+default agent interpreter; launch with `./hendley app --interpreter claude` to
+use Claude for that run (or pass `--interpreter codex` explicitly). The Windows
 browser reaches that address directly — no networking setup is needed for the
 app itself.
 
@@ -57,16 +59,17 @@ JLCAPI:
 The app starts without it, but live stock checks and searches need it. Never
 commit `.keys` or any secret.
 
-**5. Install Claude Code and log in** (inside WSL). Hendley uses Claude to
-interpret part values and footprint names when it builds searches:
+**5. Install Codex CLI and log in** (inside WSL). Hendley uses an ephemeral,
+read-only `codex exec` when you open an uncached red/yellow part:
 
 ```bash
-curl -fsSL https://claude.ai/install.sh | bash
-claude    # run once and follow the login prompt
+codex login
 ```
 
-It rides your Claude subscription — no separate API key. Without it the app
-still works, but asks you to confirm each interpretation by hand.
+Install the CLI from the official Codex CLI instructions if `codex` is not yet
+available. It rides your Codex login—no separate API key. Without it the app
+still works, but leaves new ambiguous parts unresolved. Claude remains an
+optional compatibility backend: set `HENDLEY_INTERPRETER=claude`.
 
 **6. Connect Fusion** (needed for the Refresh button to read your design):
 

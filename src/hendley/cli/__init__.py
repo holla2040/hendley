@@ -209,6 +209,9 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--fusion-host",
                     help="Fusion bridge host (default: HENDLEY_FUSION_HOST, else the "
                          "WSL gateway).")
+    sp.add_argument("--interpreter", choices=("codex", "claude"),
+                    help="Agent CLI used for unresolved parts (default: codex; "
+                         "HENDLEY_INTERPRETER is the fallback).")
     sp.add_argument("--no-browser", action="store_true",
                     help="Don't open the browser automatically.")
     sp.set_defaults(func=cmd_app)

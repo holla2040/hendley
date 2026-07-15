@@ -46,7 +46,7 @@ filters).
 **The agent plans the query; Python executes it and proves every result.**
 
 One search box on every panel (and the overview), seeded from what the app
-remembers, accepting any text. On Search, `claude -p` turns the engineer's
+remembers, accepting any text. On Search, the configured interpreter turns the engineer's
 words — plus the design line they were typed against — into a **plan**:
 
 - **net** — only the params the index actually honours. A coarse net to fetch
@@ -107,8 +107,8 @@ amber, states which part it is about to mount and why, and requires one
 
 ## Consequences
 
-- A search costs one `claude -p` (~9 s) the first time those words are used on
-  that line; the plan is cached forever (`interpretations`, scope `search`).
+- A search costs one agent judgment the first time those words are used on that
+  line; the plan is cached forever (`interpretations`, scope `search`).
   Deterministic R/C lookups still run at Refresh with no agent call — and land
   in the same results table, under a line saying what was looked up.
 - The four-field form, `/api/confirm-spec`, `/api/explore`, the amber
