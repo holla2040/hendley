@@ -111,6 +111,9 @@ input.grow.working::placeholder { color:var(--pad); opacity:1; }
 @keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:.45; } }
 .say { font:13px var(--mono); color:var(--pad); margin:12px 0 0; }
 .say .count { color:var(--tin); font-size:12px; margin-left:10px; }
+.result-controls { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+.result-controls label { display:inline-flex; align-items:center; gap:5px; }
+.result-controls input[type=checkbox] { margin:0; }
 
 /* the query, laid bare and editable */
 .query { margin:8px 0 0; }
@@ -1017,6 +1020,7 @@ function seedFor(i) {
   const rl = S.requirements.lines[i];
   const key = lineKey(rl);
   if (S.typed[key]) return S.typed[key];
+  if (S.searches[key]) return S.searches[key];
   // A FAMILY line's box stays EMPTY, and that is the point: empty means "search
   // what the design says" — the family the designer typed, in the land the board
   // carries. Seeding it with "ULN2003 SO16" would make Search send WORDS, which
@@ -1348,6 +1352,7 @@ const SORT_VAL = {
   stock: c => c.liveStock || 0,
   price: c => (c.unitPrice1 == null ? Infinity : c.unitPrice1),
   class: c => c.libraryType || "",
+  package: c => c.package || "",
 };
 
 /* the headers actually sort now — a column you can't order is a column you
@@ -1407,7 +1412,7 @@ function compareHead(criteria, extras) {
       '<span class="cond">' + esc(OPS[t.op] || t.op) + " " +
       esc(String(t.value) + (t.unit || "")) + "</span>");
   return "<tr><th></th><th>alt</th><th>Distributor</th><th>manufacturer</th>" +
-    "<th>mpn</th><th>package</th>" +
+    "<th>mpn</th>" + h("package", "package", false) +
     criteria.map(t => h(crit(t), t.field, false)).join("") +
     extras.map(f => h(esc(headLabel(f)), f, false)).join("") +
     h("live stock", "stock", true) + '<th class="num">need</th>' +
@@ -1523,7 +1528,7 @@ function resultsHtml(i, key) {
         "short of " + fmt(need) + "." : "") + blame() + "</p>" +
       (peek ? '<p class="note">' + peek + "</p>" : "");
 
-  const toggle = '<p class="note">' +
+  const toggle = '<p class="note result-controls">' +
     (others.length ? '<button class="btn mini" id="show-specs">' +
       (S.showSpecs ? "hide the other specs" : "show all " + others.length +
        " specs") + "</button> " : "") + peek + "</p>";
@@ -1553,8 +1558,9 @@ function specBody(i) {
     let rows = partRow({
       radio: true, checked: effRadio(i) === l.ref, code: l.ref, mpn: l.mpn,
       maker: l.manufacturer,
-      pkg: (l.spec && l.spec.package) || (rl.spec && rl.spec.package) ||
-           l.footprint,
+      pkg: l.selectedPackage || (l.spec && l.spec.package) ||
+        (rl.spec && rl.spec.package) ||
+        l.footprint,
       cls: l.offerClass,
       stock: l.liveStock, stockCls: "ok-num",
       need: need, unit: l.unitPrice,

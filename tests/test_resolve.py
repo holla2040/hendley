@@ -79,6 +79,21 @@ def test_happy_path_rank1_no_checks(store):
     assert row["checks"] == [] and result["escalations"] == []
 
 
+def test_resolved_line_carries_selected_parts_live_package(store):
+    class PackageSource(FakeSource):
+        def verify(self, refs):
+            facts = super().verify(refs)
+            facts["C1"].raw["componentSpecification"] = "SMD,D5xL5.4mm"
+            return facts
+
+    record(store.conn, "capacitor", "10u", "0805", lcsc="C1")
+    result, _ = run(
+        store, [spec_line("C3", kind="capacitor", value="10u", package="0805")],
+        source=PackageSource({"C1": 100}))
+
+    assert result["lines"][0]["selectedPackage"] == "SMD,D5xL5.4mm"
+
+
 def test_silent_fallback_down_the_rank(store):
     record(store.conn, "resistor", "22k", "0603", lcsc="C1")
     record(store.conn, "resistor", "22k", "0603", lcsc="C2", rank=2)

@@ -43,6 +43,22 @@ def test_search_results_keep_column_headers_visible_while_scrolling():
     assert '<div class="sect results-section">' in PAGE_HTML
 
 
+def test_search_results_package_column_is_sortable():
+    assert 'package: c => c.package || ""' in PAGE_HTML
+    assert 'h("package", "package", false)' in PAGE_HTML
+
+
+def test_search_result_controls_share_vertical_alignment():
+    assert '<p class="note result-controls">' in PAGE_HTML
+    assert ".result-controls { display:flex; align-items:center" in PAGE_HTML
+    assert ".result-controls label { display:inline-flex; align-items:center" in PAGE_HTML
+
+
+def test_selected_part_uses_live_package_and_saved_search_outranks_spec_seed():
+    assert "pkg: l.selectedPackage || (l.spec && l.spec.package)" in PAGE_HTML
+    assert "if (S.searches[key]) return S.searches[key];" in PAGE_HTML
+
+
 class FakeSource:
     name = "fake"
 
