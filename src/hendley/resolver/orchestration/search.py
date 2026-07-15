@@ -160,10 +160,22 @@ def _full_sieve(plan: dict) -> list[dict]:
     terms the agent wrote is not composing a query; it is refusing to run a
     comparison that cannot come out true.
     """
+    terms = list(plan.get("sieve") or [])
+    # ``capacitance`` is the live catalog's published value (for example
+    # "10uF"). When the plan states it, the index-only ``capacitance_farads``
+    # term is redundant and actively harmful: many valid returned rows omit
+    # that typed index column and were rejected despite the catalog proving the
+    # requested capacitance. Keep the numeric field only as a fallback when no
+    # catalog Capacitance term exists.
+    has_catalog_capacitance = any(
+        _squash(t.get("field")) == "capacitance" for t in terms)
     sieve: list[dict] = []
     seen: dict[str, int] = {}
-    for term in (plan.get("sieve") or []):
+    for term in terms:
         key = _squash(term.get("field"))
+        if has_catalog_capacitance and key == "capacitancefarads":
+            seen[key] = -1             # do not re-add it from the net below
+            continue
         if key in seen:
             at = seen[key]
             if _provable(term) and not _provable(sieve[at]):

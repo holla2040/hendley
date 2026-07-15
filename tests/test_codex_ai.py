@@ -83,6 +83,8 @@ def test_app_cli_defaults_to_codex_and_can_select_claude():
     assert parser.parse_args(["app"]).interpreter is None
     assert parser.parse_args(["app", "--interpreter", "codex"]).interpreter == "codex"
     assert parser.parse_args(["app", "--interpreter", "claude"]).interpreter == "claude"
+    assert parser.parse_args(
+        ["app", "--model", "gpt-5.6-terra"]).model == "gpt-5.6-terra"
 
 
 def test_startup_description_prints_backend_and_model(monkeypatch):
@@ -90,4 +92,13 @@ def test_startup_description_prints_backend_and_model(monkeypatch):
 
     monkeypatch.setenv("HENDLEY_CODEX_MODEL", "gpt-test")
     assert interpreter_description("codex") == "Codex; model: gpt-test"
+    assert interpreter_description(
+        "codex", "gpt-5.6-terra") == "Codex; model: gpt-5.6-terra"
     assert interpreter_description("claude") == "Claude; model: CLI default"
+
+
+def test_model_option_is_not_silently_ignored_for_claude():
+    from hendley.app.server import _default_interpreter
+
+    with pytest.raises(ValueError, match="only with Codex"):
+        _default_interpreter("claude", "gpt-5.6-terra")

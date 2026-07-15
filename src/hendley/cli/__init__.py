@@ -212,6 +212,9 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--interpreter", choices=("codex", "claude"),
                     help="Agent CLI used for unresolved parts (default: codex; "
                          "HENDLEY_INTERPRETER is the fallback).")
+    sp.add_argument("--model",
+                    help="Codex model passed to `codex --model` (for example, "
+                         "gpt-5.6-terra; default: the Codex CLI's current model).")
     sp.add_argument("--no-browser", action="store_true",
                     help="Don't open the browser automatically.")
     sp.set_defaults(func=cmd_app)

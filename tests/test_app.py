@@ -32,6 +32,15 @@ def test_search_field_menu_includes_catalog_parameters_from_results():
     assert '<select id="qt-field"' in PAGE_HTML
     assert 'list="qt-cols"' not in PAGE_HTML
     assert '<option disabled value="──────── fields found in search ────────">' in PAGE_HTML
+    assert 'identity === "capacitance_farads"' in PAGE_HTML
+    assert '"Capacitance": "value"' not in PAGE_HTML
+
+
+def test_search_results_keep_column_headers_visible_while_scrolling():
+    assert '<div class="tablewrap results-scroll"><table class="results">' in PAGE_HTML
+    assert ".results-scroll table.results th { position:sticky; top:0" in PAGE_HTML
+    assert ".panel.detail > .pane-scroll { flex:1; min-height:0; overflow:hidden" in PAGE_HTML
+    assert '<div class="sect results-section">' in PAGE_HTML
 
 
 class FakeSource:

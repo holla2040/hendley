@@ -37,8 +37,7 @@ names.
 
 | field | op | why |
 |---|---|---|
-| `capacitance_farads` | `eq` | the index term — this is what filters the query |
-| `Capacitance` | `eq` (`"10uF"`) | **also state it in the catalog's words** — this is the COLUMN the engineer reads. Both terms; neither is redundant |
+| `Capacitance` | `eq` (`"10uF"`) | the live catalog's published value and the column the engineer reads; the numeric index value remains query plumbing, not a second requirement |
 | `Voltage Rating` | **`gte`** (unit `V`) | an over-rated part drops straight in — this is what makes a 63 V can available for a 50 V slot |
 | `Diameter` | `eq` (unit `mm`) | it is the land pattern; a wider can does not fit |
 | `Height - Seated (Max)` | **`lte`** (unit `mm`) | a shorter can still fits under the enclosure |

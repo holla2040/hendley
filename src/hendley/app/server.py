@@ -89,15 +89,17 @@ def _default_bridge(host: str | None):
     return FusionBridge(host=host)
 
 
-def _default_interpreter(backend: str | None = None):
+def _default_interpreter(backend: str | None = None, model: str | None = None):
     import os
 
     backend = (backend or os.environ.get("HENDLEY_INTERPRETER", "codex")).strip().lower()
     if backend == "codex":
         from ..ai.codex_cli import CodexCLIInterpreter
 
-        return CodexCLIInterpreter()
+        return CodexCLIInterpreter(model=model)
     if backend == "claude":
+        if model:
+            raise ValueError("--model is currently supported only with Codex")
         from ..ai.claude_cli import ClaudeCLIInterpreter
 
         return ClaudeCLIInterpreter()
@@ -106,9 +108,10 @@ def _default_interpreter(backend: str | None = None):
         status=503)
 
 
-def interpreter_description(backend: str | None = None) -> str:
+def interpreter_description(backend: str | None = None,
+                            model: str | None = None) -> str:
     """Human-readable backend/model without launching an agent process."""
-    interpreter = _default_interpreter(backend)
+    interpreter = _default_interpreter(backend, model)
     name = "Codex" if interpreter.name == "codex-cli" else "Claude"
     model = getattr(interpreter, "model", "") or "CLI default"
     return f"{name}; model: {model}"

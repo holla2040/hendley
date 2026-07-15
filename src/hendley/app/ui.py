@@ -131,8 +131,8 @@ table.terms td.op { color:var(--pad); text-align:center; }
    top defeats the exercise. (The overview keeps the ordinary page scroll.) */
 .panel.detail { display:flex; flex-direction:column; height:100%;
                 padding-bottom:0; overflow:hidden; }
-.panel.detail > .pane-scroll { flex:1; min-height:0; overflow-y:auto;
-                               padding-bottom:48px; }
+.panel.detail > .pane-scroll { flex:1; min-height:0; overflow:hidden;
+  padding-bottom:48px; display:flex; flex-direction:column; }
 /* the machinery under the search line — closed by default; it is the biggest
    thing on a laptop screen and the criteria are on the column headers anyway */
 details.more > summary { cursor:pointer; font:12px var(--mono); color:var(--tin);
@@ -164,6 +164,10 @@ details.more[open] > summary { color:var(--pad); }
 .eyebrow { font:600 11px var(--mono); letter-spacing:.16em;
            text-transform:uppercase; color:var(--tin); margin:0 0 10px; }
 .tablewrap { overflow-x:auto; }
+.results-section { flex:1; min-height:0; display:flex; flex-direction:column; }
+.results-scroll { flex:1; min-height:0; overflow:auto; overscroll-behavior:contain; }
+.results-scroll table.results th { position:sticky; top:0; z-index:2;
+  background:var(--board); box-shadow:inset 0 -1px var(--line); }
 table { border-collapse:collapse; width:100%; font-variant-numeric:tabular-nums; }
 th { text-align:left; font:600 11px var(--mono); letter-spacing:.1em;
      text-transform:uppercase; color:var(--tin); padding:5px 12px 5px 0;
@@ -1182,6 +1186,9 @@ function availableTermFields(key, cat, result) {
   const add = (group, field) => {
     field = String(field || "").trim();
     const identity = field.toLowerCase();
+    // Internal numeric query plumbing. The catalog's own `Capacitance` field
+    // is the engineer-facing, live-published value and appears after a search.
+    if (identity === "capacitance_farads") return;
     if (field && !seen.has(identity)) { seen.add(identity); group.push(field); }
   };
   const category = S.categories.find(c => c.slug === cat) || {};
@@ -1367,7 +1374,6 @@ function sortRows(rows) {
    is what the sieve proves against, what the sort keys off, and what goes back
    to the catalog when you edit a term. */
 const HEAD_LABEL = {
-  "Capacitance": "value",
   "Voltage Rating": "voltage",           // also the index's `voltage_rating`
   "Temperature Coefficient": "temp_co",  // also `temperature_coefficient`
   "Tolerance": "tol",
@@ -1522,8 +1528,8 @@ function resultsHtml(i, key) {
       (S.showSpecs ? "hide the other specs" : "show all " + others.length +
        " specs") + "</button> " : "") + peek + "</p>";
 
-  return say + '<div class="sect">' + toggle +
-    '<div class="tablewrap"><table class="results">' +
+  return say + '<div class="sect results-section">' + toggle +
+    '<div class="tablewrap results-scroll"><table class="results">' +
     compareHead(criteria, extras) +
     rows.map(c => compareRow(i, c, criteria, extras, need)).join("") +
     "</table></div></div>";

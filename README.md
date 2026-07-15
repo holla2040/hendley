@@ -42,7 +42,9 @@ cd hendley
 
 The app serves `http://127.0.0.1:8341/` and opens your browser. Codex is the
 default agent interpreter; launch with `./hendley app --interpreter claude` to
-use Claude for that run (or pass `--interpreter codex` explicitly). The Windows
+use Claude for that run. Select a Codex model explicitly with, for example,
+`./hendley app --model gpt-5.6-terra`; otherwise Codex uses its current model.
+The Windows
 browser reaches that address directly — no networking setup is needed for the
 app itself.
 

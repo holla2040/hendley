@@ -6,6 +6,7 @@ Python stdlib only, zero extra dependencies, bound to `127.0.0.1`.
 ```bash
 hendley app            # serves http://127.0.0.1:8341/ and opens the browser
 hendley app --interpreter claude  # use Claude instead of the Codex default
+hendley app --model gpt-5.6-terra # select the Codex model for this run
 ```
 
 One page — the order workbench (2026-07 redesign) — a thin surface over the

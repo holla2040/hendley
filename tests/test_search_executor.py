@@ -87,6 +87,25 @@ def test_a_net_param_the_index_dropped_is_still_enforced():
     assert why[0]["field"] == "capacitance_farads"
 
 
+def test_catalog_capacitance_outranks_missing_index_capacitance():
+    src = LyingIndex(
+        [{"code": "C_10U", "package": "0805"},
+         {"code": "C_22U", "package": "0805"}],
+        catalog={"C_10U": {"Capacitance": "10uF"},
+                 "C_22U": {"Capacitance": "22uF"}})
+    plan = {**PLAN, "sieve": [
+        {"field": "capacitance_farads", "op": "eq", "value": 1e-5},
+        {"field": "Capacitance", "op": "eq", "value": "10uF"}],
+    }
+
+    got = run_search(src, plan)
+
+    assert got["query"]["params"]["capacitance"] == 1e-5
+    assert [c["code"] for c in got["candidates"]] == ["C_10U"]
+    assert [t["field"] for t in got["proved"]] == ["Capacitance", "package"]
+    assert got["misses"][0]["failed"][0]["field"] == "Capacitance"
+
+
 def test_a_term_that_cannot_be_checked_is_a_miss_not_a_pass():
     # the part doesn't publish the column: it is an UNKNOWN, never a match
     src = LyingIndex([{"code": "C_MYSTERY", "package": "0805"}])
