@@ -62,7 +62,14 @@ NUMERIC_OPS = ("lte", "gte", "lt", "gt")
 # ``capacitance_farads`` is deliberately NOT aliased: a capacitor states
 # ``Capacitance`` as its own term (docs/parts/aluminium-electrolytic-…), and an
 # alias here would hand one field two columns.
-CATALOG_ALIAS = {"tolerancefraction": "Tolerance"}
+CATALOG_ALIAS = {
+    "tolerancefraction": "Tolerance",
+    # Common distributor vocabulary for the same field JLC publishes as
+    # ``Zener Voltage(Nom)``. This spelling was observed in a live D1 search;
+    # retaining the exact alias lets an older cached plan heal without trusting
+    # the index's broken diode-class flags.
+    "voltagezenernomvz": "Zener Voltage(Nom)",
+}
 
 
 def run_search(datasource: DataSource, plan: dict,
@@ -265,8 +272,10 @@ def _field(field: str, row: dict, cand: dict) -> Any:
         # the catalog's "Voltage Rating" IS the index's typed voltage_rating
         if key != "attributes" and value is not None and _same(key, field):
             return value
+    alias = CATALOG_ALIAS.get(_squash(field), "")
     for p in (cand.get("parameters") or []):
-        if _same(p.get("parameterName") or "", field):
+        if (_same(p.get("parameterName") or "", field)
+                or (alias and _same(p.get("parameterName") or "", alias))):
             return p.get("parameterValue")
     return None
 

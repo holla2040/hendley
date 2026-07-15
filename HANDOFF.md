@@ -36,14 +36,15 @@ remaining work, and decisions that require Craig.
   designator-scoped notes reach local-value interpretation.
 - Knows the shop's diode aliases `VZ10`, `10V0`, and `10.0` as proposed 10 V Zener specs,
   subject to first-time engineer confirmation; it never searches them as literal families.
+- Live-validated `VZ10` on the original Fusion design: D1 becomes a 10 V SOD-323 Zener
+  spec, and the bounded search proves C353563 (`BZT52C10S`) from catalog parameters;
+  its catalog class is `Zener Diodes`.
 - Treats family selection as app-only. `hendley pcba`, including `--no-verify`, refuses
   to write CSVs while a populated family line has no exact approved part.
-- Test baseline: **275 passing**, plus `ruff check src tests` and `git diff --check`.
+- Test baseline: **276 passing**, plus `ruff check src tests` and `git diff --check`.
 
 ## Known limitations
 
-- The Zener note/prompt routing has automated coverage but `VZ10` has not been live-tested
-  on the original Fusion design since the identity fix.
 - A custom FPGA footprint in the unseen `pte` design could not be proved equivalent to
   catalog package `LQFP-144-EP(20x20)`. Hendley correctly refused it; no alias is approved.
 - The documented Playwright environment `~/.venvs/pw` is absent. API tests cannot prove
@@ -55,18 +56,15 @@ remaining work, and decisions that require Craig.
 
 ## Remaining work, in order
 
-1. **Live-validate Zener behavior.** Refresh the original design with the schematic active;
-   confirm `VZ10` becomes a Zener spec, inspect the actual query and candidates, and verify
-   selected catalog rows report `secondTypeName: Zener Diodes`.
-2. **Restore browser coverage.** Recreate the Playwright environment, run
+1. **Restore browser coverage.** Recreate the Playwright environment, run
    `scripts/ui_check.py` and `--live`, and inspect `/tmp/hendley-ui/` screenshots.
-3. **Write measured part notes.** MOSFET, small-signal diode, Schottky, TVS/avalanche.
+2. **Write measured part notes.** MOSFET, small-signal diode, Schottky, TVS/avalanche.
    Measure real catalog records and index fill behavior before writing claims.
-4. **Run a third unseen-design audit.** Record the first pass before changing prompts or
+3. **Run a third unseen-design audit.** Record the first pass before changing prompts or
    code. The representative multi-block fixture is specified in `README.md`; build it
    naturally rather than adding metadata to make Hendley happy. Classify each result as
    correct, safely unresolved, wrong candidate, or required local knowledge.
-5. **Resolve the FPGA land only from geometry.** Compare measured footprint pitch/body/
+4. **Resolve the FPGA land only from geometry.** Compare measured footprint pitch/body/
    exposed-pad geometry to the manufacturer package drawing and catalog package. Never
    approve a name-only alias.
 
@@ -91,6 +89,9 @@ remaining work, and decisions that require Craig.
   Body width remains physical identity: 150-mil and 300-mil SOIC are different lands.
 - Catalog `secondTypeName` is the part class. Index `subcategory`, `is_schottky`, and
   `is_polarized` have contradicted real catalog parts and must not prove class.
+- JLC publishes nominal Zener voltage as `Zener Voltage(Nom)`. A live SOD-323 package
+  sample contained 30 Zeners and one proved 10 V row: C353563 (`BZT52C10S`), catalog
+  class `Zener Diodes`. The index sample was capped at 100 and mixed six diode classes.
 - A trap is functional—address, voltage, CTR, register model, temperature grade—not a
   package claim. The catalog proves package and outranks the agent.
 - Fusion's `BOARD;` context switch is effectively one-way per session. Ask Craig to front

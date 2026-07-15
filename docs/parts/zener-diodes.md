@@ -32,6 +32,12 @@ class once a concrete candidate is in hand. A designator letter, an index
 subcategory, or a package cannot prove that a diode is Zener rather than
 small-signal, Schottky, TVS/avalanche, or another diode class.
 
+The catalog publishes nominal voltage under **`Zener Voltage(Nom)`**. A live
+SOD-323 sample used that exact spelling; `Voltage - Zener (Nom) (Vz)` is common
+distributor vocabulary for the same specification but is not JLC's field name.
+Write new search terms in the catalog's vocabulary. The comparison layer keeps
+the measured synonym only so an older cached plan remains provable.
+
 The parts index's advertised diode flags are not class evidence. In particular,
 the project has measured that `is_schottky` is false even on Schottky parts.
 Use the catalog class to label and review candidates; do not add a class term

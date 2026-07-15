@@ -386,6 +386,25 @@ def test_tolerance_fraction_earns_the_catalogs_own_column():
     assert loose["failed"][0]["field"] == "tolerance_fraction"
 
 
+def test_a_measured_catalog_alias_heals_an_older_zener_plan():
+    src = LyingIndex(
+        [{"code": "C353563", "package": "SOD-323"}],
+        catalog={"C353563": {"Zener Voltage(Nom)": "10V"}},
+    )
+    got = run_search(src, {
+        "mode": "parametric", "category": "diodes",
+        "net": {"package": "SOD-323"},
+        "sieve": [{"field": "Voltage - Zener (Nom) (Vz)", "op": "eq",
+                   "value": 10, "unit": "V"}],
+    })
+
+    assert [c["code"] for c in got["candidates"]] == ["C353563"]
+    [proof] = [p for p in got["candidates"][0]["proof"]
+               if p["field"] == "Voltage - Zener (Nom) (Vz)"]
+    assert proof["catalog"] is True
+    assert proof["shown"] == "10V"
+
+
 # One land, several of the catalog's words for it. JLC spells the 3.9mm 8-pin
 # body BOTH "SOIC-8" and "SOP-8", and they hold different parts — the Basic,
 # 327k-in-stock SP3485 sits under SOIC-8 (measured 2026-07-13).
