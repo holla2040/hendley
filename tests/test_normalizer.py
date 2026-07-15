@@ -2,7 +2,7 @@
 
 from hendley.ingestion.fusion.live_design import Placement
 from hendley.ingestion.fusion.parts_json import DesignPart
-from hendley.requirements import requirements_from_design
+from hendley.requirements import has_zener_evidence, requirements_from_design
 
 
 def _part(desig, value=None, lcsc=None, mpn=None, attrs=None):
@@ -110,6 +110,30 @@ def test_footprint_prefers_board_package_name():
 def test_comment_falls_back_to_mpn():
     bom = requirements_from_design(None, [_part("D1", "", mpn="1SMA4744A")], 1)
     assert bom.lines[0].comment == "1SMA4744A"
+
+
+def test_zener_evidence_requires_z_in_a_diode_specification():
+    assert has_zener_evidence("D1", "VZ10")
+    assert has_zener_evidence("D2", "10Z0")
+    assert has_zener_evidence("D3", "10V", {"TYPE": "Zener"})
+    assert not has_zener_evidence("D4", "10V0")
+    assert not has_zener_evidence("D5", "1000V")
+    assert not has_zener_evidence("R1", "VZ10")
+
+
+def test_zener_evidence_scans_attribute_values_not_names_or_metadata():
+    assert not has_zener_evidence("D1", "10V", {"SIZE": "SOD-323"})
+    assert not has_zener_evidence("D2", "10V", {"MANUFACTURER": "Zetex"})
+    assert not has_zener_evidence("D3", "10V", {"MP": "BZT52C10"})
+    assert has_zener_evidence("D4", "10V", {"DESCRIPTION": "zener clamp"})
+
+
+def test_requirement_carries_attributes_to_the_interpreter_boundary():
+    part = DesignPart(designator="D1", value="10V", footprint="D-SOD323",
+                      attributes={"TYPE": "Zener"})
+    line = requirements_from_design(None, [part], 1).lines[0]
+    assert line.attributes == {"TYPE": "Zener"}
+    assert line.to_dict()["attributes"] == {"TYPE": "Zener"}
 
 
 def test_bare_part_has_no_mode():

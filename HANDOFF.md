@@ -34,8 +34,9 @@ remaining work, and decisions that require Craig.
   it does not re-query JLC or re-resolve a design when the mounted part cannot change.
 - Reads durable guidance from `docs/parts/`. `judgment: family` reaches family reads;
   designator-scoped notes reach local-value interpretation.
-- Knows the shop's diode aliases `VZ10`, `10V0`, and `10.0` as proposed 10 V Zener specs,
-  subject to first-time engineer confirmation; it never searches them as literal families.
+- Treats a `D` line as a proposed Zener spec only when its VALUE or a meaningful
+  attribute value contains `Z`/`Zener`; bare voltages such as `10V0`, `500V`, and
+  `1000V` do not establish diode class.
 - Treats family selection as app-only. `hendley pcba`, including `--no-verify`, refuses
   to write CSVs while a populated family line has no exact approved part.
 - Test baseline: **275 passing**, plus `ruff check src tests` and `git diff --check`.

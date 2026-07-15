@@ -268,6 +268,34 @@ def test_the_zener_note_reaches_diode_interpretation(monkeypatch):
     assert "VZ10" in seen[0] and "10V0" in seen[0] and "shop conventions" in seen[0]
 
 
+def test_diode_prompt_carries_deterministic_zener_evidence(monkeypatch):
+    seen = []
+    answer = {"kind": "diode", "value": "10V", "package": "SOD-323",
+              "qualifier": "zener", "confidence": 0.9, "rationale": "explicit Z"}
+
+    def fake_run(cmd, **kw):
+        seen.append(cmd[2])
+        return subprocess.CompletedProcess(
+            cmd, 0, stdout=_cli_envelope(json.dumps(answer)), stderr="")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    ClaudeCLIInterpreter(binary="claude-fake").interpret_part(
+        {"designator": "D9", "value": "10V", "footprint": "D-SOD323",
+         "attributes": {"TYPE": "Zener"}})
+    assert '"zenerEvidence": true' in seen[0]
+
+
+def test_interpreter_cannot_invent_zener_without_a_z_cue(monkeypatch):
+    answer = {"kind": "diode", "value": "1000V", "package": "SOD-323",
+              "qualifier": "zener 1000V", "confidence": 0.9,
+              "rationale": "misread reverse voltage"}
+    out = _run_with(monkeypatch, _cli_envelope(json.dumps(answer))).interpret_part(
+        {"designator": "D9", "value": "1000V", "footprint": "D-SOD323",
+         "attributes": {}})
+    assert out.spec.qualifier == "1000V"
+    assert "no Z cue" in out.rationale
+
+
 def test_the_family_note_is_selected_by_judgment_not_one_boards_class():
     from hendley.ai.partnotes import note_for
 

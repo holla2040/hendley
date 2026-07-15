@@ -385,7 +385,7 @@ class HendleyApp:
                 if interpreter is None:
                     interpreter = self._interpreter_factory()
                 ctx = {"designator": line.designators[0], "value": raw_value,
-                       "footprint": footprint}
+                       "footprint": footprint, "attributes": line.attributes}
                 interp = interpreter.interpret_part(ctx)
                 if interp is None:
                     interpreter_dead = True  # binary missing/broken: stop retrying

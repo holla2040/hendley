@@ -36,9 +36,33 @@ from .specs import infer_spec
 # not here: an "82k" resistor states a spec, and infer_spec() already reads it.
 FAMILY_PREFIXES = ("U", "D", "Q")
 
+# Attribute values that describe workflow/provider metadata rather than the
+# electrical specification. Attribute NAMES are never scanned: "SIZE" contains
+# a Z but says nothing about diode class.
+_NON_SPEC_ATTRIBUTES = {"DNP", "LCSC", "JLC", "JLCPCB", "MANUFACTURER", "MP", "MF"}
+
 
 def designator_prefix(designator: str) -> str:
     return natural_key(designator)[0]
+
+
+def has_zener_evidence(designator: str, value: str | None,
+                       attributes: dict[str, str] | None = None) -> bool:
+    """Whether a diode's written specification explicitly cues Zener intent.
+
+    For this shop, Z anywhere in the VALUE or a meaningful attribute VALUE is
+    the convention. A bare voltage (10V0, 500V, 1000V) is not evidence: ordinary
+    diodes also state reverse-voltage ratings. The catalog class still confirms
+    the concrete part after discovery.
+    """
+    if designator_prefix(designator) != "D":
+        return False
+    texts = [str(value or "")]
+    texts.extend(
+        str(v) for k, v in (attributes or {}).items()
+        if str(k).strip().upper() not in _NON_SPEC_ATTRIBUTES
+    )
+    return any("z" in text.casefold() for text in texts)
 
 
 def family_of(part: DesignPart, footprint: str, dnp: bool = False) -> str | None:
@@ -97,11 +121,13 @@ def requirements_from_design(
         if not provider_refs and not mpn and not family:
             spec = infer_spec(part.designator, part.value, footprint)
 
+        attributes = {str(k): str(v) for k, v in (part.attributes or {}).items()}
         key = (part.jlc_code or "", mpn or "", family or "", spec, comment or "",
-               footprint, dnp)
+               footprint, dnp, tuple(sorted(attributes.items())))
         g = groups.setdefault(key, {"part": part, "designators": [], "dnp": dnp,
                                     "footprint": footprint, "comment": comment,
-                                    "spec": spec, "family": family})
+                                    "spec": spec, "family": family,
+                                    "attributes": attributes})
         g["designators"].append(part.designator)
 
     lines: list[RequirementLine] = []
@@ -116,6 +142,7 @@ def requirements_from_design(
             comment=g["comment"],
             footprint=g["footprint"] or None,
             footprint_headline=part.footprint_headline,
+            attributes=g["attributes"],
             family=g["family"],
             spec=g["spec"],
             provider_refs=provider_refs,

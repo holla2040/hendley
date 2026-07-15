@@ -555,6 +555,13 @@ class ClaudeCLIInterpreter:
         designator = str(ctx.get("designator") or "")
         prefix = "".join(c for c in designator if c.isalpha()).upper()
         note = note_for(designator=prefix)
+        if prefix == "D":
+            from ..requirements.normalizer import has_zener_evidence
+
+            ctx = dict(ctx)
+            ctx["zenerEvidence"] = has_zener_evidence(
+                designator, str(ctx.get("value") or ""),
+                dict(ctx.get("attributes") or {}))
         prompt = PROMPT.format(
             context=json.dumps(ctx, indent=2, ensure_ascii=False),
             part_notes=("SHOP KNOWLEDGE — apply it conservatively; a local alias "
@@ -563,7 +570,21 @@ class ClaudeCLIInterpreter:
         obj = self._ask(prompt)
         if obj is None:
             return None
-        return self._parse(obj)
+        interpreted = self._parse(obj)
+        # Diode class is too consequential to leave solely to a probabilistic
+        # reading. With no written Z cue, an ordinary reverse-voltage rating
+        # must never become a Zener requirement.
+        if (prefix == "D" and not ctx.get("zenerEvidence") and interpreted.spec
+                and "zener" in interpreted.spec.qualifier.casefold()):
+            qualifier = re.sub("zener", "", interpreted.spec.qualifier,
+                               flags=re.IGNORECASE).strip(" ,;/")
+            interpreted.spec = SpecKey(
+                interpreted.spec.kind, interpreted.spec.value,
+                interpreted.spec.package, qualifier)
+            interpreted.rationale = (
+                interpreted.rationale + "; Zener removed because the design contains no Z cue"
+            ).strip("; ")
+        return interpreted
 
     def interpret_footprint(self, footprint: str,
                             headline: str = "") -> dict | None:

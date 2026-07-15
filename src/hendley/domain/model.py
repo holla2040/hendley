@@ -121,6 +121,9 @@ class RequirementLine:
     # …and that footprint's own geometry, verbatim from the library. "SO16" cannot
     # tell a 3.9mm body from a 7.5mm one; "Small Outline package 150 mil" can.
     footprint_headline: str | None = None
+    # Verbatim schematic attributes used as interpretation evidence. These are
+    # not identity by themselves; in particular MP/MF remain stale metadata.
+    attributes: dict[str, str] = field(default_factory=dict)
     # The FAMILY: an incomplete part number the designer typed — "ULN2003",
     # "MB10S", "SP3485". It is NOT a selection mode and deliberately NOT `mpn`: a
     # family is a DEFAULT, not a lock. Pinning it (which is what happens today
@@ -184,6 +187,8 @@ class RequirementLine:
             d["footprint"] = self.footprint
         if self.footprint_headline is not None:
             d["footprintHeadline"] = self.footprint_headline
+        if self.attributes:
+            d["attributes"] = dict(self.attributes)
         if self.family is not None:
             d["family"] = self.family
         if self.note is not None:
@@ -222,6 +227,8 @@ class RequirementLine:
             comment=d.get("comment"),
             footprint=d.get("footprint"),
             footprint_headline=d.get("footprintHeadline"),
+            attributes={str(k): str(v) for k, v in
+                        dict(d.get("attributes") or {}).items()},
             family=d.get("family"),
             note=d.get("note"),
             spec=spec,

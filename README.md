@@ -141,15 +141,15 @@ families, four diode classes, and the shop's Zener aliases.
 | C3,C4 | regulator bypass | `1u` | `0603` | no LCSC | deterministic passive spec |
 | FB1 | 3.3 V rail bead | `600` | `0603` | no LCSC | ferrite classification rather than inductor guess |
 | D2 | 10 V Zener test, fed from +12 V through R1 | `VZ10` | `SOD-323` | no MPN/LCSC | shop alias becomes a proposed Zener spec |
-| D3 | identical independent Zener test | `10V0` | `SOD-323` | no MPN/LCSC | second spelling reaches the same reviewed requirement |
-| D4 | identical independent Zener test | `10.0` | `SOD-323` | no MPN/LCSC | punctuation alone is not searched as a family |
+| D3 | identical independent Zener test | `10Z0` | `SOD-323` | no MPN/LCSC | second explicit-Z spelling reaches the same reviewed requirement |
+| D4 | ambiguous reverse-voltage test | `1000V` | `SOD-323` | no MPN/LCSC | voltage alone does not invent Zener class |
 | D5 | small-signal clamp from a test input to +3V3 | `1N4148` | `SOD-323` | VALUE family, no LCSC | small-signal diode separated from Zener/Schottky |
 | D6 | reverse-polarity/load Schottky | `SS14` | `SMA` | VALUE family, no LCSC | Schottky catalog class, not the broken index flag |
 | R1,R2,R3 | Zener current limit, one per alias | `2.2k` | `0603` | no LCSC | grouping of identical specifications |
 | TP1-TP4 | protected input, +5 V, +3V3, ground | blank | local test-pad footprint | DNP attribute | intentional DNP stays out of BOM/CPL |
 
-Do not tie all three Zeners to one node; give each its own resistor and test
-point so the schematic records three separate VALUE conventions without making
+Do not tie the diode tests to one node; give each its own resistor and test
+point so the schematic records the distinct VALUE conventions without making
 the circuit depend on their tolerance.
 
 ### 2. MCU, clocks, USB, I²C, and RS-485

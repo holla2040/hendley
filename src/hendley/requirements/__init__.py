@@ -1,5 +1,5 @@
 """Requirements capture — normalize ECAD extractions into the canonical BOM."""
 
-from .normalizer import requirements_from_design
+from .normalizer import has_zener_evidence, requirements_from_design
 
-__all__ = ["requirements_from_design"]
+__all__ = ["has_zener_evidence", "requirements_from_design"]

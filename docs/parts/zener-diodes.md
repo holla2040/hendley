@@ -7,13 +7,15 @@ designator: D
 
 ## Local schematic values
 
-In this shop's Fusion libraries, a diode value may state the Zener voltage
-without naming an orderable part. These observed spellings all mean a **10 V
-Zener diode** when they occur on a diode designator and diode footprint:
+In this shop's Fusion libraries, a diode value or attribute may state the
+Zener voltage without naming an orderable part. On a `D` designator, the shop's
+explicit cue is the letter **Z** anywhere in the VALUE or in a meaningful
+attribute VALUE (case-insensitive):
 
 - `VZ10`
-- `10V0`
-- `10.0`
+- `10Z0`
+- `Zener 10V`
+- an attribute such as `TYPE=Zener`
 
 These are **shop conventions, not manufacturer part numbers and not universal
 syntax**. Interpret them as a proposed specification—`kind: diode`, `value:
@@ -21,9 +23,12 @@ syntax**. Interpret them as a proposed specification—`kind: diode`, `value:
 the engineer confirm that reading once. Cache the confirmed interpretation.
 Never search the literal alias as though it were a family name.
 
-Do not generalize from the punctuation alone. A number on a non-diode
-designator, or a diode footprint that does not support the proposed package,
-is not proof of a Zener requirement.
+`10V0`, `10.0`, `500V`, and `1000V` contain no Z and therefore do **not** prove
+Zener intent. An ordinary diode can state its reverse-voltage rating the same
+way. Keep its diode class unresolved unless some other explicit specification
+names it. Scan attribute values, never attribute names (`SIZE` contains a Z but
+is not evidence), and ignore administrative/provider metadata such as DNP,
+LCSC, MANUFACTURER, MP, and MF.
 
 ## Catalog identity
 
