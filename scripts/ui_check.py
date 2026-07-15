@@ -171,6 +171,22 @@ def main() -> int:
             lines = [("U1", 0)]
         page.wait_for_timeout(1200)
 
+        # The component rail is draggable, remembers its width, and never gains
+        # a horizontal scrollbar even when narrowed.
+        handle = page.locator("#rail-resizer")
+        box = handle.bounding_box()
+        if box:
+            page.mouse.move(box["x"] + box["width"] / 2, box["y"] + 30)
+            page.mouse.down()
+            page.mouse.move(245, box["y"] + 30)
+            page.mouse.up()
+            rail_width = page.locator(".rail").evaluate("e => e.getBoundingClientRect().width")
+            no_x_scroll = page.locator("#comps").evaluate(
+                "e => e.scrollWidth <= e.clientWidth")
+            if not (235 <= rail_width <= 255 and no_x_scroll):
+                bad += 1
+                print(f"rail resize FAILED: width={rail_width}, no-x-scroll={no_x_scroll}")
+
         for name, i in lines:
             page.click(f'button.comp[data-line="{i}"]')
             try:

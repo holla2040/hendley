@@ -34,6 +34,7 @@ PAGE_HTML = r"""<!DOCTYPE html>
   --ok:#6FD59A; --err:#F08373; --warn:#E5C063;
   --mono:ui-monospace,"Cascadia Mono","SF Mono",Menlo,Consolas,monospace;
   --sans:system-ui,"Segoe UI",sans-serif;
+  --rail-width:308px;
 }
 * { box-sizing:border-box; }
 html, body { margin:0; height:100%; overflow:hidden; }
@@ -65,15 +66,21 @@ body.busy, body.busy * { cursor:wait !important; }
 .meta .btn { padding:5px 12px; }
 
 /* ---- frame ---------------------------------------------------------------- */
-.wrap { display:grid; grid-template-columns:308px 1fr;
+.wrap { display:grid; grid-template-columns:var(--rail-width) 7px minmax(0,1fr);
         flex:1; min-height:0; }
 .wrap > main { overflow-y:auto; min-height:0; }
 @media (max-width:760px) { .wrap { grid-template-columns:1fr; }
-  .rail { border-right:none; border-bottom:1px solid var(--line); } }
+  .rail { border-right:none; border-bottom:1px solid var(--line); }
+  .rail-resizer { display:none; } }
 
 /* ---- left rail ------------------------------------------------------------ */
 .rail { border-right:1px solid var(--line); display:flex; flex-direction:column;
-        min-height:0; }
+        min-width:0; min-height:0; overflow:hidden; }
+.rail-resizer { cursor:col-resize; position:relative; touch-action:none; }
+.rail-resizer::after { content:""; position:absolute; inset:0 2px;
+  background:var(--line); transition:background .12s; }
+.rail-resizer:hover::after, .rail-resizer.dragging::after,
+.rail-resizer:focus-visible::after { background:var(--pad); }
 .rail-top { display:flex; gap:8px; align-items:center; padding:14px 14px 8px; }
 .qty { display:flex; align-items:center; gap:6px; font:12px var(--mono);
        color:var(--tin); }
@@ -82,11 +89,13 @@ body.busy, body.busy * { cursor:wait !important; }
   text-align:right; }
 .read-note { margin:0; padding:0 16px 6px; font:11.5px var(--mono); color:var(--tin); }
 .comps { display:flex; flex-direction:column; gap:4px;
-         padding:4px 14px 48px; overflow-y:auto; flex:1; min-height:0; }
+         padding:4px 14px 48px; overflow-y:auto; overflow-x:hidden;
+         flex:1; min-width:0; min-height:0; }
 .comp { display:flex; justify-content:space-between; align-items:baseline; gap:10px;
-  width:100%; text-align:left; border:1px solid transparent; border-radius:4px;
+  width:100%; min-width:0; text-align:left; border:1px solid transparent; border-radius:4px;
   padding:3px 11px; font:12.5px var(--mono); background:var(--panel);
   color:var(--silk); }
+.comp > span:first-child { min-width:0; overflow-wrap:anywhere; }
 .comp .ref { font-weight:700; }
 .comp .desc { opacity:.78; margin-left:6px; }
 .comp .stat { font-variant-numeric:tabular-nums; white-space:nowrap; }
@@ -277,6 +286,8 @@ a { color:var(--pad); }
   <p class="read-note" id="read-note"></p>
   <nav class="comps" id="comps"></nav>
 </aside>
+<div class="rail-resizer" id="rail-resizer" role="separator" tabindex="0"
+  aria-label="Resize component panel" aria-orientation="vertical"></div>
 <main><div class="panel" id="main">
   <p class="sub">Hit <b>Refresh</b> to read the open Fusion design (schematic
   view active) and check every part against live stock.</p>
@@ -341,6 +352,45 @@ function unitStr(u) { return u == null ? "—" : String(u); }
 function qty() { return Math.max(1, parseInt($("qty").value || "1", 10) || 1); }
 function provider() { return $("provider").value; }
 function lineKey(line) { return line.designators.join(","); }
+
+/* The component rail is working space, not a fixed sidebar. Keep its width on
+   this browser, constrain it to the viewport, and never let its contents create
+   a horizontal scrollbar. */
+const RAIL_MIN = 220;
+function railMax() { return Math.max(RAIL_MIN, Math.floor(innerWidth * .65)); }
+function setRailWidth(px, remember=true) {
+  const width = Math.max(RAIL_MIN, Math.min(railMax(), Math.round(px)));
+  document.documentElement.style.setProperty("--rail-width", width + "px");
+  $("rail-resizer").setAttribute("aria-valuenow", String(width));
+  if (remember) localStorage.setItem("hendley-rail-width", String(width));
+}
+function initRailResize() {
+  const saved = Number(localStorage.getItem("hendley-rail-width"));
+  if (Number.isFinite(saved) && saved > 0) setRailWidth(saved, false);
+  const handle = $("rail-resizer");
+  handle.onpointerdown = e => {
+    handle.setPointerCapture(e.pointerId);
+    handle.classList.add("dragging");
+    setRailWidth(e.clientX);
+  };
+  handle.onpointermove = e => {
+    if (handle.hasPointerCapture(e.pointerId)) setRailWidth(e.clientX);
+  };
+  handle.onpointerup = handle.onpointercancel = e => {
+    if (handle.hasPointerCapture(e.pointerId)) handle.releasePointerCapture(e.pointerId);
+    handle.classList.remove("dragging");
+  };
+  handle.onkeydown = e => {
+    if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+    e.preventDefault();
+    const current = parseFloat(getComputedStyle(document.documentElement)
+      .getPropertyValue("--rail-width")) || 308;
+    setRailWidth(current + (e.key === "ArrowRight" ? 16 : -16));
+  };
+  addEventListener("resize", () => setRailWidth(
+    parseFloat(getComputedStyle(document.documentElement)
+      .getPropertyValue("--rail-width")) || 308, false));
+}
 function specQS(spec) {
   return "kind=" + encodeURIComponent(spec.kind) +
     "&value=" + encodeURIComponent(spec.value) +
@@ -2113,6 +2163,7 @@ async function doExport() {
 
 /* ---- top-level wiring ------------------------------------------------------------ */
 
+initRailResize();
 $("refresh-btn").onclick = refresh;
 $("export-btn").onclick = doExport;
 $("provider").onchange = () => {

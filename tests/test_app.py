@@ -134,6 +134,9 @@ def test_root_serves_html(tmp_path):
         assert res.status == 200 and "<title>Hendley</title>" in body
         assert 'if (rl.family && !l.ref) return "pick"' in body
         assert 'if (state === "pick") return "unpicked"' in body
+        assert 'id="rail-resizer" role="separator"' in body
+        assert '--rail-width' in body and 'overflow-x:hidden' in body
+        assert 'localStorage.setItem("hendley-rail-width"' in body
     finally:
         server.shutdown()
         server.server_close()
