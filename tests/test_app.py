@@ -13,7 +13,25 @@ from http.server import ThreadingHTTPServer
 import pytest
 
 from hendley.app.server import HendleyApp, make_handler
+from hendley.app.ui import PAGE_HTML
 from hendley.datasources.base import PartFact
+
+
+def test_rejected_search_results_use_one_session_wide_checkbox():
+    assert 'type="checkbox" id="show-rejects"' in PAGE_HTML
+    assert "S.showRejects = rej.checked" in PAGE_HTML
+    assert "S.showRejects = !S.showRejects" not in PAGE_HTML
+
+
+def test_search_field_menu_includes_catalog_parameters_from_results():
+    assert "function availableTermFields(key, cat, result)" in PAGE_HTML
+    assert "for (const row of allRows(result))" in PAGE_HTML
+    assert "add(discovered, p.parameterName)" in PAGE_HTML
+    assert "fields.defaults" in PAGE_HTML
+    assert "fields.discovered" in PAGE_HTML
+    assert '<select id="qt-field"' in PAGE_HTML
+    assert 'list="qt-cols"' not in PAGE_HTML
+    assert '<option disabled value="──────── fields found in search ────────">' in PAGE_HTML
 
 
 class FakeSource:

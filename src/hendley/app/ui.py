@@ -1170,6 +1170,30 @@ function requestFor(cat, terms, words) {
   return esc(cat) + "?" + params.join("&");
 }
 
+/* Every field the current search has demonstrated it can actually supply.
+   The category list contributes only measured, safe index columns. Catalog
+   parameter names come from the identified schematic part and ALL returned
+   rows—the same source as "show all other specs"—so Type, Polarity, ESR, etc.
+   become usable refinements as soon as a search reveals them. */
+function availableTermFields(key, cat, result) {
+  const defaults = [];
+  const discovered = [];
+  const seen = new Set();
+  const add = (group, field) => {
+    field = String(field || "").trim();
+    const identity = field.toLowerCase();
+    if (field && !seen.has(identity)) { seen.add(identity); group.push(field); }
+  };
+  const category = S.categories.find(c => c.slug === cat) || {};
+  (category.columns || []).forEach(field => add(defaults, field));
+  const catalog = (S.readings[key] || {}).catalog || {};
+  Object.keys(catalog.parameters || {}).forEach(field => add(defaults, field));
+  if (result)
+    for (const row of allRows(result))
+      for (const p of (row.parameters || [])) add(discovered, p.parameterName);
+  return {defaults, discovered};
+}
+
 /* THE QUERY, laid out exactly as it was sent — or exactly as it is about to be
    — and every part of it yours to change. A search you can't see is a search you
    can't correct. */
@@ -1203,12 +1227,14 @@ function queryHtml(i, key) {
     '<td class="mono">' + esc(val(t.value)) + esc(t.unit || "") + "</td>" +
     '<td><button class="btn mini" data-drop="' + n + '">drop</button></td></tr>')
     .join("");
-  const cols = (S.categories.find(c => c.slug === cat) || {}).columns || [];
-  // the catalog's OWN parameter names — the vocabulary this part is published
-  // in, and the only one that spans manufacturers (one datasheet says "Diameter",
-  // the next says "φD"; the catalog says "Diameter" for both)
-  const cr = (S.readings[key] || {}).catalog || {};
-  const catalogCols = Object.keys(cr.parameters || {});
+  const fields = availableTermFields(key, cat, r);
+  const fieldOptions = '<option disabled selected value="">field</option>' +
+    fields.defaults
+    .map(c => "<option>" + esc(c) + "</option>").join("") +
+    (fields.defaults.length && fields.discovered.length
+      ? '<option disabled value="──────── fields found in search ────────"></option>'
+      : "") +
+    fields.discovered.map(c => "<option>" + esc(c) + "</option>").join("");
   // no <details> of its own — the whole block below the search line is ONE
   // disclosure now, and a fold inside a fold is a place things go to hide
   return '<div class="query">' +
@@ -1222,10 +1248,8 @@ function queryHtml(i, key) {
         '<div class="tablewrap"><table class="terms">' + terms + "</table></div>"
       : '<p class="note">nothing further was demanded of the results</p>') +
     '<div class="form addterm">' +
-    '<input id="qt-field" list="qt-cols" placeholder="field" class="mono">' +
-    '<datalist id="qt-cols">' +
-    catalogCols.concat(cols).map(c => "<option>" + esc(c) + "</option>").join("") +
-    "</datalist>" +
+    '<select id="qt-field" class="mono" aria-label="field">' +
+    fieldOptions + "</select>" +
     '<select id="qt-op">' + Object.entries(OPS).map(([k, v]) =>
       '<option value="' + esc(k) + '">' + esc(v) + "</option>").join("") +
     "</select>" +
@@ -1482,10 +1506,9 @@ function resultsHtml(i, key) {
   };
 
   const peek = unusable.length
-    ? '<button class="btn mini" id="show-rejects">' +
-      (S.showRejects ? "hide the " + unusable.length + " you can’t use"
-                     : "show the " + unusable.length + " you can’t use") +
-      "</button>"
+    ? '<label class="mono"><input type="checkbox" id="show-rejects"' +
+      (S.showRejects ? " checked" : "") + '> show the ' + unusable.length +
+      " you can’t use</label>"
     : "";
 
   if (!usable.length && !S.showRejects)
@@ -1679,7 +1702,7 @@ function wireMain() {
   const specs = $("show-specs");
   if (specs) specs.onclick = () => { S.showSpecs = !S.showSpecs; render(); };
   const rej = $("show-rejects");
-  if (rej) rej.onclick = () => { S.showRejects = !S.showRejects; render(); };
+  if (rej) rej.onchange = () => { S.showRejects = rej.checked; render(); };
   const upd = $("update-btn");
   if (upd) upd.onclick = () => applyStaged(parseInt(upd.dataset.line, 10), true);
   const terms = $("terms-search");
