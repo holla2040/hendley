@@ -95,6 +95,158 @@ Refresh, make the schematic the current document in Fusion (click its tab) —
 a Refresh leaves Fusion on the board view. The guide is
 [`docs/app.md`](docs/app.md).
 
+## A representative Hendley validation design
+
+Hendley is best tested with several small circuits on one schematic, not with a
+random bag of symbols. The fixture below is an electrically plausible controller
+board, but each block deliberately presents a different sourcing question:
+exact provider part, complete MPN, incomplete family, functional label, local
+shop convention, ordinary specification, custom footprint, DNP, and genuinely
+missing information.
+
+The goal is **not** for every line to turn green automatically. A legitimate
+test includes lines Hendley must refuse until an engineer supplies the missing
+electrical intent. Do the first Refresh before adding Hendley-specific metadata
+or changing prompts; preserve that first-pass result as the generalization test.
+
+### Fixture conventions
+
+- Use the named reference designators, schematic `VALUE`, and footprint shape.
+- Where the table says **no LCSC**, omit the `LCSC` attribute deliberately.
+- Where it says **VALUE family**, put the text in the displayed VALUE and leave
+  `MPN` empty. Where it says **MPN family**, put it in `MPN` as well; Hendley
+  must still recognize that it is not necessarily an orderable part.
+- For an **exact control**, choose a real part you already use and populate its
+  `LCSC`, `MPN`, and `MANUFACTURER` attributes. The code itself is not prescribed
+  here because stock and catalog choices change.
+- Give custom footprints meaningful geometry/headlines where Fusion permits it.
+  Hendley should reason from measured pitch/body/span, not a convenient name.
+- These blocks may be laid out independently and joined only by `+12V`, `+5V`,
+  `+3V3`, and ground. Test points make the electrical intent reviewable.
+
+### 1. Input power, protection, and diode identity
+
+This block exercises ordinary passives, MOSFET specifications, regulator
+families, four diode classes, and the shop's Zener aliases.
+
+| Ref | Circuit role and connection | Fusion VALUE | Footprint | Identity setup | Hendley must demonstrate |
+|---|---|---|---|---|---|
+| J1 | 12 V input, pins `VIN`/`GND` | `POWER IN` | 2-pin terminal block | no LCSC acceptable | unmatched connector remains visible, not invented |
+| F1 | series input fuse | `750mA` | `1206` | no LCSC | specification interpretation and approval |
+| Q1 | P-channel reverse-polarity device | `P-CH:40V` | `TO-252` | no LCSC | local transistor spec, not a literal family search |
+| D1 | input TVS from protected 12 V to ground | `SMBJ18A` | `DO-214AA(SMB)` | exact MPN, no LCSC | complete MPN versus provider identity |
+| U1 | 12 V to 5 V regulator module | `R-78E5.0-1.0` | 3-pin SIP, 2.54 mm pitch | VALUE family, no LCSC | same-land voltage/current traps and package vocabulary |
+| U2 | 5 V to 3.3 V LDO | `AP2112K-3.3` | `SOT-23-5` | MPN family, no LCSC | suffix/package interpretation on an unseen regulator |
+| C1,C2 | input/output bulk capacitors | `10u/25V` | radial or SMD can with dimensions | no LCSC | voltage “or better” and physical envelope |
+| C3,C4 | regulator bypass | `1u` | `0603` | no LCSC | deterministic passive spec |
+| FB1 | 3.3 V rail bead | `600` | `0603` | no LCSC | ferrite classification rather than inductor guess |
+| D2 | 10 V Zener test, fed from +12 V through R1 | `VZ10` | `SOD-323` | no MPN/LCSC | shop alias becomes a proposed Zener spec |
+| D3 | identical independent Zener test | `10V0` | `SOD-323` | no MPN/LCSC | second spelling reaches the same reviewed requirement |
+| D4 | identical independent Zener test | `10.0` | `SOD-323` | no MPN/LCSC | punctuation alone is not searched as a family |
+| D5 | small-signal clamp from a test input to +3V3 | `1N4148` | `SOD-323` | VALUE family, no LCSC | small-signal diode separated from Zener/Schottky |
+| D6 | reverse-polarity/load Schottky | `SS14` | `SMA` | VALUE family, no LCSC | Schottky catalog class, not the broken index flag |
+| R1,R2,R3 | Zener current limit, one per alias | `2.2k` | `0603` | no LCSC | grouping of identical specifications |
+| TP1-TP4 | protected input, +5 V, +3V3, ground | blank | local test-pad footprint | DNP attribute | intentional DNP stays out of BOM/CPL |
+
+Do not tie all three Zeners to one node; give each its own resistor and test
+point so the schematic records three separate VALUE conventions without making
+the circuit depend on their tolerance.
+
+### 2. MCU, clocks, USB, I²C, and RS-485
+
+This is the central identity test: one exact mounted part, several real
+families, and one intentionally underspecified functional label.
+
+| Ref | Circuit role | Fusion VALUE | Footprint | Identity setup | Expected behavior |
+|---|---|---|---|---|---|
+| U10 | controller | `STM32F103RET6` | `LQFP-64` | populate real LCSC/MPN/manufacturer | exact provider control; no discovery needed |
+| Y1 | MCU crystal | `8MHz-20pF` | 4-pad 5.0 × 3.2 mm crystal | real LCSC control | exact part and placement path |
+| C10,C11 | crystal loading | `20p` | `0603` | no LCSC | grouped passive spec |
+| U11 | USB-to-UART bridge connected to MCU UART | `FT232RL` | `SSOP-28` | VALUE family, no LCSC | family/package suffix and FT232RNL migration warning |
+| J10 | USB connector for U11 | `USB` | USB Mini-B or USB-C footprint | exact control if available | connector identity and CPL placement |
+| U12 | I²C GPIO expander with A0-A2 straps | `PCF8574` | wide `SOIC-16-300mil` | VALUE family, no LCSC | PCF8574A address trap and body-width proof |
+| U13 | precise 3.3 V half-duplex transceiver | `SP3485` | narrow `SOIC-8` | VALUE family, no LCSC | valid family search and 5 V/temperature traps |
+| U14 | second half-duplex transceiver channel | `RS485` | same narrow `SOIC-8` | functional VALUE only | **must remain unresolved** until voltage/speed are stated |
+| J11,J12 | A/B/GND bus connectors | `RS485 PORT` | 3-pin terminal block | no LCSC acceptable | manually fitted connector remains explicit |
+| R10,R11 | RS-485 termination, one per channel | `120` | `0603` | no LCSC | ordinary grouped spec |
+| R12-R15 | bus bias resistors | `680` | `0603` | no LCSC | quantity/grouping and stock resolution |
+| U15 | I²C EEPROM on the same bus | `24LC256` | `SOIC-8` | MPN family, no LCSC | unseen memory-family handling |
+| R16,R17 | I²C pull-ups | `4.7k` | `0603` | no LCSC | shared house part reuse |
+
+`U13` and `U14` are intentionally similar. Hendley should find candidates for
+`SP3485`; it should not pretend that the word `RS485` establishes 3.3 V versus
+5 V, slew rate, duplex mode, unit load, or temperature grade.
+
+### 3. Analog measurement block
+
+This block adds op-amps, a reference, a sensor, tolerance/rating constraints,
+and an exact-MPN-without-provider case.
+
+| Ref | Circuit role | Fusion VALUE | Footprint | Identity setup | Expected behavior |
+|---|---|---|---|---|---|
+| U20 | dual op-amp: one divider buffer, one low-pass buffer | `LM358` | `SOIC-8` | VALUE family, no LCSC | popular 100-row family without truncation lies |
+| U21 | 2.5 V reference feeding ADC test point | `MCP1525` | `SOT-23-3` | complete MPN in `MPN`, no LCSC | distinguish complete MPN from family/default |
+| U22 | I²C temperature sensor | `TMP102` | `SOT-563` or the exact land you choose | VALUE family, no LCSC | new sensor family and exact geometry requirement |
+| R20,R21 | 12 V divider into U20 | `100k`, `27k` | `0603` | no LCSC | distinct resistor house parts |
+| R22,C20 | ADC low-pass | `10k`, `100n` | `0603` | no LCSC | mixed R/C deterministic inference |
+| C21 | reference bypass | `1u` | `0603` | no LCSC | reuse existing approved capacitor |
+| TP20,TP21 | buffered divider and 2.5 V reference | blank | local test pad | DNP attribute | DNP handling |
+
+Use the actual package variant you intend for `TMP102`; do not rename a
+different land to make the example convenient. A safe refusal is a valid test.
+
+### 4. Drivers, isolation, and load outputs
+
+This block tests same-land functional traps that package checking cannot catch.
+
+| Ref | Circuit role | Fusion VALUE | Footprint | Identity setup | Expected behavior |
+|---|---|---|---|---|---|
+| U30 | seven-channel low-side driver from MCU GPIO | `ULN2003` | narrow `SOIC-16` | MPN family, no LCSC | suffix decoder excludes wide/TSSOP/DIP lands |
+| D30-D32 | indicator LEDs on three driver outputs | `RED`, `GRN`, `AMBER` | `0603` | no LCSC | LED specs, not families |
+| R30-R32 | LED series resistors | `1k` | `0603` | no LCSC | grouped approved choice |
+| U31 | high-CTR optocoupler into an MCU input | `LTV-352T` | `SOP-4-2.54mm` land | VALUE family, no LCSC | CTR trap versus LTV-357T/EL357N |
+| R33 | optocoupler LED resistor from +5 V | `1k` | `0603` | no LCSC | house-part reuse |
+| R34 | optocoupler output pull-up | `10k` | `0603` | no LCSC | house-part reuse |
+| U32 | digital isolator between two logic headers | `ISO7721DR` | `SOIC-8` | exact MPN text, no LCSC | complete orderable name without provider code |
+| Q30 | low-side open-drain load output | `AO3400A` | `SOT-23` | VALUE family, no LCSC | MOSFET note gap and safe review |
+| D33 | flyback diode across external inductive load | `SS14` | `SMA` | reuse D6 family | cross-designator family consistency |
+| J30 | external load connector | `LOAD` | 2-pin terminal block | no LCSC acceptable | unmatched connector behavior |
+| U33 | bridge rectifier feeding a lightly loaded test node | `MB10S` | physical MBS land named locally `SOIC-4` | VALUE family, no LCSC | library/catalog package vocabulary mismatch; MB6S trap |
+
+The `MB10S` local footprint name should remain the library's natural name. Do
+not rename it `MBS` merely to help Hendley—the mismatch is the test.
+
+### 5. Negative controls and workflow edges
+
+Add these last. They verify that Hendley reports uncertainty instead of making
+the fixture artificially green.
+
+| Ref | Setup | Expected behavior |
+|---|---|---|
+| D40 | blank VALUE, `SOD-323`, no attributes | asks what diode requirement this is; never invents a voltage/class |
+| U40 | a real 144-pin FPGA in a custom footprint whose name omits body/pitch; include an accurate Fusion package headline or dimensions | proves geometry or refuses; never accepts a name-only alias |
+| J40 | populated custom connector with no LCSC | remains visible as an intentionally unmatched/manual item |
+| J41 | same connector with `DNP=1` | excluded from order files |
+| R40 | `DNP` as the literal VALUE | excluded from order files |
+| U41 | any known exact part with valid `LCSC`, but intentionally zero/insufficient live stock when available | exercises stock escalation without changing identity |
+| U42 | exact MPN plus a deliberately stale legacy `MP` attribute naming a different part | `MPN` wins; `MP` is carried but never used as identity |
+| TP40 | odd local test-pad footprint, DNP | pseudo/mechanical handling without catalog search |
+
+### What to record from the first run
+
+Before fixing anything, save the intake cache and classify every populated line:
+
+1. **Correctly exact** — Hendley used the stated provider part or complete MPN.
+2. **Correctly discovered** — family plus land produced relevant orderable rows.
+3. **Safely unresolved** — information was genuinely missing or geometry unproved.
+4. **Wrong candidate offered** — the dangerous category; capture query, package,
+   catalog class, failed terms, and prompt/cache provenance.
+5. **Local knowledge required** — a real shop convention that belongs in
+   `docs/parts/`, scoped narrowly and confirmed by an engineer.
+
+The fixture succeeds when Hendley distinguishes those five outcomes honestly.
+“Every row green” is not the acceptance criterion.
+
 ## Documentation (for developers)
 
 - [`docs/app.md`](docs/app.md) — the app: the single-page order workbench

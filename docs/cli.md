@@ -114,6 +114,14 @@ finally runs the same live JLC stock check as `hendley stock` — exiting nonzer
 on out-of-stock / not-found parts so it can gate a submission. `--no-verify`
 skips the check and needs no credentials.
 
+**Family selection is app-only by design.** A populated U/D/Q line whose value
+is a family or local functional label, but which has no exact approved JLC part,
+stops `hendley pcba` before either CSV is written—even with `--no-verify`.
+Choosing among same-land semiconductors is an engineering decision involving
+suffixes, voltage, address, temperature grade and other traps; the deterministic
+one-shot CLI does not duplicate the app's agent-assisted approval workflow. Open
+`hendley app`, search and approve the part, then generate the order files.
+
 Parts marked **do-not-populate** — the schematic `DNP` attribute set to anything
 but `0` (test points, mount holes, programming pads), a part value of literally
 `DNP` (case-insensitive), or the board element's populate flag off — are

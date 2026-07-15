@@ -167,3 +167,36 @@ def test_jlc_alias_is_pcba(tmp_path, monkeypatch):
     outdir = tmp_path / "out"
     rc = main(["jlc", "--no-verify", "-o", str(outdir)])
     assert rc == 0 and (outdir / "bom.csv").exists() and (outdir / "cpl.csv").exists()
+
+
+def test_pcba_refuses_to_emit_an_unapproved_family_even_without_verify(
+        tmp_path, monkeypatch, capsys):
+    import sys
+
+    import hendley.ingestion.fusion.bridge as bridge_mod
+
+    monkeypatch.setattr(bridge_mod, "FusionBridge", FakeBridge)
+    module = sys.modules[__name__]
+    monkeypatch.setattr(module, "PARTS", PARTS + [
+        {"object_id": 19, "name": "U7", "value": "RS485", "device_object_id": 107},
+    ])
+    monkeypatch.setattr(module, "DEVICES", DEVICES + [
+        {"object_id": 107, "name": "-SO8", "package_object_id": 418},
+    ])
+    monkeypatch.setattr(module, "ATTRS", {**ATTRS, 19: {}})
+    monkeypatch.setattr(module, "ELEMENTS", ELEMENTS + [
+        {"object_id": 37, "name": "U7", "x": 0, "y": 0, "angle": 0,
+         "mirror": 0, "populate": 1, "package_object_id": 55},
+    ])
+    monkeypatch.setattr(module, "PACKAGES", PACKAGES + [
+        {"object_id": 55, "name": "IC-SO8"},
+    ])
+    outdir = tmp_path / "out"
+
+    rc = main(["pcba", "--no-verify", "-o", str(outdir)])
+
+    assert rc == 1
+    assert not outdir.exists()
+    err = capsys.readouterr().err
+    assert "U7 names family “RS485”" in err
+    assert "use `hendley app`" in err

@@ -163,6 +163,24 @@ def cmd_pcba(client, args) -> int:
               file=sys.stderr)
 
     requirements = requirements_from_design(design, parts, 1, placements)
+    unresolved_families = [
+        ln for ln in requirements.lines
+        if ln.family and not ln.dnp and not ln.provider_ref("jlcpcb")
+    ]
+    if unresolved_families:
+        for line in unresolved_families:
+            print(
+                "error: " + ",".join(line.designators) +
+                f" names family “{line.family}” on {line.footprint or 'an unknown land'}; "
+                "no exact approved part has been selected",
+                file=sys.stderr,
+            )
+        print(
+            "error: family selection is an engineering decision — use `hendley app` "
+            "to search and approve each part before generating order files.",
+            file=sys.stderr,
+        )
+        return 1
     resolution = {
         "design": design,
         "productionQuantity": 1,
