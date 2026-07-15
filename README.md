@@ -86,6 +86,74 @@ still works, but asks you to confirm each interpretation by hand.
   restart — re-check it if Refresh stops working. Details and troubleshooting:
   [`docs/fusion-notes.md`](docs/fusion-notes.md).
 
+### Troubleshooting: Refresh can't reach Fusion
+
+The app's **Refresh** reads the design over this bridge. When it fails (or a
+manual check from WSL returns `000` / connection refused instead of `200`), work
+this checklist top to bottom — it's ordered by how often each one is the cause.
+
+Manual up/down check from WSL (`200` = up, `000` = down):
+
+```bash
+GW=$(ip route | grep default | awk '{print $3}')
+curl -s -m5 -o /dev/null -w '%{http_code}\n' -H 'Host: 127.0.0.1:27182' \
+  "http://$GW:27182/mcp" -X POST -H 'Content-Type: application/json' \
+  -H 'Accept: application/json, text/event-stream' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"ping","version":"0"}}}'
+```
+
+1. **Is Tailscale running? Turn it off.** This is the one that bites most often.
+   Tailscale hijacks the Windows loopback the port-forward relies on, so the
+   forward accepts nothing even though every rule looks correct (same failure
+   mode as a `0.0.0.0` portproxy rule). In PowerShell:
+
+   ```powershell
+   tailscale down
+   ```
+
+2. **Is Fusion's server actually up?** On Windows:
+
+   ```powershell
+   curl http://127.0.0.1:27182/mcp
+   ```
+
+   Any error *response* (e.g. "Server does not offer an SSE stream" /
+   `{"error": "Not Found"}`) means it's **up**. A connection refused / closed
+   means it's down — enable **Preferences > General > API > Fusion MCP Server**
+   and make sure an Electronics document is open.
+
+3. **Is the port-forward actually listening?** On Windows:
+
+   ```powershell
+   netstat -ano | findstr :27182
+   ```
+
+   You need **two** `LISTENING` lines: `127.0.0.1:27182` (Fusion) **and**
+   `<gateway>:27182` (the proxy). If only the `127.0.0.1` line shows, the proxy
+   rule exists in the registry but its socket never bound — continue to 4 and 5.
+
+4. **Does the rule's `listenaddress` match the *current* gateway?** The WSL
+   gateway can change after a reboot. In WSL, `ip route | grep default` gives the
+   live gateway; on Windows, `netsh interface portproxy show v4tov4` shows what
+   the rule points at. If they differ, re-add the rule with the right address
+   (and delete any stale one). Never use `listenaddress=0.0.0.0`.
+
+5. **Force the proxy to bind.** If the rule is correct but step 3 still shows one
+   listener, restart the IP Helper service so it re-reads the store:
+
+   ```powershell
+   Restart-Service iphlpsvc -Force
+   ```
+
+6. **Firewall.** If the Windows listener responds locally (step 2) but WSL still
+   can't reach `<gateway>:27182`, allow the inbound port once:
+
+   ```powershell
+   New-NetFirewallRule -DisplayName "WSL Fusion MCP 27182" -Direction Inbound -LocalPort 27182 -Protocol TCP -Action Allow
+   ```
+
+After any fix, re-run the WSL check above (or just hit Refresh).
+
 ## Using it
 
 Everything happens in the app: click **Refresh** to read the design and check

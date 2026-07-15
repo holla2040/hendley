@@ -64,6 +64,33 @@ netsh interface portproxy show all     # look for a 0.0.0.0 ... 27182 entry
 netsh interface portproxy delete v4tov4 listenaddress=0.0.0.0 listenport=27182
 ```
 
+> ⚠️ **Tailscale hijacks loopback the same way (verified 2026-07-15).** With
+> Tailscale running, the gateway forward accepts nothing — WSL connects and gets
+> `000`, and everything else (rule, firewall, Fusion listener) looks correct.
+> Same failure mode as a stray `0.0.0.0` rule: Tailscale sits in front of the
+> Windows loopback the forward relies on. Turn it off on Windows and the bridge
+> comes straight back:
+>
+> ```powershell
+> tailscale down
+> ```
+
+**When `add` "succeeds" but nothing binds.** `netsh ... add` writes the rule to
+the registry, but the listener socket only binds if IP Helper is running and the
+`listenaddress` is a live interface address. Verify with:
+
+```powershell
+netstat -ano | findstr :27182
+```
+
+Healthy shows **two** `LISTENING` lines — `127.0.0.1:27182` (Fusion) and
+`<gateway>:27182` (the proxy). Only the `127.0.0.1` line means the proxy never
+bound: confirm the rule's `listenaddress` matches the *current* WSL gateway
+(`ip route | grep default`), then force IP Helper to re-read the store with
+`Restart-Service iphlpsvc -Force`. If the Windows listener answers locally but
+WSL still can't reach `<gateway>:27182`, open the inbound port once with
+`New-NetFirewallRule -DisplayName "WSL Fusion MCP 27182" -Direction Inbound -LocalPort 27182 -Protocol TCP -Action Allow`.
+
 Remove the (correct) gateway forward when you're done with:
 
 ```powershell
