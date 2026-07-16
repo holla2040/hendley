@@ -22,6 +22,14 @@ That is ~36 rows for a 10 µF can — no truncation, no guessing. Do **not** try
 filter the can dimensions any other way: the index has no diameter or height
 column, and the catalog's `Diameter` / `Height - Seated (Max)` are text.
 
+When no exact height is known, use image-assisted diameter evidence rather than
+guessing an exact package. Hendley's centered board crop has a recorded physical
+span, so a visible 5 mm can can produce a coarse `D5` discovery token and a live
+catalog proof term `Diameter eq 5 mm`. A broad class/value query alone can be
+truncated or can omit valid parts because the generic name index ANDs tokens.
+Keep discovery words coarse and let `secondTypeName`, `Capacitance`, `Voltage
+Rating`, and `Diameter` do the authoritative filtering.
+
 ## What the catalog publishes for this class
 
 `Capacitance` · `Voltage Rating` · `Diameter` · `Height - Seated (Max)` ·
@@ -76,3 +84,8 @@ The shop's bias: **high stock = popular = supply-chain-safe, and worth paying a
 little more for.** The can size is non-negotiable (it is the footprint). Voltage
 over-rating is free margin. Everything else is a trade-off for the engineer, not
 for the tool.
+
+For the live C3 10 µF / 25 V / D5 validation on 2026-07-15, the engineer
+confirmed `C271397`, `C249690`, and `C86604` as legitimate alternatives. This
+is recorded engineering judgment, not a production-code allowlist: future
+searches must still discover and prove them normally.

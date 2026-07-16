@@ -103,6 +103,17 @@ remaining work, and decisions that require Craig.
   the schematic, wait for confirmation, then spend the read on a full Refresh and cache it.
 - `MP`/`MF` are stale import metadata, never identity. Read `MPN`; exact JLC identity is
   `LCSC`/providerRefs.
+- Unresolved-part intent is lazy and image-assisted. Refresh makes no model
+  call; it exports schematic sheets, a clean board (`UNROUTED` hidden), and a
+  centered 12 mm crop for each unresolved placement. Fusion view changes need a
+  settle pause, stale files must be removed, and a fresh PNG awaited.
+- Visual intent becomes executable catalog proof: live `secondTypeName` proves
+  class and live parameters prove value/rating/dimensions. Index flags never
+  prove class. Coarse keyword discovery may avoid the 100-row cap but remains
+  advisory.
+- Live C3 validation uses `C-E-5` / Panasonic VS Package C. Its crop produced a
+  5 mm SMD electrolytic plan; Craig approved `C271397`, `C249690`, and `C86604`
+  as legitimate alternatives found through the normal flow.
 
 ## Live supply risk
 

@@ -58,6 +58,7 @@ from .ui import PAGE_HTML
 DEFAULT_OUTDIR = "~/tmp/hendley_output"
 DEFAULT_DRAFT_PATH = "~/.hendley/draft.json"
 DEFAULT_CACHE_PATH = "~/.hendley/design-cache.json"
+READ_PLAN_SCHEMA_VERSION = 7
 
 
 class PackageListing(list):
@@ -336,6 +337,20 @@ class HendleyApp:
                  "mirror": p.mirror, "populate": p.populate, "footprint": p.footprint}
                 for p in placements],
         }
+        # Local image export contains no model call. It is best-effort evidence
+        # consumed only when an unresolved part is opened through /api/read.
+        try:
+            from ..ingestion.fusion.visual import capture_visual_evidence
+            unresolved = {d for row in uninterpreted
+                          for d in row.get("designators", [])}
+            targets = [p for p in out["placements"]
+                       if p["designator"] in unresolved]
+            visual = capture_visual_evidence(bridge, design, targets=targets)
+        except Exception:
+            visual = None
+        if visual:
+            visual["placements"] = out["placements"]
+            out["visualEvidence"] = visual
         self._write_cache(requirements.design, out)
         return out
 
@@ -549,11 +564,16 @@ class HendleyApp:
 
         store = self._store()
         prefix = _kind_hint(line.get("designator") or "")
+        visual = body.get("visualEvidence") or {}
+        visual_token = f"\x1fread-plan:{READ_PLAN_SCHEMA_VERSION}"
+        if visual.get("digest"):
+            visual_token += (f"\x1fvisual:{visual.get('schemaVersion') or 1}:"
+                             f"{visual['digest']}")
         key = {"kind_hint": prefix,
                # the part number belongs in the key: change it in the schematic
                # and this is a different part, which must be read again
                "raw_value": (f"{_part_cache_value(line.get('value') or '', line.get('attributes'))}"
-                             f"\x1f{code}"),
+                             f"\x1f{code}{visual_token}"),
                "footprint": line.get("footprint") or ""}
         cached = store.get_interpretation("read", **key)
         result = (cached or {}).get("result") or {}
@@ -592,6 +612,17 @@ class HendleyApp:
             "catalog": self._catalog_record(code),
             "convention": self._convention(line.get("designator") or ""),
         }
+        if visual:
+            dossier["visualEvidence"] = {
+                "schemaVersion": visual.get("schemaVersion") or 1,
+                "digest": visual.get("digest") or "",
+                "designator": line.get("designator") or "",
+                "sheets": visual.get("sheets") or [],
+                "boardImage": visual.get("boardImage"),
+                "boardCrops": visual.get("boardCrops") or [],
+                "images": visual.get("images") or [],
+                "placements": visual.get("placements") or [],
+            }
         interpreter = self._interpreter_factory()
         reader = getattr(interpreter, "read_part", None)
         reading = reader(dossier) if reader else None

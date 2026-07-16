@@ -48,6 +48,28 @@ def test_family_read_enables_native_web_search(monkeypatch):
     assert got["packages"] == ["SOIC-8"]
 
 
+def test_codex_exec_attaches_each_visual_evidence_image(monkeypatch):
+    seen = []
+
+    def fake_run(cmd, **kw):
+        seen.append((cmd, kw))
+        return subprocess.CompletedProcess(cmd, 0, stdout='{"ok": true}', stderr="")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    got = CodexCLIInterpreter(binary="codex-fake")._ask(
+        "classify the highlighted symbol",
+        images=["/tmp/sheet 1.png", "/tmp/C3-crop.png"],
+    )
+
+    assert got == {"ok": True}
+    cmd, kw = seen[0]
+    assert cmd[cmd.index("exec") + 1:].count("--image") == 2
+    assert cmd[cmd.index("--image") + 1] == "/tmp/sheet 1.png"
+    second = cmd.index("--image", cmd.index("--image") + 1)
+    assert cmd[second + 1] == "/tmp/C3-crop.png"
+    assert cmd[-1] == "-" and kw["input"] == "classify the highlighted symbol"
+
+
 def test_codex_binary_and_model_overrides(monkeypatch):
     monkeypatch.setenv("HENDLEY_CODEX_BIN", "/opt/codex")
     monkeypatch.setenv("HENDLEY_CODEX_MODEL", "gpt-test")

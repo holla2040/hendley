@@ -109,3 +109,29 @@ def note_for(second_type: str | None = None,
                                                  category):
             weak = weak or body
     return contextual or weak
+
+
+def catalog_types_for(category: str = "") -> list[str]:
+    """Catalog class names documented for a coarse search category.
+
+    An unresolved schematic part has no catalog record yet, so its category is
+    the only safe route into the repository's measured class vocabulary.  The
+    interpreter chooses from these strings using the design's textual and
+    visual evidence; Python merely exposes the values written in the notes.
+    """
+    directory = notes_dir()
+    if not directory:
+        return []
+    found: list[str] = []
+    for path in sorted(directory.glob("*.md")):
+        if path.name.lower() == "readme.md":
+            continue
+        try:
+            keys, _ = _applies_to(path.read_text(encoding="utf-8"))
+        except OSError:
+            continue
+        if not category or _hit(keys.get("category", []), category):
+            for value in keys.get("catalogType", []):
+                if value not in found:
+                    found.append(value)
+    return found

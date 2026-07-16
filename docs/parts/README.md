@@ -40,6 +40,12 @@ A note opens with a fenced `applies-to` block:
 Everything after the block is the note, handed to the agent verbatim. Write it
 for an engineer, not for a parser.
 
+For an unresolved part, the documented `catalogType` values also form a bounded
+catalog-class vocabulary. The image/text reader chooses an exact value from
+that vocabulary; the search executor compares it with live-verified
+`secondTypeName`. Python exposes and compares the strings but does not infer the
+class.
+
 ## What a good note says
 
 Look at [aluminium-electrolytic-capacitors.md](aluminium-electrolytic-capacitors.md).

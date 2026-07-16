@@ -415,6 +415,42 @@ def test_refresh_defers_interpretation_until_open_then_caches_once(tmp_path):
         server.server_close()
 
 
+def test_lazy_read_cache_is_invalidated_when_visual_evidence_changes(tmp_path):
+    interp = CountingInterpreter(confidence=0.9)
+    call, server = _mystery_app(tmp_path, interp)
+    try:
+        data = call("/api/intake", {"productionQuantity": 5})
+        request = {"lineIndex": 0, "requirements": data["requirements"],
+                   "visualEvidence": {
+                       "images": ["/tmp/hendley-sheet-1.png"],
+                       "digest": "sheet-revision-a",
+                       "schemaVersion": 1,
+                   }}
+
+        first = call("/api/read", request)
+        assert first["cached"] is False and interp.read_calls == 1
+        again = call("/api/read", request)
+        assert again["cached"] is True and interp.read_calls == 1
+
+        request["visualEvidence"] = {
+            "images": ["/tmp/hendley-sheet-1.png"],
+            "digest": "sheet-revision-b",
+            "schemaVersion": 1,
+        }
+        changed = call("/api/read", request)
+        assert changed["cached"] is False and interp.read_calls == 2
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_ui_does_not_persist_its_generated_search_as_engineer_input():
+    from hendley.app.ui import PAGE_HTML
+
+    assert "const engineerTyped = Object.prototype.hasOwnProperty.call" in PAGE_HTML
+    assert "if (i != null && engineerTyped)" in PAGE_HTML
+
+
 def test_part_cache_identity_includes_meaningful_attributes_only():
     from hendley.app.server import _part_cache_value
 

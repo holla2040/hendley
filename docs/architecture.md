@@ -382,6 +382,11 @@ The AI layer must:
 
 - identify assumptions
 - distinguish sourced facts from interpretation
+- treat drawing images as lazy intent evidence, never candidate proof. Refresh
+  captures and hashes schematic/board evidence without invoking a model;
+  opening an unresolved part interprets it. Candidate class and dimensions are
+  subsequently proved against live catalog `secondTypeName` and parameters.
+  See ADR-0009.
 - expose uncertainty
 - use structured output where possible
 - fail without blocking deterministic resolution

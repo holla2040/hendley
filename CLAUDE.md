@@ -439,7 +439,12 @@ concrete `providers/*` or `datasources/jlc` — only the base protocols.
     GND/supply pseudo-parts and the title block), `extract_board()` (probes
     `electronics.Element`, fires the one-way `BOARD;` switch when needed,
     joins `electronics.Package` for footprint names), `is_dnp()`, `Placement`,
-    `natural_key()`.
+     `natural_key()`.
+  - `visual.py` — best-effort Refresh-time image evidence with no model call:
+    enumerated schematic sheets, clean board export, and dimensioned unresolved
+    placement crops. Fusion dispatch is deferred, so capture settles the view,
+    deletes stale output, and waits for a fresh PNG. `EXPORT IMAGE` omits the
+    visible grid; crop bounds provide physical scale.
   - `parts_json.py` — the `DesignPart` model and `load_parts_json()` (the
     parts-export ingest contract); `extract_components()` is a **stub** kept
     for an eventual in-Fusion add-in.

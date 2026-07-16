@@ -152,10 +152,14 @@ class FusionBridge:
         """
         if '"' in command:
             raise ValueError(f"EAGLE command may not contain double quotes: {command!r}")
+        # The command is embedded in generated Python before Fusion dispatches
+        # it. Preserve Windows path separators (notably C:\\Users, whose ``\U``
+        # would otherwise be parsed as a Python Unicode escape).
+        py_command = command.replace("\\", "\\\\").replace("'", "\\'")
         source = (
             "import adsk.core\n"
             "def run(_context):\n"
             "    app = adsk.core.Application.get()\n"
-            f"    app.executeTextCommand('Electron.run \"{command}\"')\n"
+            f"    app.executeTextCommand('Electron.run \"{py_command}\"')\n"
         )
         return self.execute_script(source)

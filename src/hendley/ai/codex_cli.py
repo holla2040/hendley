@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+from collections.abc import Sequence
 
 from .claude_cli import TIMEOUT_S, ClaudeCLIInterpreter, _extract_json_object
 
@@ -29,7 +30,8 @@ class CodexCLIInterpreter(ClaudeCLIInterpreter):
         self.timeout = timeout
         self.model = model or os.environ.get("HENDLEY_CODEX_MODEL") or ""
 
-    def _ask(self, prompt: str, tools: str = "") -> dict | None:
+    def _ask(self, prompt: str, tools: str = "",
+             images: Sequence[str] = ()) -> dict | None:
         """Run Codex once and extract the final strict-JSON answer.
 
         Family judgment is the only path that requests tools; map its existing
@@ -44,6 +46,9 @@ class CodexCLIInterpreter(ClaudeCLIInterpreter):
                  "--ignore-rules"]
         if self.model:
             argv += ["--model", self.model]
+        for path in images:
+            if str(path).strip():
+                argv += ["--image", str(path)]
         argv.append("-")
         try:
             proc = subprocess.run(

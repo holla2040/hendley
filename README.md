@@ -320,6 +320,16 @@ Before fixing anything, save the intake cache and classify every populated line:
 The fixture succeeds when Hendley distinguishes those five outcomes honestly.
 “Every row green” is not the acceptance criterion.
 
+### Image-assisted unresolved parts
+
+Refresh captures schematic sheets, a clean board image, and dimensioned crops
+for unresolved placements without invoking a model. Opening such a part lazily
+uses those images to read symbol class, polarity/channel, mount, and visible
+geometry. Search then proves that intent against live catalog class and
+parameters; the third-party index remains discovery only. See
+[ADR-0009](docs/adr/0009-schematic-images-are-intent-evidence.md) and the
+[app guide](docs/app.md#lazy-image-assisted-intent).
+
 ## Documentation (for developers)
 
 - [`docs/app.md`](docs/app.md) — the app: the single-page order workbench

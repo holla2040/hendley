@@ -231,6 +231,8 @@ def _sift(sieve: list[dict], row: dict, cand: dict) -> list[dict]:
         alias = CATALOG_ALIAS.get(_squash(field), "")
         catalog = next((v for k, v in published.items()
                         if _same(k, field) or (alias and _same(k, alias))), None)
+        if catalog is None and field in ("firstTypeName", "secondTypeName"):
+            catalog = cand.get(field)
         entry: dict[str, Any] = {"field": field, "op": op, "unit": unit,
                                  "catalog": catalog is not None}
         if want is not None:

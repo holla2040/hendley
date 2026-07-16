@@ -282,8 +282,38 @@ HOW TO READ IT
   ("R-0603" → "0603", "D-SOD323" → "SOD-323"), and if it does not, leave the
   package OUT of the query entirely and say what it implies as sieve terms
   instead (is_polarized, is_surface_mount, mounting_style ...).
+- Digits in a library footprint name are not measurements unless the library
+  headline or drawing explicitly establishes that meaning. `C-E-10` is a local
+  identifier, not proof of a 10 mm diameter. Never turn such digits into a
+  package or dimensional sieve term.
 - With no catalog record, read what you can from the designator, the value and
   the footprint, and be honest about confidence.
+- If "visualEvidence" is present, the attached images are the schematic sheets
+  and board for this exact design revision. Locate the requested designator in
+  the schematic before interpreting its symbol. Symbol shape, polarity marks,
+  terminal labels and nearby circuit context are evidence of DESIGN INTENT:
+  use them to distinguish broad classes such as polarized/electrolytic versus
+  ordinary capacitors; zener/TVS/schottky/ordinary diodes; and MOSFET/BJT/JFET
+  plus channel or polarity where the symbol actually shows it. The board image
+  may support mount/package conclusions but not electrical class. In Fusion
+  board exports, a red rectangular copper pad with no visible drill is an SMD
+  pad; a through-hole pad has a visible drilled hole (often a dark or colored
+  circular center). Do not call two undrilled pads through-hole merely because
+  a circular can outline surrounds them. `visualEvidence.placements` gives the
+  footprint names and board coordinates for the labeled lands in that same
+  image. A plainly standard land such as 0603 or a known pin pitch may be used
+  as a visual ruler: compare pixel spans to estimate the target body's diameter
+  or pad span. State the visual comparison and uncertainty; do not use a local
+  footprint's digits as the measurement. When a diameter is visually supported,
+  include it both as a live catalog `Diameter` sieve term (unit `mm`) and as a
+  compact discovery token such as `D5`; the token fetches while the catalog
+  parameter proves. Never claim
+  `visualEvidence.boardCrops` gives exact physical width/height for a crop
+  centered on the requested designator. Use that known frame as the preferred
+  ruler; the target land is at its center. Do not mistake a neighboring label
+  or footprint for the centered target.
+  a subtype the drawing does not show. State visual cues in the rationale and
+  lower confidence when the symbol is generic or the target cannot be located.
 
 WHAT TO HAND BACK
 - "is": one plain-English line naming the part, as an engineer would say it
@@ -297,6 +327,18 @@ WHAT TO HAND BACK
 - "plan": the query that finds more of this part, ready to fire (same rules as
   below: only package + one value param actually filter; everything you demand
   must ALSO be in the sieve).
+  Use mode `fts` with category `components` and a FEW class-specific search
+  words when class is essential but no exact catalog package is known. A broad
+  parametric value query is capped before the live class sieve runs; keyword
+  discovery can put the intended class inside that cap. The class still MUST be
+  proven with `secondTypeName` because keyword/index matches are not proof.
+  Keep this discovery phrase COARSE: defining value/rating plus the broad
+  subtype noun (for example `10uF 25V electrolytic`). Do not add mount words,
+  material spelling variants, polarity, or the family noun when the live sieve
+  already proves them; the name index ANDs every token, so `SMD aluminum` can
+  hide valid catalog-class matches before proof.
+  Use mode `parametric` when an exact catalog package or a sufficiently narrow
+  dense value net is known.
   When "catalog" is present, build the SIEVE FROM catalog.parameters — one term
   per parameter that genuinely constrains the part, each field spelled VERBATIM
   as the catalog spells it, each unit declared. The engineer sees these terms
@@ -308,14 +350,25 @@ WHAT TO HAND BACK
   LEAVE OUT what merely DESCRIBES the part rather than constraining it
   (Lifetime, Operating Temperature, an ESR of "-"). A term nobody asked for
   only throws good parts away.
+- When the evidence identifies a component class, make that intent executable:
+  add a sieve term on the live catalog field `secondTypeName`. Copy an exact
+  value (or an `in` list of exact values) from `catalogClassVocabulary` in the
+  dossier. Do not invent a catalog label. This is the authoritative class
+  proof for electrolytic/ceramic capacitors, diode subtypes, and transistor
+  families; never substitute an index class flag. If your `intent.subtype`
+  names one of those distinctions and the vocabulary contains the matching
+  class, the term is REQUIRED rather than something to defer until after search.
 
 {index_facts}
 Answer with ONLY this JSON object, no prose, no code fences:
 {{"is": "...",
+  "intent": {{"family": "...", "subtype": "...", "polarity": "...",
+               "mount": "...", "visualCues": ["..."],
+               "uncertainties": ["..."]}},
   "spec": {{"kind": "...", "value": "...", "package": "...",
             "qualifier": "..."}},
   "search": "...",
-  "plan": {{"category": "...", "net": {{}}, "sieve": [
+  "plan": {{"mode": "parametric|fts", "category": "...", "net": {{}}, "sieve": [
       {{"field": "...", "op": "eq|ne|lte|gte|lt|gt|contains|isTrue|isFalse",
         "value": 0, "unit": ""}}]}},
   "rationale": "one short sentence — say if you read it from the catalog",
@@ -537,9 +590,18 @@ def _class_notes(catalog: dict | None, category: str | None = None) -> str:
     note = note_for((catalog or {}).get("secondType"), category)
     if not note:
         return ""
+    vocabulary = ""
+    if not (catalog or {}).get("secondType") and category:
+        from .partnotes import catalog_types_for
+
+        types = catalog_types_for(category)
+        if types:
+            vocabulary = ("\nCATALOG CLASS VALUES DOCUMENTED FOR THIS CATEGORY "
+                          "(copy only values supported by the evidence):\n- "
+                          + "\n- ".join(types) + "\n")
     return ("\nWHAT THIS SHOP KNOWS ABOUT THIS CLASS OF PART — measured, and it\n"
             "outranks the general rules above wherever the two disagree:\n\n"
-            + note + "\n")
+            + note + vocabulary + "\n")
 
 
 class ClaudeCLIInterpreter:
@@ -692,9 +754,23 @@ class ClaudeCLIInterpreter:
 
     def read_part(self, dossier: dict) -> dict | None:
         """Work out what a part IS, from everything known. See the protocol."""
+        from .partnotes import catalog_types_for
+
+        dossier = dict(dossier)
+        dossier["catalogClassVocabulary"] = catalog_types_for()
+        visual = dossier.get("visualEvidence") or {}
+        target = str(visual.get("designator") or "")
+        crops = [c for c in (visual.get("boardCrops") or [])
+                 if str(c.get("designator") or "") == target]
+        crop_images = [str(c.get("image")) for c in crops if c.get("image")]
+        board = str(visual.get("boardImage") or "").strip()
+        images = crop_images + ([board] if board else []) + [
+            str(p) for p in (visual.get("images") or [])
+            if str(p).strip() and str(p) != board and str(p) not in crop_images]
         obj = self._ask(READ_PROMPT.format(
             dossier=json.dumps(dossier, indent=2, ensure_ascii=False),
-            index_facts=INDEX_FACTS + _class_notes(dossier.get("catalog"))))
+            index_facts=INDEX_FACTS + _class_notes(dossier.get("catalog"))),
+            images=images)
         if obj is None:
             return None
         spec = obj.get("spec") or {}
@@ -713,9 +789,10 @@ class ClaudeCLIInterpreter:
             confidence = 0.0
         return {
             "is": str(obj.get("is") or "").strip(),
+            "intent": dict(obj.get("intent") or {}),
             "spec": key,
             "search": str(obj.get("search") or "").strip(),
-            "plan": self._plan({**(obj.get("plan") or {}), "mode": "parametric"}),
+            "plan": self._plan({"mode": "parametric", **(obj.get("plan") or {})}),
             "rationale": str(obj.get("rationale") or ""),
             "confidence": confidence,
         }
@@ -814,7 +891,7 @@ class ClaudeCLIInterpreter:
                 "rationale": str(obj.get("rationale") or ""),
                 "confidence": confidence}
 
-    def _ask(self, prompt: str, tools: str = "") -> dict | None:
+    def _ask(self, prompt: str, tools: str = "", images=()) -> dict | None:
         """Run ``claude -p`` and return the extracted JSON object, or None.
 
         ``tools`` opts one judgment into Claude Code's tools (``"WebSearch"``).
@@ -824,6 +901,9 @@ class ClaudeCLIInterpreter:
         Only :meth:`read_family` needs it — what a part-number suffix MEANS is
         in the datasheet's ordering table and nowhere in the catalog.
         """
+        # The Claude compatibility backend has no repository-proven local-image
+        # transport. It accepts this shared argument and falls back to the text
+        # dossier; Codex attaches the actual files.
         argv = [self.binary, "-p", prompt, "--output-format", "json"]
         if tools:
             argv += ["--allowedTools", tools]

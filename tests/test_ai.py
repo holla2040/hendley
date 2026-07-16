@@ -233,6 +233,33 @@ def test_the_shipped_electrolytic_note_is_wired_up():
     assert "Tolerance" in note             # and the ±20%-rejects-±10% trap
 
 
+def test_documented_catalog_class_vocabulary_is_available_to_unpinned_reads():
+    from hendley.ai.partnotes import catalog_types_for
+
+    types = catalog_types_for()
+    assert "Aluminum Electrolytic Capacitors - SMD" in types
+    assert "Aluminum Electrolytic Capacitors - Leaded" in types
+    assert "Zener Diodes" in types
+
+
+def test_read_part_can_choose_class_narrowing_keyword_discovery(monkeypatch):
+    answer = {
+        "is": "10 uF SMD aluminum electrolytic", "search": "10uF aluminum electrolytic",
+        "spec": {}, "intent": {"subtype": "aluminum electrolytic"},
+        "plan": {"mode": "fts", "category": "components",
+                 "net": {"search": "10uF aluminum electrolytic"},
+                 "sieve": [{"field": "secondTypeName", "op": "eq",
+                            "value": "Aluminum Electrolytic Capacitors - SMD"}]},
+        "confidence": 0.8,
+    }
+    monkeypatch.setattr(ClaudeCLIInterpreter, "_ask", lambda *a, **k: answer)
+
+    got = ClaudeCLIInterpreter().read_part({"catalog": None})
+
+    assert got["plan"]["mode"] == "fts"
+    assert got["plan"]["category"] == "components"
+
+
 def test_the_shipped_chip_resistor_note_is_wired_up():
     """The resistor note reaches the agent on the real catalog class string.
 

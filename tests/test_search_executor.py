@@ -21,9 +21,10 @@ class LyingIndex:
 
     name = "lying"
 
-    def __init__(self, rows, catalog=None):
+    def __init__(self, rows, catalog=None, classes=None):
         self.rows = rows
         self.catalog = catalog or {}      # code → the catalog's parameter table
+        self.classes = classes or {}
         self.queries = []
 
     def discover(self, query):
@@ -39,6 +40,8 @@ class LyingIndex:
             raw={"componentCode": r, "componentModel": f"MPN-{r}",
                  "componentSpecification": pkg.get(r), "stockCount": 5000,
                  "libraryType": "Basic",
+                 "firstTypeName": (self.classes.get(r) or {}).get("first"),
+                 "secondTypeName": (self.classes.get(r) or {}).get("second"),
                  "priceRanges": [{"startQuantity": 1, "unitPrice": 0.01}],
                  "parameters": [{"parameterName": k, "parameterValue": v}
                                 for k, v in (self.catalog.get(r) or {}).items()]},
@@ -113,6 +116,28 @@ def test_a_term_that_cannot_be_checked_is_a_miss_not_a_pass():
     assert got["candidates"] == []
     [miss] = got["misses"]
     assert "not published" in miss["failed"][0]["why"]
+
+
+def test_catalog_class_intent_is_proved_from_live_verified_type():
+    src = LyingIndex(
+        [{"code": "C_E", "package": "SMD,D5xL5.4mm"},
+         {"code": "C_M", "package": "SMD,D5xL5.4mm"}],
+        classes={
+            "C_E": {"first": "Capacitors", "second":
+                    "Aluminum Electrolytic Capacitors - SMD"},
+            "C_M": {"first": "Capacitors", "second":
+                    "Multilayer Ceramic Capacitors MLCC - SMD/SMT"},
+        })
+    got = run_search(src, {
+        "mode": "parametric", "category": "capacitors", "net": {},
+        "sieve": [{"field": "secondTypeName", "op": "in", "value": [
+            "Aluminum Electrolytic Capacitors - SMD",
+            "Aluminum Electrolytic Capacitors - Leaded"]}]})
+
+    assert [c["code"] for c in got["candidates"]] == ["C_E"]
+    assert got["candidates"][0]["secondTypeName"].endswith("- SMD")
+    assert got["candidates"][0]["proof"][0]["catalog"] is True
+    assert got["misses"][0]["failed"][0]["field"] == "secondTypeName"
 
 
 def test_a_unit_the_agent_did_not_declare_is_never_guessed_at():

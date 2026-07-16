@@ -297,6 +297,7 @@ const $ = id => document.getElementById(id);
 const S = {
   requirements: null,  // intake result — never mutated by order-only picks
   placements: null,
+  visualEvidence: null, // Fusion exports; sent to AI only when a part is opened
   uninterpreted: [],   // lines awaiting a spec search (by lineIndex)
   resolution: null,
   queue: null,
@@ -375,6 +376,7 @@ async function run(label, fn) {
 async function hydrate(data, readAt) {
   S.requirements = data.requirements;
   S.placements = data.placements;
+  S.visualEvidence = data.visualEvidence || null;
   S.uninterpreted = data.uninterpreted || [];
   S.design = data.requirements.design || "";
   S.selected = null;
@@ -1198,6 +1200,8 @@ function availableTermFields(key, cat, result) {
   const category = S.categories.find(c => c.slug === cat) || {};
   (category.columns || []).forEach(field => add(defaults, field));
   const catalog = (S.readings[key] || {}).catalog || {};
+  if (catalog.firstType) add(defaults, "firstTypeName");
+  if (catalog.secondType) add(defaults, "secondTypeName");
   Object.keys(catalog.parameters || {}).forEach(field => add(defaults, field));
   if (result)
     for (const row of allRows(result))
@@ -1824,6 +1828,7 @@ async function ensureReading(i) {
   try {
     const d = await api("/api/read", {
       lineIndex: i, requirements: S.requirements,
+      visualEvidence: S.visualEvidence,
       // the pinned part number, else whatever is mounted — either one lets
       // the catalog answer instead of the agent guessing
       code: (rl.providerRefs || {}).jlcpcb || l.ref || undefined});
@@ -1913,6 +1918,10 @@ async function doSearch(i, override) { await run("searching", async () => {
   if (!t && !(i != null && S.requirements.lines[i].family))
     throw new Error("type what you want, then Search");
   const key = i == null ? "" : lineKey(S.requirements.lines[i]);
+  // Presence, not truthiness: an engineer may intentionally clear a box. The
+  // app's generated reading text is visible in the same input but is not their
+  // draft search and must never come back later to outrank a newer reading.
+  const engineerTyped = Object.prototype.hasOwnProperty.call(S.typed, key);
   const cat = $("sf-cat") ? $("sf-cat").value : "";
   // The terms shown ARE the search. If they still speak for what's in the box,
   // fire them exactly as they stand — no second judgment call, and no chance of
@@ -1926,7 +1935,7 @@ async function doSearch(i, override) { await run("searching", async () => {
   S.busySearch = key;
   render();
   try {
-    if (i != null) { S.searches[key] = t; saveDraft(); }
+    if (i != null && engineerTyped) { S.searches[key] = t; saveDraft(); }
     S.results[key] = await api("/api/search", {
       terms: t, lineIndex: i == null ? undefined : i,
       requirements: S.requirements,
