@@ -23,12 +23,30 @@ syntax**. Interpret them as a proposed specification—`kind: diode`, `value:
 the engineer confirm that reading once. Cache the confirmed interpretation.
 Never search the literal alias as though it were a family name.
 
+The live catalog publishes that requirement as `Zener Voltage(Nom)`. Prove the
+normalized voltage with an exact live sieve term on that field; name matching
+is discovery, not voltage proof. For example, `VZ10`, `10Z0`, `Zener 10V`, or
+`TYPE=Zener` plus a 10 V value requires `Zener Voltage(Nom) = 10V`. Do not
+return a 13 V device merely because its model name happened to contain the
+discovery text.
+
 `10V0`, `10.0`, `500V`, and `1000V` contain no Z and therefore do **not** prove
 Zener intent. An ordinary diode can state its reverse-voltage rating the same
 way. Keep its diode class unresolved unless some other explicit specification
 names it. Scan attribute values, never attribute names (`SIZE` contains a Z but
 is not evidence), and ignore administrative/provider metadata such as DNP,
 LCSC, MANUFACTURER, MP, and MF.
+
+For a generic rectifier/ordinary-diode symbol, a bare voltage value is this
+shop's minimum DC reverse-voltage requirement. The live catalog field is
+`Voltage - DC Reverse(Vr)`; prove it with `gte` and unit `V`. This establishes
+the rating, not a subtype: the symbol and live catalog class must still support
+ordinary diode intent independently.
+
+Use a coarse full-text discovery phrase containing the voltage and `diode`
+along with the exact standard package. A package-only parametric request is
+capped at 100 popular rows before live voltage proof and can hide the uncommon
+high-voltage device that actually satisfies the requirement.
 
 ## Catalog identity
 

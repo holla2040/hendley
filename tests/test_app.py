@@ -1493,3 +1493,14 @@ def test_a_dead_column_is_dead_only_in_its_own_category(tmp_path):
              "sieve": [{"field": "subcategory", "op": "eq",
                         "value": "Bridge Rectifiers"}]}
     assert app._stale_plan(klass)               # would reject the MB10S on the board
+
+
+def test_a_visual_reading_outranks_a_provisional_family_in_the_browser():
+    """A D/Q family label must not blank a completed visual reading's search."""
+    from hendley.app.ui import PAGE_HTML
+
+    read = PAGE_HTML.index("const read0 = S.readings[key];",
+                           PAGE_HTML.index("function seedFor"))
+    family = PAGE_HTML.index('if (rl.family) return "";', read)
+    seed = PAGE_HTML.index("if (read0 && read0.search) return read0.search;", read)
+    assert seed < family

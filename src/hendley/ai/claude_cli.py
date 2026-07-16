@@ -377,6 +377,15 @@ WHAT TO HAND BACK
   LEAVE OUT what merely DESCRIBES the part rather than constraining it
   (Lifetime, Operating Temperature, an ESR of "-"). A term nobody asked for
   only throws good parts away.
+- Conversely, NEVER leave out a class, polarity/channel, or numeric rating the
+  schematic states when the evidence/shop notes establish its live catalog
+  meaning. Every such requirement must be a separate sieve term using the
+  live catalog's exact human-readable field name. Snake-case index columns
+  such as `drain_source_voltage`, `collector_current`, `is_zener`, and
+  `is_schottky` are discovery data, never candidate proof. If a stated number's
+  meaning truly is not established, omit it only together with
+  `intent.ratingAmbiguous=true`; never silently omit it while claiming the
+  reading is unambiguous.
 - When the evidence identifies a component class, make that intent executable:
   add a sieve term on the live catalog field `secondTypeName`. Copy an exact
   value (or an `in` list of exact values) from `catalogClassVocabulary` in the

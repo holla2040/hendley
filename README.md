@@ -469,6 +469,13 @@ parameters; the third-party index remains discovery only. See
 [ADR-0009](docs/adr/0009-schematic-images-are-intent-evidence.md) and the
 [app guide](docs/app.md#lazy-image-assisted-intent).
 
+A completed visual reading takes precedence over a provisional schematic
+family label, so local aliases such as `VZ10` cannot leave a successfully read
+part with an empty search box. Every unambiguous stated rating is proved using
+the live catalog's exact parameter name; snake-case/index rating fields remain
+discovery-only. Explicit SI conversion handles equivalent published scales
+such as `1kV` and `1000V` without parsing component names.
+
 ## Documentation (for developers)
 
 - [`docs/app.md`](docs/app.md) — the app: the single-page order workbench

@@ -1031,15 +1031,14 @@ function seedFor(i) {
   const key = lineKey(rl);
   if (S.typed[key]) return S.typed[key];
   if (S.searches[key]) return S.searches[key];
-  // A FAMILY line's box stays EMPTY, and that is the point: empty means "search
-  // what the design says" — the family the designer typed, in the land the board
-  // carries. Seeding it with "ULN2003 SO16" would make Search send WORDS, which
-  // go to the agent and know nothing about the footprint, so you would get the
-  // DIP and the wide-body back. Type something and it becomes a normal search:
-  // your words outrank the design line, always.
-  if (rl.family) return "";
   const read0 = S.readings[key];
   if (read0 && read0.search) return read0.search;
+  // A pure FAMILY line's box stays EMPTY, and that is the point: empty means
+  // "search what the design says". Diodes and transistors also arrive with a
+  // provisional family, though, until their symbol has been read. Once that
+  // visual reading exists it is the more specific truth and must seed the box;
+  // otherwise a completed D1 read renders exactly like no read happened.
+  if (rl.family) return "";
   const u = uninterpFor(i);
   const read = (u && u.guess && (u.guess.spec || u.guess.partial)) || null;
   // with no value to search on, the kind is what you'd type ("diode SOD-323")

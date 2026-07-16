@@ -93,7 +93,10 @@ than silence, because the agent will believe it.
   that fit the land but break the circuit.
 - [Zener diodes and local voltage labels](zener-diodes.md) — the shop aliases
   `VZ10`, `10V0`, and `10.0`, why they are specifications rather than families,
-  and the catalog-class boundary that keeps Schottky/TVS parts separate.
+  the live voltage fields used to prove them, and the catalog-class boundary
+  that keeps Schottky/TVS parts separate.
+- [Ordinary diodes](ordinary-diodes.md) — live class proof for general-purpose
+  and switching candidates.
 - [Schottky and TVS diodes](schottky-and-tvs-diodes.md) — visual/text intent,
   exact live catalog class proof, and the electrical choices a family label
   does not establish.

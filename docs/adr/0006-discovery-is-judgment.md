@@ -76,8 +76,9 @@ parse it — that's why we introduced Claude for this."*
   package-confirmed SOD-323 candidates, the rest one honest click away.
 - Non-R/C parts cost one extra click (fire the seeded search). Given the
   failure mode is a dead board, that click is cheap.
-- Value/tolerance conformance stays engineer judgment (a 13 V zener will
-  appear package-confirmed beside 10 V ones; the MPN and why columns make it
-  visible) — exactly as ADR-0005 already held for parameters.
+- Search plans now prove every unambiguous stated value/rating against the live
+  catalog parameter. A 13 V Zener discovered by the coarse `10V` name search is
+  shown as a rejected row, not a matching candidate. Ratings whose parameter
+  meaning is genuinely ambiguous remain explicit engineer judgment.
 - The AVL grows only by deliberate acts: first picks and CLI `db record`.
   Silent substitution continues to walk ranks the engineer approved.

@@ -384,3 +384,28 @@ opens with `10uF 25V electrolytic D5`; its ordinary live search returned 14
 candidates, all proved as 10 uF, at least 25 V, 5 mm diameter, and
 `Aluminum Electrolytic Capacitors - SMD`. The final run completed with
 `326 passed in 52.31s`; Ruff and `git diff --check` were clean.
+
+## 2026-07-16 complete browser re-audit
+
+The next real user click exposed D1 rendering an empty search even though its
+visual read had completed. `seedFor()` gave every provisional family an empty
+box before consulting the completed reading. Visual readings now take
+precedence; pure exact-family parts retain the intentional empty-box flow.
+
+A fresh-browser Playwright pass opened and searched C3, D1–D7, and Q1–Q6
+against the open `hendley test` Fusion design. It found further unsafe proof
+gaps hidden behind plausible candidate counts: Zener and ordinary-diode voltage
+could be discovery wording without live proof, Q3 used an index voltage field,
+and Q5 omitted its stated ratings. Read-plan schema 17 now requires every
+unambiguous stated class, polarity/channel, rating, and package constraint to
+use exact live catalog fields. D1/D2 prove `Zener Voltage(Nom) = 10V`; D3 proves
+`Voltage - DC Reverse(Vr) >= 1000V`, rejects the discovered 700 V row, and
+accepts the live catalog's equivalent `1kV` spelling through explicit SI unit
+conversion.
+
+The final 14-reference browser matrix returned nonempty proved candidates for
+every specified line with no JavaScript errors. D6 remains review-only because
+18 V does not identify a TVS voltage parameter; D7 states no subtype or rating
+and therefore proves only SOD-123. Bridge validation passed board (40 elements)
+and schematic (7 sheets, 51 parts) reads. The full suite finished with
+`330 passed in 53.68s`.

@@ -388,9 +388,35 @@ def _numeric(v: Any, unit: str = "") -> float | None:
     if not unit or not isinstance(v, str):
         return None
     text = v.strip()
-    if len(text) <= len(unit) or not text.endswith(unit):
+    # Exact declared units remain the common path. The live catalog also uses
+    # ordinary SI prefixes (`1kV`, `470uF`, `1A`) while a requirement naturally
+    # declares another scale (`V`, `uF`, `mA`). Converting those is unit
+    # arithmetic, not part judgment: both strings must name the same explicit
+    # base unit and the whole value must still be one plain number plus unit.
+    prefixes = {"": 1.0, "p": 1e-12, "n": 1e-9, "u": 1e-6, "µ": 1e-6,
+                "m": 1e-3, "k": 1e3, "K": 1e3, "M": 1e6}
+    bases = ("Hz", "ohm", "Ω", "V", "A", "W", "F", "m", "s")
+
+    def split_unit(value: str) -> tuple[float, str] | None:
+        if value in bases:
+            return 1.0, value
+        if value and value[0] in prefixes and value[1:] in bases:
+            return prefixes[value[0]], value[1:]
         return None
-    try:
-        return float(text[: -len(unit)].strip())
-    except ValueError:
+
+    declared = split_unit(unit)
+    if declared is None:
         return None
+    for written_unit in sorted(
+            (p + base for p in prefixes for base in bases), key=len, reverse=True):
+        if len(text) <= len(written_unit) or not text.endswith(written_unit):
+            continue
+        written = split_unit(written_unit)
+        if written is None or written[1] != declared[1]:
+            continue
+        try:
+            number = float(text[: -len(written_unit)].strip())
+        except ValueError:
+            return None
+        return number * written[0] / declared[0]
+    return None

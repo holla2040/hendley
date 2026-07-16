@@ -352,6 +352,21 @@ def test_the_zener_note_reaches_diode_interpretation(monkeypatch):
 
     assert got.spec.value == "10V" and got.spec.qualifier == "zener"
     assert "VZ10" in seen[0] and "10V0" in seen[0] and "shop conventions" in seen[0]
+    assert "Zener Voltage(Nom)" in seen[0]
+    assert "Voltage - DC Reverse(Vr)" in seen[0]
+
+
+def test_visual_reader_requires_live_catalog_proof_for_stated_ratings(monkeypatch):
+    from hendley.ai.claude_cli import ClaudeCLIInterpreter
+
+    seen = []
+    monkeypatch.setattr(ClaudeCLIInterpreter, "_ask",
+                        lambda self, prompt, **kwargs: seen.append(prompt) or None)
+    ClaudeCLIInterpreter().read_part({"schematic": {"designators": ["Q2"],
+                                                     "value": "40V"}})
+    assert "Every such requirement must be a separate sieve term" in seen[0]
+    assert "Snake-case index columns" in seen[0]
+    assert "intent.ratingAmbiguous=true" in seen[0]
 
 
 def test_diode_prompt_carries_deterministic_zener_evidence(monkeypatch):

@@ -218,6 +218,34 @@ def test_a_string_that_does_not_conform_to_its_unit_is_a_miss_not_a_pass():
     assert "not a plain number in mA" in got["misses"][0]["failed"][0]["why"]
 
 
+def test_live_si_prefixes_are_compared_in_the_declared_unit():
+    src = LyingIndex(
+        [{"code": "C_KV", "package": "SOD-323"},
+         {"code": "C_LOW", "package": "SOD-323"}],
+        catalog={"C_KV": {"Voltage - DC Reverse(Vr)": "1kV"},
+                 "C_LOW": {"Voltage - DC Reverse(Vr)": "700V"}})
+    got = run_search(src, {
+        "mode": "fts", "category": "components",
+        "net": {"search": "1000V diode", "package": "SOD-323"},
+        "sieve": [{"field": "Voltage - DC Reverse(Vr)", "op": "gte",
+                   "value": 1000, "unit": "V"}]})
+    assert [c["code"] for c in got["candidates"]] == ["C_KV"]
+    voltage = next(p for p in got["candidates"][0]["proof"]
+                   if p["field"] == "Voltage - DC Reverse(Vr)")
+    assert voltage["have"] == "1kV" and voltage["ok"]
+
+
+def test_live_base_units_can_satisfy_a_prefixed_requirement_unit():
+    src = LyingIndex([{"code": "C_AMP", "package": "SOD-323"}],
+                     catalog={"C_AMP": {"Current": "1A"}})
+    got = run_search(src, {
+        "mode": "parametric", "category": "diodes",
+        "net": {"package": "SOD-323"},
+        "sieve": [{"field": "Current", "op": "gte",
+                   "value": 1000, "unit": "mA"}]})
+    assert [c["code"] for c in got["candidates"]] == ["C_AMP"]
+
+
 def test_the_manufacturers_spelling_never_decides_the_answer():
     # THE regression this path exists for. The index's attributes blob is a
     # scrape of the RAW datasheet keys and they drift: of 680 sampled

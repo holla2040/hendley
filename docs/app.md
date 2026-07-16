@@ -288,3 +288,11 @@ example, bare `18V TVS` does not say whether 18 V is stand-off, breakdown, or
 clamp voltage. Such a reading sets `intent.ratingAmbiguous`, omits voltage from
 the sieve, and cannot automatically name the requirement until the engineer
 supplies the parameter, exact family/part, or an explicit shop convention.
+
+Provisional family values do not suppress a completed visual reading. After a
+lazy symbol read, its normalized search and proof terms populate the browser
+even when intake initially classified the raw value as a possible family.
+Unambiguous numeric ratings must use exact live catalog fields; index rating
+columns are never candidate proof. Numeric comparison performs explicit SI
+unit scaling (`1kV = 1000V`, `1A = 1000mA`) while continuing to reject compound
+strings such as `17mA@120Hz` as uncheckable.

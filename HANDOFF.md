@@ -131,6 +131,11 @@ remaining work, and decisions that require Craig.
 - Live C3 validation uses `C-E-5` / Panasonic VS Package C. Its crop produced a
   5 mm SMD electrolytic plan; Craig approved `C271397`, `C249690`, and `C86604`
   as legitimate alternatives found through the normal flow.
+- The 2026-07-16 fresh-browser audit opened and searched C3, D1–D7, and Q1–Q6
+  against the open `hendley test` design. A completed visual reading now
+  outranks a provisional family label in the search box. Unambiguous diode and
+  transistor ratings use exact live catalog parameters; explicit SI scaling
+  lets catalog `1kV` prove a 1000 V minimum. The final suite is 330 passing.
 
 ## Live supply risk
 
