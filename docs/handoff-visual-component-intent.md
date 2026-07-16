@@ -409,3 +409,8 @@ every specified line with no JavaScript errors. D6 remains review-only because
 and therefore proves only SOD-123. Bridge validation passed board (40 elements)
 and schematic (7 sheets, 51 parts) reads. The full suite finished with
 `330 passed in 53.68s`.
+
+The detail panel now also renders an immediate table-shaped activity state
+during both the lazy visual read and the live catalog search. A Playwright pass
+held each API response open and verified the visible `Reading the component…`
+and `Searching the live catalog…` states in the eventual results location.

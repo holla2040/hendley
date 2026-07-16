@@ -111,6 +111,18 @@ input.grow.working::placeholder { color:var(--pad); opacity:1; }
 @keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:.45; } }
 .say { font:13px var(--mono); color:var(--pad); margin:12px 0 0; }
 .say .count { color:var(--tin); font-size:12px; margin-left:10px; }
+.result-wait { border:1px solid var(--line); border-radius:5px; padding:16px;
+  background:rgba(20,48,36,.6); }
+.result-wait .wait-title { color:var(--pad); font:700 14px var(--mono);
+  margin:0 0 5px; }
+.result-wait .note { margin:0 0 14px; }
+.wait-grid { display:grid; grid-template-columns:40px 90px 1fr 100px;
+  gap:8px; }
+.wait-bar { height:13px; border-radius:3px;
+  background:linear-gradient(90deg,var(--line) 20%,#416552 45%,var(--line) 70%);
+  background-size:220% 100%; animation:shimmer 1.4s linear infinite; }
+@keyframes shimmer { from { background-position:100% 0; }
+  to { background-position:-120% 0; } }
 .result-controls { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
 .result-controls label { display:inline-flex; align-items:center; gap:5px; }
 .result-controls input[type=checkbox] { margin:0; }
@@ -1475,6 +1487,17 @@ function compareRow(i, c, criteria, extras, need) {
 }
 
 function resultsHtml(i, key) {
+  if (S.reading === key || S.busySearch === key) {
+    const reading = S.reading === key;
+    const title = reading ? "Reading the component…" : "Searching the live catalog…";
+    const detail = reading
+      ? "Inspecting the schematic symbol and board land. The candidate table will appear here."
+      : "Verifying class, ratings, and package for every candidate. Results will appear here.";
+    const bars = Array(12).fill('<span class="wait-bar"></span>').join("");
+    return '<div class="sect result-wait" role="status" aria-live="polite">' +
+      '<p class="wait-title">' + title + '</p><p class="note">' + detail +
+      '</p><div class="wait-grid" aria-hidden="true">' + bars + '</div></div>';
+  }
   const r = S.results[key];
   if (!r) return "";
   const need = i == null ? 1 : S.resolution.lines[i].requiredQty;

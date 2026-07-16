@@ -1504,3 +1504,13 @@ def test_a_visual_reading_outranks_a_provisional_family_in_the_browser():
     family = PAGE_HTML.index('if (rl.family) return "";', read)
     seed = PAGE_HTML.index("if (read0 && read0.search) return read0.search;", read)
     assert seed < family
+
+
+def test_the_results_area_immediately_shows_read_and_search_activity():
+    from hendley.app.ui import PAGE_HTML
+
+    assert 'S.reading === key || S.busySearch === key' in PAGE_HTML
+    assert 'Reading the component…' in PAGE_HTML
+    assert 'Searching the live catalog…' in PAGE_HTML
+    assert 'role="status" aria-live="polite"' in PAGE_HTML
+    assert 'class="wait-grid"' in PAGE_HTML

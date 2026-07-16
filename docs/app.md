@@ -296,3 +296,8 @@ Unambiguous numeric ratings must use exact live catalog fields; index rating
 columns are never candidate proof. Numeric comparison performs explicit SI
 unit scaling (`1kV = 1000V`, `1A = 1000mA`) while continuing to reject compound
 strings such as `17mA@120Hz` as uncheckable.
+
+Lazy reading and live catalog verification can each take several seconds. The
+results-table area immediately displays an animated, accessible status panel
+for both phases—`Reading the component…` and `Searching the live catalog…`—so
+the engineer sees activity exactly where the candidate rows will appear.
