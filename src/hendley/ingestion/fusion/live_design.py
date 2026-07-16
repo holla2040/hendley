@@ -167,22 +167,42 @@ def extract_schematic(bridge: FusionBridge) -> tuple[str, list[DesignPart]]:
     device_footprint = {d["object_id"]: bool(d.get("package_object_id")) for d in devices}
     device_package = {d["object_id"]: packages.get(d.get("package_object_id"))
                       for d in devices}
-    def stable_identity(device: dict, package: dict | None) -> dict | None:
+    try:
+        device_set_rows = bridge.read_all("electronics.DeviceSet")
+    except Exception:
+        # Older bridge schemas (and minimal offline fixtures) may not expose
+        # DeviceSet. Identity then stays suggestion-only instead of breaking BOM
+        # intake, which must remain useful without this enrichment.
+        device_set_rows = []
+    device_sets = {d["object_id"]: d for d in device_set_rows}
+
+    def stable_identity(device: dict, package: dict | None,
+                        device_set: dict | None) -> dict | None:
         """Keep Fusion library identity while deliberately dropping object ids."""
-        aliases = {
-            "deviceSetUrn": ("device_set_urn", "deviceSetUrn", "deviceset_urn", "urn"),
-            "libraryVersion": ("library_version", "libraryVersion", "version"),
-            "deviceVariant": ("name", "device_name", "deviceName", "variant"),
-            "packageVariant": ("package_name", "packageName"),
-            "libraryName": ("library_name", "libraryName"),
-            "locallyModified": ("locally_modified", "locallyModified", "modified"),
+        device_set = device_set or {}
+        library_urn = (device_set.get("library_urn") or device.get("library_urn")
+                       or (package or {}).get("library_urn"))
+        set_urn = (device_set.get("urn") or device.get("device_set_urn")
+                   or device.get("deviceSetUrn") or device.get("deviceset_urn"))
+        # Current Fusion returns an empty DeviceSet.urn but does expose a stable
+        # library file URN plus the library-authored DeviceSet name. Their pair
+        # is stable across designs; neither Fusion object id participates.
+        if not set_urn and library_urn and device_set.get("name"):
+            set_urn = f"{library_urn}#deviceset:{device_set['name']}"
+        out = {
+            "deviceSetUrn": set_urn,
+            "libraryVersion": device_set.get("library_version",
+                                               device.get("library_version")),
+            "deviceVariant": device.get("name"),
+            "packageVariant": (package or {}).get("name"),
+            "libraryName": (device_set.get("library") or device.get("library")),
+            "locallyModified": bool(device_set.get("locally_modified")
+                                    or device_set.get("library_locally_modified")
+                                    or device.get("is_local")
+                                    or (package or {}).get("locally_modified")
+                                    or (package or {}).get("library_locally_modified")),
         }
-        out = {}
-        for target, names in aliases.items():
-            for name in names:
-                if device.get(name) not in (None, ""):
-                    out[target] = device[name]
-                    break
+        out = {k: v for k, v in out.items() if v not in (None, "")}
         if package:
             out.setdefault("packageVariant", package.get("name"))
         # A URN is the minimum stable global identity. Names alone are local.
@@ -199,8 +219,10 @@ def extract_schematic(bridge: FusionBridge) -> tuple[str, list[DesignPart]]:
         if not is_pseudo_part(row, attrs, has_footprint):
             device = device_rows.get(row.get("device_object_id"), {})
             package = device_package.get(row.get("device_object_id"))
+            device_set = device_sets.get(row.get("deviceset_object_id")
+                                         or device.get("device_set_object_id"))
             parts.append(part_from_row(row, attrs, package,
-                                       stable_identity(device, package)))
+                                       stable_identity(device, package, device_set)))
     parts.sort(key=lambda p: natural_key(p.designator))
     return design, parts
 

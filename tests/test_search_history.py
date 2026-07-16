@@ -88,3 +88,31 @@ def test_mixed_identity_is_suggestion_only():
     mixed = line()
     mixed["libraryIdentity"] = [line()["libraryIdentity"], line("8")["libraryIdentity"]]
     assert not component_identity(mixed)["exactEligible"]
+
+
+def test_live_fusion_joins_deviceset_library_identity():
+    from hendley.ingestion.fusion.live_design import extract_schematic
+
+    class Bridge:
+        def read_all(self, entity, obj=None):
+            rows = {
+                "electronics.Schematic": [{"name": "copy sch.sch"}],
+                "electronics.Part": [{"object_id": 1, "name": "Q6", "value": "40V",
+                                      "device_object_id": 2, "deviceset_object_id": 3}],
+                "electronics.Device": [{"object_id": 2, "device_set_object_id": 3,
+                                        "package_object_id": 4, "name": "-SOT23"}],
+                "electronics.DeviceSet": [{"object_id": 3, "name": "FET-NCH",
+                                           "library_urn": "urn:library:holla",
+                                           "library_version": 580,
+                                           "locally_modified": 0}],
+                "electronics.Package": [{"object_id": 4, "name": "SOT23-3"}],
+                "electronics.Attribute": [],
+            }
+            return rows[entity]
+
+    _, parts = extract_schematic(Bridge())
+    assert parts[0].library_identity == {
+        "deviceSetUrn": "urn:library:holla#deviceset:FET-NCH",
+        "libraryVersion": 580, "deviceVariant": "-SOT23",
+        "packageVariant": "SOT23-3", "locallyModified": False,
+    }
