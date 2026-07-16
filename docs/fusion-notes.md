@@ -1,5 +1,13 @@
 # Fusion Electronics — introspection notes (hendrix)
 
+## Library identity carried into requirements
+
+The live reader preserves device-set URN, library version, device/package
+variant, footprint name/headline, value, and meaningful electrical attributes
+as `libraryIdentity`. Fusion object ids, designators, and design names are never
+global identity. Missing URNs, local modifications, version differences, and
+mixed grouped identities are suggestion-only.
+
 Recorded from **live** Autodesk Fusion sessions, reached from WSL2 Claude Code
 **over plain HTTP** (JSON-RPC `POST`s) through a Windows port-forward (see
 "Reaching Fusion from WSL2" below). Reference design: **`comet`**

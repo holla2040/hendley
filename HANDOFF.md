@@ -1,5 +1,13 @@
 # HANDOFF — current operational state
 
+## Design-independent search history (schema v5)
+
+Validated mounted/alternate selections preserve search intent across designs.
+Exact stable Fusion identities skip visual/Codex planning but always perform a
+fresh proved catalog search; weaker identities are suggestions. Receipts expire
+after one hour. Forget disables reuse and retains evidence. Candidates, stock,
+approvals, and previous mounts are never replayed.
+
 Updated 2026-07-16. Read `CLAUDE.md` first, especially the glossary. This document is a
 dashboard, not a development diary: current behavior, known limits, expensive facts,
 remaining work, and decisions that require Craig.

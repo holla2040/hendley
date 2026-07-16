@@ -38,7 +38,7 @@ def test_open_db_creates_dir_and_schema(tmp_path):
     conn = open_db(path)
     assert path.exists()
     version = conn.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone()[0]
-    assert version == str(SCHEMA_VERSION) == "4"
+    assert version == str(SCHEMA_VERSION) == "5"
     conn.close()
 
 
@@ -280,10 +280,10 @@ def v2_db_path(tmp_path):
     return path
 
 
-def test_migration_v1_chains_to_v4(v1_db_path):
+def test_migration_v1_chains_to_v5(v1_db_path):
     conn = open_db(v1_db_path)
     version = conn.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone()[0]
-    assert version == "4"
+    assert version == "5"
 
     # current=1 rows became the sole rank-1 active choice per spec
     hit = lookup(conn, "resistor", "22k", "0603")
@@ -311,10 +311,10 @@ def test_migration_v1_chains_to_v4(v1_db_path):
     conn.close()
 
 
-def test_migration_v2_chains_to_v4(v2_db_path):
+def test_migration_v2_chains_to_v5(v2_db_path):
     conn = open_db(v2_db_path)
     version = conn.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone()[0]
-    assert version == "4"
+    assert version == "5"
 
     hit = lookup(conn, "resistor", "22k", "0603")
     assert codes(hit) == ["C4190", "C31850"]  # rank order preserved

@@ -1,5 +1,14 @@
 # JLCPCB OpenAPI — Reference
 
+## Design-independent search history
+
+`POST /api/search-seed/lookup` returns an exact seed, up to three similar
+suggestions, or no match for a requirements line. `POST
+/api/search-seed/validate` requires a successful mounted/alternate save, an
+eligible live candidate, and the one-hour process-local receipt returned by
+`/api/search`. `POST /api/search-seed/forget` disables reuse without deleting
+audit evidence. Receipts and seeds never cache candidates or stock.
+
 This document captures the JLCPCB OpenAPI contract, cross-checked from three
 sources: the console **"View Docs" PDFs** (the primary, authoritative source for
 request/response shapes — transcribed in full below), the official **Java SDK

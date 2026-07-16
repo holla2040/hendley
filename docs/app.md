@@ -1,5 +1,14 @@
 # The Hendley app (`hendley app`)
 
+## Search history across designs
+
+Opening a component checks validated search history before the visual reader.
+An exact stable-library identity fills the saved phrase and immediately runs a
+fresh catalog search with its category and sieve; it never restores the old
+candidate or invokes Codex planning. Weaker matches are explained one-click
+suggestions and the normal reader continues. Typed edits win. Provenance,
+Forget, catalog-failure Retry, and activity appear with the search.
+
 The primary interface (ADR-0003/0004): a local web app served by the CLI —
 Python stdlib only, zero extra dependencies, bound to `127.0.0.1`.
 
