@@ -32,6 +32,9 @@ same library the CLI uses:
 - **Design Overview** (nothing selected): one row per part — LCSC code
   (linked to its product page), stock/need, unit and order cost, JLC
   Basic/Extended class — with the per-board parts cost on the title line.
+  While the initial cached design is loading and resolving, the left parts rail
+  shows an activity indicator in place of the eventual rows. Refresh uses the
+  same rail-local indicator while Fusion and live part status are being read.
 - **Click a component** for its detail panel: the part you chose and the ones
   approved beside it, with manufacturer, package, class, stock and price.
   **The radio is what mounts for this order. The checkbox is what's on the

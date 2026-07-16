@@ -1522,3 +1522,13 @@ def test_a_fresh_visual_read_automatically_runs_its_first_search():
     assert 'searchFreshReading = d.cached === false && !!d.reading;' in PAGE_HTML
     assert 'searchFreshReading && S.selected === i && !(key in S.results)' in PAGE_HTML
     assert 'await doSearch(i);' in PAGE_HTML
+
+
+def test_initial_cache_and_refresh_activity_occupy_the_parts_rail():
+    from hendley.app.ui import PAGE_HTML
+
+    assert 'S.railBusy = "Loading saved design and checking parts…";' in PAGE_HTML
+    assert 'S.railBusy = "Reading Fusion and checking parts…";' in PAGE_HTML
+    assert 'if (S.railBusy)' in PAGE_HTML
+    assert 'class="rail-wait" role="status" aria-live="polite"' in PAGE_HTML
+    assert 'The component list will appear here.' in PAGE_HTML

@@ -83,6 +83,13 @@ body.busy, body.busy * { cursor:wait !important; }
 .read-note { margin:0; padding:0 16px 6px; font:11.5px var(--mono); color:var(--tin); }
 .comps { display:flex; flex-direction:column; gap:4px;
          padding:4px 14px 48px; overflow-y:auto; flex:1; min-height:0; }
+.rail-wait { margin-top:4px; padding:14px 12px; border:1px solid var(--line);
+  border-radius:5px; color:var(--pad); font:12px var(--mono); }
+.rail-wait-title { display:flex; align-items:center; gap:9px; font-weight:700; }
+.rail-spinner { width:14px; height:14px; border:2px solid var(--line);
+  border-top-color:var(--pad); border-radius:50%; animation:spin .8s linear infinite; }
+.rail-wait .note { margin:8px 0 0 23px; }
+@keyframes spin { to { transform:rotate(360deg); } }
 .comp { display:flex; justify-content:space-between; align-items:baseline; gap:10px;
   width:100%; text-align:left; border:1px solid transparent; border-radius:4px;
   padding:3px 11px; font:12.5px var(--mono); background:var(--panel);
@@ -327,6 +334,7 @@ const S = {
                        // condition that fires it — without this it would retry on
                        // every render, forever, against a live API.
   busySearch: null,    // lineKey currently searching
+  railBusy: null,      // initial cache/Refresh activity shown where rows belong
   categories: [],      // the catalog's tables + their filterable columns
   catPick: {},         // lineKey -> the part type YOU chose ("" = auto)
   showSearchMore: false,  // the machinery under the search line — CLOSED by
@@ -431,8 +439,9 @@ async function hydrate(data, readAt) {
 
 async function refresh() {
   document.body.classList.add("busy");   // wait cursor until the read lands
+  S.railBusy = "Reading Fusion and checking parts…";
+  renderRail();
   try {
-    $("comps").innerHTML = "";   // stale rows never sit under a fresh read
     $("main").innerHTML =
       '<p class="sub">Reading the open Fusion design …</p>';
     await run(
@@ -443,21 +452,32 @@ async function refresh() {
         S.requirements.lines.length + " part type" +
         (S.requirements.lines.length === 1 ? "" : "s") + ". " +
         "(Click Fusion’s schematic tab before the next Refresh.)", "ok");
-  }); } finally { document.body.classList.remove("busy"); }
+  }); } finally {
+    S.railBusy = null;
+    document.body.classList.remove("busy");
+    render();
+  }
 }
 
 /* page load: repopulate from the last read — every correction reapplies
    (confirmed specs from the DB, picks from the draft, rotations from the
    corrections file); Refresh re-reads Fusion whenever you want */
 async function loadCache() {
+  S.railBusy = "Loading saved design and checking parts…";
+  renderRail();
   let cached = null;
   try { cached = (await api("/api/intake-cache")).cached; } catch (e) {}
-  if (!cached) return;
-  await run("loading last design", async () => {
-    await hydrate(cached, cached.savedAt ? new Date(cached.savedAt) : new Date());
-    msg("loaded “" + (S.design || "design") +
-        "” from the last read — Refresh re-reads Fusion.", "ok");
-  });
+  try {
+    if (!cached) return;
+    await run("loading last design", async () => {
+      await hydrate(cached, cached.savedAt ? new Date(cached.savedAt) : new Date());
+      msg("loaded “" + (S.design || "design") +
+          "” from the last read — Refresh re-reads Fusion.", "ok");
+    });
+  } finally {
+    S.railBusy = null;
+    render();
+  }
 }
 
 function effectiveRequirements() {
@@ -661,6 +681,10 @@ function designWords(i) {
 }
 
 function renderRail() {
+  if (S.railBusy) {
+    $("comps").innerHTML = railWaitHtml(S.railBusy);
+    return;
+  }
   if (!S.resolution) { $("comps").innerHTML = ""; return; }
   const order = S.resolution.lines.map((l, i) => i)
     .sort((a, b) => (S.resolution.lines[a].dnp ? 1 : 0) -
@@ -677,6 +701,13 @@ function renderRail() {
   }).join("");
   document.querySelectorAll("#comps .comp").forEach(b =>
     b.onclick = () => select(parseInt(b.dataset.line, 10)));
+}
+
+function railWaitHtml(label) {
+  return '<div class="rail-wait" role="status" aria-live="polite">' +
+    '<div class="rail-wait-title"><span class="rail-spinner" ' +
+    'aria-hidden="true"></span>' + esc(label) + '</div>' +
+    '<p class="note">The component list will appear here.</p></div>';
 }
 
 function select(i) {

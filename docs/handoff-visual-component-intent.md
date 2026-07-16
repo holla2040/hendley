@@ -420,3 +420,9 @@ generated first search. This applies only to `cached: false`: reopening a
 cached reading retains the explicit Search control and does not create surprise
 catalog traffic. The loading panel transitions from reading to searching under
 the original component click.
+
+Initial cache hydration and Fusion Refresh now set an explicit rail-busy state.
+The left component-list area displays a spinner and status text until resolution
+replaces it with real part rows; unrelated renders such as category loading
+cannot accidentally clear the indicator. A Playwright check held
+`/api/intake-cache` open and verified the rail state remained visible.
