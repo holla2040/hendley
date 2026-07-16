@@ -1,6 +1,8 @@
 import pytest
 
 from hendley.app.server import ApiError, HendleyApp
+from hendley.datasources.base import PartFact
+from hendley.domain.model import RequirementLine, RequirementsBom, SpecKey
 from hendley.knowledge.partsdb import PartsDb, open_db
 from hendley.selection_history import component_identity
 
@@ -116,3 +118,50 @@ def test_live_fusion_joins_deviceset_library_identity():
         "libraryVersion": 580, "deviceVariant": "-SOT23",
         "packageVariant": "SOT23-3", "locallyModified": False,
     }
+
+
+def test_exact_seed_reuses_complete_avl_with_live_inventory_fallback(tmp_path):
+    spec = SpecKey("mosfet", "N-channel 40V", "SOT-23")
+
+    class Source:
+        name = "fake"
+
+        def verify(self, refs):
+            stocks = {"C1": 0, "C2": 500}
+            return {ref: PartFact(ref=ref, found=True, stock=stocks[ref],
+                                  mpn=ref, provenance="fake", raw={})
+                    for ref in refs}
+
+        def discover(self, query):
+            return []
+
+    app = HendleyApp(db_path=tmp_path / "parts.db", outdir=tmp_path / "out",
+                     datasource_factory=Source)
+    store = app._store()
+    store.record(spec, provider_refs={"jlcpcb": "C1"}, rank=1)
+    store.record(spec, provider_refs={"jlcpcb": "C2"}, rank=2)
+    raw = line()
+    requirement = RequirementLine.from_dict(raw)
+    req = RequirementsBom(100, [requirement], design="new-board")
+    keys = component_identity(raw)
+    store.validate_search_seed(
+        exact_key=keys["exactKey"], similarity_key=keys["similarityKey"],
+        identity=keys["identity"], phrase="40V N-channel MOSFET SOT-23",
+        category="mosfets", sieve=[], canonical_spec=spec.to_dict(),
+        design="old-board", selected_ref="C1", receipt_id="r", event="mounted")
+
+    applied = app._apply_exact_search_seeds(req)
+    assert applied[0]["previousSpec"] is None
+    assert req.lines[0].spec == spec
+    result = app.api_resolve({"requirements": req.to_dict(), "provider": "jlcpcb"})
+    assert result["resolution"]["lines"][0]["ref"] == "C2"
+    assert result["resolution"]["lines"][0]["rankUsed"] == 2
+
+
+def test_explicit_part_in_new_design_outranks_exact_seed(tmp_path):
+    app = HendleyApp(db_path=tmp_path / "parts.db", outdir=tmp_path / "out")
+    req = RequirementsBom.from_dict({"productionQuantity": 1, "lines": [{
+        **line(), "providerRefs": {"jlcpcb": "C99"},
+    }]})
+    assert app._apply_exact_search_seeds(req) == []
+    assert req.lines[0].provider_refs == {"jlcpcb": "C99"}

@@ -341,9 +341,14 @@ class HendleyApp:
         uninterpreted = self._interpret_lines(
             requirements, consult_interpreter=False,
             visual_available=bool(visual))
+        search_seed_applications = self._apply_exact_search_seeds(requirements)
+        applied_indexes = {x["lineIndex"] for x in search_seed_applications}
+        uninterpreted = [u for u in uninterpreted
+                         if u.get("lineIndex") not in applied_indexes]
         out = {
             "requirements": requirements.to_dict(),
             "uninterpreted": uninterpreted,
+            "searchSeedApplications": search_seed_applications,
             "placements": [
                 {"designator": p.designator, "x": p.x, "y": p.y, "angle": p.angle,
                  "mirror": p.mirror, "populate": p.populate, "footprint": p.footprint}
@@ -395,13 +400,53 @@ class HendleyApp:
         fresh = self._interpret_lines(
             requirements, consult_interpreter=False,
             visual_available=bool(doc.get("visualEvidence")))
+        search_seed_applications = self._apply_exact_search_seeds(requirements)
+        applied_indexes = {x["lineIndex"] for x in search_seed_applications}
+        fresh = [u for u in fresh if u.get("lineIndex") not in applied_indexes]
         for u in fresh:  # keep the read-time LLM guess as the prefill
             guess = (old.get(u["lineIndex"]) or {}).get("guess") or {}
             if guess.get("spec"):
                 u["guess"] = guess
         doc["uninterpreted"] = fresh
         doc["requirements"] = requirements.to_dict()
+        doc["searchSeedApplications"] = search_seed_applications
         return {"cached": doc}
+
+    def _apply_exact_search_seeds(self, requirements) -> list[dict]:
+        """Attach a proven canonical spec so the normal live AVL resolver can
+        reuse the complete approved list in a new design.
+
+        Explicit MPN/provider pins remain the current design's authority. A
+        seed without an existing active approved list is discovery provenance,
+        not enough to resolve anything.
+        """
+        from ..domain.model import SpecKey
+        from ..selection_history import component_identity
+
+        store = self._store()
+        applied = []
+        for i, line in enumerate(requirements.lines):
+            if line.dnp or line.mpn or line.provider_refs:
+                continue
+            keys = component_identity(line.to_dict())
+            if not keys["exactEligible"]:
+                continue
+            found = store.lookup_search_seeds(keys["exactKey"], keys["similarityKey"])
+            seed = found.get("seed") if found.get("match") == "exact" else None
+            if not seed or not seed.get("canonicalSpec"):
+                continue
+            try:
+                spec = SpecKey.from_dict(seed["canonicalSpec"])
+            except ValueError:
+                continue
+            house = store.lookup(spec)
+            if not house or not house.get("choices"):
+                continue
+            previous = line.spec.to_dict() if line.spec else None
+            line.spec = spec
+            applied.append({"lineIndex": i, "seed": seed,
+                            "previousSpec": previous})
+        return applied
 
     def _interpret_lines(self, requirements,
                          consult_interpreter: bool = True,

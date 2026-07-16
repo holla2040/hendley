@@ -9,6 +9,11 @@ eligible live candidate, and the one-hour process-local receipt returned by
 `/api/search`. `POST /api/search-seed/forget` disables reuse without deleting
 audit evidence. Receipts and seeds never cache candidates or stock.
 
+`POST /api/intake` and `GET /api/intake-cache` return
+`searchSeedApplications` for exact seeds whose canonical specification has an
+active approved list. Those specifications are already attached to the returned
+requirements; `/api/resolve` live-verifies and rank-walks the list.
+
 This document captures the JLCPCB OpenAPI contract, cross-checked from three
 sources: the console **"View Docs" PDFs** (the primary, authoritative source for
 request/response shapes — transcribed in full below), the official **Java SDK

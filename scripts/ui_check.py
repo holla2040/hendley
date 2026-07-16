@@ -214,10 +214,13 @@ def main() -> int:
             print("history -> provenance shown · fresh search " +
                   ("FIRED ✓" if exact else "MISSING"))
             page.click("[data-forget-seed]")
-            page.wait_for_timeout(500)
+            page.wait_for_timeout(1500)
             forgotten = page.query_selector("[data-forget-seed]") is None
-            bad += 0 if forgotten else 1
-            print("forget -> " + ("disabled ✓" if forgotten else "STILL ACTIVE"))
+            rail = page.inner_text('button.comp[data-line="0"]')
+            detached = "unpicked" in rail.lower()
+            bad += 0 if forgotten and detached else 1
+            print("forget -> " + ("disabled and detached ✓"
+                  if forgotten and detached else "STILL ACTIVE: " + rail))
 
         browser.close()
     srv.shutdown()

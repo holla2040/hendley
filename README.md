@@ -1,9 +1,10 @@
 # Hendley
 
 Validated searches can carry across designs for the exact same stable Fusion
-library identity. Hendley reuses only the phrase and proof constraints, then
-searches the current live catalog again; it never reuses an old candidate or
-mounted part. Similar identities appear as optional suggestions.
+library identity. Hendley reuses the approved specification and complete
+alternate list, live-verifies them for the new build, and automatically mounts
+the first stocked choice. It also searches the current live catalog again;
+similar identities remain optional suggestions.
 
 <img src="image/hendley.png" alt="Hendley — James Garner as Hendley, 'the Scrounger', in The Great Escape" width="160" align="right">
 

@@ -330,6 +330,7 @@ const S = {
   results: {},         // lineKey ("" = overview) -> the last search's result
   familyTried: {},     // lineKey -> the family search has been fired ONCE.
   searchHistory: {},   // lineKey -> lookup/provenance/suggestions for this identity
+  autoSeedSpecs: {},   // lineKey -> intake-applied seed + prior spec for Forget
   historyBusy: {},     // lineKey -> request token; guards component navigation
                        // Kept apart from `results` because a FAILED family search
                        // leaves no result, and "no result" is exactly the
@@ -418,7 +419,12 @@ async function hydrate(data, readAt) {
   S.staged = {};
   S.familyTried = {};   // a fresh read of the design searches its families afresh
   S.searchHistory = {};
+  S.autoSeedSpecs = {};
   S.historyBusy = {};
+  for (const a of (data.searchSeedApplications || [])) {
+    const line = S.requirements.lines[a.lineIndex];
+    if (line) S.autoSeedSpecs[lineKey(line)] = a;
+  }
   if (d.draft) {
     if (d.draft.productionQuantity) $("qty").value = d.draft.productionQuantity;
     const valid = new Set(S.requirements.lines.map(lineKey));
@@ -1887,6 +1893,13 @@ function wireMain() {
         await api("/api/search-seed/forget", {seedId: parseInt(btn.dataset.forgetSeed, 10),
           requirements: S.requirements});
         delete S.searchHistory[key]; delete S.results[key];
+        const applied = S.autoSeedSpecs[key];
+        if (applied) {
+          if (applied.previousSpec) S.requirements.lines[i].spec = applied.previousSpec;
+          else delete S.requirements.lines[i].spec;
+          delete S.autoSeedSpecs[key];
+          await resolveNow();
+        }
         render(); ensureSearchHistory(i);
       });
     };
@@ -1922,9 +1935,9 @@ function wireMain() {
   }
 }
 
-/* Search memory is consulted before the visual reader. Exact identity reuses
-   only intent and immediately asks the live catalog again; suggestions never
-   suppress the normal reader or fire a search by themselves. */
+/* Search memory is consulted before the visual reader. Exact identity already
+   attached its approved AVL during intake; opening it performs fresh discovery.
+   Suggestions never suppress the normal reader or fire by themselves. */
 async function ensureSearchHistory(i) {
   const rl = S.requirements.lines[i];
   if (!rl || S.resolution.lines[i].dnp) return;
@@ -1932,15 +1945,17 @@ async function ensureSearchHistory(i) {
   if (key in S.searchHistory || S.historyBusy[key]) return;
   const token = String(Date.now()) + Math.random();
   S.historyBusy[key] = token;
-  const typedBefore = Object.prototype.hasOwnProperty.call(S.typed, key)
-    ? S.typed[key] : undefined;
+  const currentEdit = () => Object.prototype.hasOwnProperty.call(S.typed, key)
+    ? S.typed[key]
+    : Object.prototype.hasOwnProperty.call(S.searches, key) ? S.searches[key] : undefined;
+  const typedBefore = currentEdit();
   try {
     const h = await api("/api/search-seed/lookup", {
       lineIndex: i, requirements: S.requirements});
     if (S.historyBusy[key] !== token || lineKey(S.requirements.lines[i]) !== key) return;
     S.searchHistory[key] = h;
     if (h.match === "exact" && h.seed &&
-        (typedBefore === undefined || S.typed[key] === typedBefore)) {
+        typedBefore === undefined) {
       S.catPick[key] = h.seed.category;
       render();
       S.busySearch = key;
@@ -1950,7 +1965,7 @@ async function ensureSearchHistory(i) {
           category: h.seed.category, sieve: h.seed.sieve,
           say: h.seed.phrase});
         if (S.historyBusy[key] === token &&
-            (typedBefore === undefined || S.typed[key] === typedBefore))
+            currentEdit() === undefined)
           S.results[key] = result;
       } catch (e) {
         if (S.historyBusy[key] === token) h.catalogError = e.message;
@@ -2034,7 +2049,7 @@ async function ensureFamily(i) {
   if (!rl || !rl.family || l.dnp || uninterpFor(i)) return;
   const key = lineKey(rl);
   if (S.familyTried[key] || key in S.results || S.busySearch === key ||
-      S.typed[key]) return;
+      S.typed[key] || S.searches[key]) return;
   S.familyTried[key] = true;   // once, whatever happens — see S.familyTried
   S.busySearch = key;
   render();
