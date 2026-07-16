@@ -72,6 +72,16 @@ def main() -> int:
                 )
             print(f"PASS  schematic read returned {len(sheets)} sheets and {len(parts)} parts")
 
+            command = bridge.run_eagle("BOARD;")
+            if not command.get("success"):
+                detail = command.get("error") or command.get("message") or command
+                raise RuntimeError(f"BOARD command failed: {detail}")
+            time.sleep(args.settle)
+            elements = bridge.read_all("electronics.Element")
+            if not elements:
+                raise RuntimeError("board read was empty after BOARD command")
+            print(f"PASS  board read returned {len(elements)} elements")
+
         print("PASS  Fusion bridge is running correctly")
         return 0
     except Exception as exc:
@@ -88,6 +98,16 @@ def main() -> int:
                     print("INFO  restored board view")
             except Exception as exc:
                 print(f"WARN  could not restore the board view: {exc}", file=sys.stderr)
+        else:
+            try:
+                restored = bridge.run_eagle("EDIT .S1;")
+                time.sleep(args.settle)
+                if not restored.get("success"):
+                    print("WARN  could not restore schematic sheet 1", file=sys.stderr)
+                else:
+                    print("INFO  restored schematic sheet 1")
+            except Exception as exc:
+                print(f"WARN  could not restore schematic sheet 1: {exc}", file=sys.stderr)
 
 
 if __name__ == "__main__":

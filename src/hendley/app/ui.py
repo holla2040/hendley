@@ -305,6 +305,7 @@ const S = {
   rotations: [],
   avlCache: {},        // spec JSON -> housePart (this session)
   searches: {},        // lineKey -> the engineer's search terms (draft-persisted)
+  searchDigests: {},   // lineKey -> visual revision those terms were written for
   manualDnp: {},       // lineKey -> true — DNP for this run only (draft-persisted)
   acks: {},            // lineKey -> the unnamed part was looked at (draft)
   results: {},         // lineKey ("" = overview) -> the last search's result
@@ -386,6 +387,7 @@ async function hydrate(data, readAt) {
   const d = await api("/api/draft?design=" + encodeURIComponent(S.design));
   S.overrides = {};
   S.searches = {};
+  S.searchDigests = {};
   S.manualDnp = {};
   S.acks = {};
   S.results = {};
@@ -398,8 +400,13 @@ async function hydrate(data, readAt) {
     const valid = new Set(S.requirements.lines.map(lineKey));
     for (const [k, v] of Object.entries(d.draft.overrides || {}))
       if (valid.has(k)) S.overrides[k] = v;   // stale picks drop silently
+    const visualDigest = (S.visualEvidence || {}).digest || "";
     for (const [k, v] of Object.entries(d.draft.searches || {}))
-      if (valid.has(k)) S.searches[k] = v;
+      if (valid.has(k) && (!visualDigest ||
+          (d.draft.searchDigests || {})[k] === visualDigest)) {
+        S.searches[k] = v;
+        if (visualDigest) S.searchDigests[k] = visualDigest;
+      }
     for (const k of Object.keys(d.draft.manualDnp || {}))
       if (valid.has(k)) S.manualDnp[k] = true;
     for (const k of Object.keys(d.draft.acks || {}))
@@ -520,6 +527,7 @@ function saveDraft() {
     productionQuantity: qty(),
     overrides: S.overrides,
     searches: S.searches,
+    searchDigests: S.searchDigests,
     manualDnp: S.manualDnp,
     acks: S.acks,
     savedAt: new Date().toISOString(),
@@ -1156,15 +1164,13 @@ function seedTerms(key) {
   return (r && r.plan && r.plan.sieve) || [];
 }
 
-/* The seeded terms speak for the words the AGENT read off this part. Retype the
-   box and they no longer describe what you're asking — so they neither show nor
-   fire, and the agent reads your words afresh. */
+/* The visual reading is DESIGN INTENT, not disposable search phrasing. Editing
+   the box changes discovery words; it does not erase class, polarity, rating,
+   dimension, or package proof. Those terms remain until the engineer explicitly
+   drops one in the visible term editor. */
 function seedApplies(key, text) {
   const r = S.readings[key];
-  if (!r || !r.plan || !(r.plan.sieve || []).length) return false;
-  const box = text !== undefined ? text
-    : S.typed[key] !== undefined ? S.typed[key] : (r.search || "");
-  return box.trim() === (r.search || "").trim();
+  return !!(r && r.plan && (r.plan.sieve || []).length);
 }
 
 /* The request a set of terms produces — rebuilt from the terms EXACTLY as the
@@ -1923,11 +1929,10 @@ async function doSearch(i, override) { await run("searching", async () => {
   // draft search and must never come back later to outrank a newer reading.
   const engineerTyped = Object.prototype.hasOwnProperty.call(S.typed, key);
   const cat = $("sf-cat") ? $("sf-cat").value : "";
-  // The terms shown ARE the search. If they still speak for what's in the box,
-  // fire them exactly as they stand — no second judgment call, and no chance of
-  // the agent quietly answering a question different from the one on screen.
+  // Text edits change discovery words, not visually established design intent.
+  // The visible term editor is the deliberate way to alter hard proof terms.
   let extra = override;
-  if (!extra && !S.results[key] && seedApplies(key, t))
+  if (!extra && seedApplies(key, t))
     extra = {category: cat || S.readings[key].plan.category,
              sieve: seedTerms(key)};
   S.catPick[key] = cat;
@@ -1935,7 +1940,11 @@ async function doSearch(i, override) { await run("searching", async () => {
   S.busySearch = key;
   render();
   try {
-    if (i != null && engineerTyped) { S.searches[key] = t; saveDraft(); }
+    if (i != null && engineerTyped) {
+      S.searches[key] = t;
+      S.searchDigests[key] = (S.visualEvidence || {}).digest || "";
+      saveDraft();
+    }
     S.results[key] = await api("/api/search", {
       terms: t, lineIndex: i == null ? undefined : i,
       requirements: S.requirements,
@@ -1961,6 +1970,7 @@ function rerun(i, sieve) {
   const key = i == null ? "" : lineKey(S.requirements.lines[i]);
   const r = S.results[key];
   if (!r || !r.query) return;
+  S.seed[key] = sieve;
   S.showSearchMore = true;
   S.catPick[key] = r.query.category;
   doSearch(i, {category: r.query.category, sieve: sieve, say: r.planned.say});

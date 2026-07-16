@@ -3,8 +3,12 @@
 import csv
 import json
 
+import pytest
+
+from hendley.ingestion.fusion.bridge import BridgeError
 from hendley.ingestion.fusion.live_design import (
     Placement,
+    extract_board,
     extract_schematic,
     is_dnp,
     is_pseudo_part,
@@ -113,6 +117,41 @@ def test_schematic_read_returns_from_frontmost_board_with_edit_s1(monkeypatch):
     assert bridge.commands == ["EDIT .S1;"]
     assert sleeps == [0.75]
     assert design == "hendley test" and [p.designator for p in parts] == ["C3"]
+
+
+def test_schematic_name_falls_back_to_active_fusion_document():
+    class NoSchematicRow:
+        def active_document_name(self):
+            return "hendley test"
+
+        def read_all(self, entity_type, obj=None, page=1000):
+            if entity_type == "electronics.Schematic":
+                return []
+            if entity_type == "electronics.Part":
+                return [{"object_id": 1, "name": "C3", "value": "10u/25V",
+                         "device_object_id": 10}]
+            if entity_type == "electronics.Package":
+                return [{"object_id": 20, "name": "C-E-5"}]
+            if entity_type == "electronics.Device":
+                return [{"object_id": 10, "package_object_id": 20}]
+            if entity_type == "electronics.Attribute":
+                return []
+            return []
+
+    design, _ = extract_schematic(NoSchematicRow())
+    assert design == "hendley test"
+
+
+def test_board_switch_surfaces_fusions_actual_rejection():
+    class DialogOpen:
+        def read(self, entity_type, obj=None):
+            return {"items": []}
+
+        def run_eagle(self, command):
+            return {"success": False, "error": "command dialog is open"}
+
+    with pytest.raises(BridgeError, match="command dialog is open"):
+        extract_board(DialogOpen())
 
 
 def test_bom_groups_identical_parts_and_sorts_designators():

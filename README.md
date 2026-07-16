@@ -110,6 +110,16 @@ curl -s -m5 -o /dev/null -w '%{http_code}\n' -H 'Host: 127.0.0.1:27182' \
   -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"ping","version":"0"}}}'
 ```
 
+For a complete read-only health check—including schematic rows, the `BOARD;`
+transition, placement rows, and context restoration—run:
+
+```bash
+./bridge-check.py
+```
+
+Unlike a bare HTTP check, this reports Fusion command rejections such as an
+open command dialog instead of reducing them to an empty-placement symptom.
+
 1. **Is Tailscale running? Turn it off.** This is the one that bites most often.
    Tailscale hijacks the Windows loopback the port-forward relies on, so the
    forward accepts nothing even though every rule looks correct (same failure

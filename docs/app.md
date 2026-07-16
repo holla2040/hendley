@@ -184,6 +184,12 @@ terms, so nothing can quietly re-assert itself. The lookups the app runs for
 you unasked (a plain `22k` on an `0603`) show their query in the same panel
 and are edited the same way.
 
+For an image-read unresolved part, editing the search box changes discovery
+words but does not silently erase schematic intent. Class, polarity/channel,
+ratings, dimensions, and package proof stay attached until you explicitly drop
+a visible term in this editor. Saved search text is scoped to the visual digest
+it was written against; a new drawing revision starts from the new reading.
+
 For a dense R/C value on a chip package there's nothing to judge, so the app
 looks it up for you at Refresh — into the *same* results table, under a line
 saying what it looked up. Your own search always replaces it.

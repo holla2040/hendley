@@ -59,6 +59,18 @@ def test_selected_part_uses_live_package_and_saved_search_outranks_spec_seed():
     assert "if (S.searches[key]) return S.searches[key];" in PAGE_HTML
 
 
+def test_typed_search_words_cannot_silently_erase_visual_proof_terms():
+    assert "if (!extra && seedApplies(key, t))" in PAGE_HTML
+    assert "if (!extra && !S.results[key] && seedApplies(key, t))" not in PAGE_HTML
+    assert "S.seed[key] = sieve;" in PAGE_HTML
+
+
+def test_saved_search_text_is_scoped_to_its_visual_revision():
+    assert "searchDigests: {}" in PAGE_HTML
+    assert "(d.draft.searchDigests || {})[k] === visualDigest" in PAGE_HTML
+    assert 'S.searchDigests[key] = (S.visualEvidence || {}).digest || ""' in PAGE_HTML
+
+
 class FakeSource:
     name = "fake"
 

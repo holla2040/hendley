@@ -126,6 +126,13 @@ def extract_schematic(bridge: FusionBridge) -> tuple[str, list[DesignPart]]:
         # name is a temp path ending in "<design> sch.sch"
         stem = schematics[0].get("name", "").replace("\\", "/").rsplit("/", 1)[-1]
         design = stem.removesuffix(".sch").removesuffix(" sch").strip() or "unknown"
+    if design == "unknown":
+        # electronics.Schematic can be empty even while Part rows are readable.
+        # A shared "unknown" draft namespace would leak one design's typed
+        # searches into another, so ask Fusion for the active document name.
+        read_name = getattr(bridge, "active_document_name", None)
+        if read_name:
+            design = str(read_name() or "").strip() or "unknown"
 
     part_rows = bridge.read_all("electronics.Part")
     if not part_rows:
@@ -185,7 +192,10 @@ def extract_board(bridge: FusionBridge) -> list[Placement]:
     """
     probe = bridge.read("electronics.Element", {"pagination": {"limit": 1, "offset": 0}})
     if not probe.get("items"):
-        bridge.run_eagle("BOARD;")
+        switched = bridge.run_eagle("BOARD;")
+        if switched.get("success") is False:
+            detail = switched.get("error") or switched.get("message") or switched
+            raise BridgeError(f"Fusion refused BOARD;: {detail}")
     elements = bridge.read_all("electronics.Element")
     if not elements:
         raise BridgeError(

@@ -49,7 +49,7 @@ remaining work, and decisions that require Craig.
 - Bare TVS voltage such as `18V TVS` is not assumed to mean `Vrwm`.
   `intent.ratingAmbiguous` keeps voltage out of the sieve and prevents automatic
   SpecKey acceptance regardless of numeric confidence.
-- Test baseline: **322 passing**, plus Ruff and `git diff --check`.
+- Test baseline: **326 passing**, plus Ruff and `git diff --check`.
 
 ## Known limitations
 
@@ -118,6 +118,12 @@ remaining work, and decisions that require Craig.
   populated-region detail crops. A read attaches only the requested placement
   crop plus schematic details. Fusion view changes need a settle pause, stale
   files must be removed, and a fresh PNG awaited.
+- Search-box edits change discovery wording but retain the visual reading's hard
+  proof terms. Only the visible term editor drops them. Persisted search text is
+  keyed to the visual digest so stale phrases cannot outrank a changed drawing.
+- If `electronics.Schematic` is empty while parts are readable, the design name
+  falls back to Fusion's active document name; never share drafts under
+  `unknown`.
 - Visual intent becomes executable catalog proof: live `secondTypeName` proves
   class and live parameters prove value/rating/dimensions. Index flags never
   prove class. Coarse keyword discovery may avoid the 100-row cap but remains

@@ -282,7 +282,11 @@ Caveats seen in real data:
 ## Design name
 
 `electronics.Schematic` row `name` is a temp path ending in `comet sch.sch`;
-the design/document name is taken as **`comet`**.
+the design/document name is taken as **`comet`**. Some valid Electronics
+contexts publish Part rows while `electronics.Schematic` itself is empty. In
+that case Hendley reads Fusion's `activeDocument.name` through the read-only
+execute channel. It must not collapse multiple designs into a shared `unknown`
+draft namespace.
 
 ## ⭐ The WRITE path — driving the EAGLE command line over HTTP (RESOLVED)
 

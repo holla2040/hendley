@@ -163,3 +163,15 @@ class FusionBridge:
             f"    app.executeTextCommand('Electron.run \"{py_command}\"')\n"
         )
         return self.execute_script(source)
+
+    def active_document_name(self) -> str:
+        """Return Fusion's active document name without changing the design."""
+        source = (
+            "import adsk.core\n"
+            "def run(_context):\n"
+            "    app = adsk.core.Application.get()\n"
+            "    doc = app.activeDocument\n"
+            "    print(doc.name if doc else '')\n"
+        )
+        result = self.execute_script(source)
+        return str(result.get("message") or "").strip() if result.get("success") else ""

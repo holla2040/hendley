@@ -324,6 +324,11 @@ See `docs/parts/transistors.md`.
 14. Sparse schematic exports receive automatic populated-region detail crops;
     this made Q4/Q5 emitter-arrow geometry reliably readable without a
     component-specific answer key.
+15. Search wording can no longer erase a visual reading's class, polarity,
+    rating, dimension, or package terms. Proof edits require the explicit term
+    controls, and saved wording is scoped to its visual digest.
+16. When `electronics.Schematic` is empty but parts are readable, Fusion's
+    read-only active document name prevents cross-design `unknown` drafts.
 
 ## Live Fusion observations
 
@@ -372,5 +377,10 @@ The two follow-ups are closed for this branch:
    transition only after all schematic capture, and a wedged proxy is reset
    once rather than retried.
 
-The definitive post-follow-up run completed with `322 passed in 50.17s`;
-Ruff and `git diff --check` were clean.
+The first real user pass exposed two state-path defects now covered by live
+Playwright regression: edited/saved search wording could discard visual proof,
+and an empty `electronics.Schematic` row named the design `unknown`. C3 now
+opens with `10uF 25V electrolytic D5`; its ordinary live search returned 14
+candidates, all proved as 10 uF, at least 25 V, 5 mm diameter, and
+`Aluminum Electrolytic Capacitors - SMD`. The final run completed with
+`326 passed in 52.31s`; Ruff and `git diff --check` were clean.
