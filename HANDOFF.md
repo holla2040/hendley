@@ -1,5 +1,14 @@
 # HANDOFF — current operational state
 
+## Design-independent search history (schema v5)
+
+Validated mounted/alternate selections preserve the canonical specification and
+search intent across designs. Exact stable Fusion identities attach the existing
+House Part AVL during intake; the resolver live-verifies it and automatically
+uses the first stocked approved choice or alternate. A fresh proved discovery
+search still runs on open. Weaker identities are suggestions. Forget disables
+reuse and retains evidence; cached candidates and stock are never replayed.
+
 Updated 2026-07-16. Read `CLAUDE.md` first, especially the glossary. This document is a
 dashboard, not a development diary: current behavior, known limits, expensive facts,
 remaining work, and decisions that require Craig.

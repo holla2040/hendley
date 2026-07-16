@@ -45,7 +45,9 @@ Endpoints (all JSON):
 from __future__ import annotations
 
 import json
+import time
 import traceback
+import uuid
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -179,6 +181,7 @@ class HendleyApp:
         self._datasource_factory = datasource_factory or _default_datasource
         self._bridge_factory = bridge_factory or _default_bridge
         self._interpreter_factory = interpreter_factory or _default_interpreter
+        self._search_receipts: dict[str, dict] = {}
 
     def _store(self) -> PartsDb:
         return PartsDb(self.db_path)
@@ -338,9 +341,14 @@ class HendleyApp:
         uninterpreted = self._interpret_lines(
             requirements, consult_interpreter=False,
             visual_available=bool(visual))
+        search_seed_applications = self._apply_exact_search_seeds(requirements)
+        applied_indexes = {x["lineIndex"] for x in search_seed_applications}
+        uninterpreted = [u for u in uninterpreted
+                         if u.get("lineIndex") not in applied_indexes]
         out = {
             "requirements": requirements.to_dict(),
             "uninterpreted": uninterpreted,
+            "searchSeedApplications": search_seed_applications,
             "placements": [
                 {"designator": p.designator, "x": p.x, "y": p.y, "angle": p.angle,
                  "mirror": p.mirror, "populate": p.populate, "footprint": p.footprint}
@@ -392,13 +400,53 @@ class HendleyApp:
         fresh = self._interpret_lines(
             requirements, consult_interpreter=False,
             visual_available=bool(doc.get("visualEvidence")))
+        search_seed_applications = self._apply_exact_search_seeds(requirements)
+        applied_indexes = {x["lineIndex"] for x in search_seed_applications}
+        fresh = [u for u in fresh if u.get("lineIndex") not in applied_indexes]
         for u in fresh:  # keep the read-time LLM guess as the prefill
             guess = (old.get(u["lineIndex"]) or {}).get("guess") or {}
             if guess.get("spec"):
                 u["guess"] = guess
         doc["uninterpreted"] = fresh
         doc["requirements"] = requirements.to_dict()
+        doc["searchSeedApplications"] = search_seed_applications
         return {"cached": doc}
+
+    def _apply_exact_search_seeds(self, requirements) -> list[dict]:
+        """Attach a proven canonical spec so the normal live AVL resolver can
+        reuse the complete approved list in a new design.
+
+        Explicit MPN/provider pins remain the current design's authority. A
+        seed without an existing active approved list is discovery provenance,
+        not enough to resolve anything.
+        """
+        from ..domain.model import SpecKey
+        from ..selection_history import component_identity
+
+        store = self._store()
+        applied = []
+        for i, line in enumerate(requirements.lines):
+            if line.dnp or line.mpn or line.provider_refs:
+                continue
+            keys = component_identity(line.to_dict())
+            if not keys["exactEligible"]:
+                continue
+            found = store.lookup_search_seeds(keys["exactKey"], keys["similarityKey"])
+            seed = found.get("seed") if found.get("match") == "exact" else None
+            if not seed or not seed.get("canonicalSpec"):
+                continue
+            try:
+                spec = SpecKey.from_dict(seed["canonicalSpec"])
+            except ValueError:
+                continue
+            house = store.lookup(spec)
+            if not house or not house.get("choices"):
+                continue
+            previous = line.spec.to_dict() if line.spec else None
+            line.spec = spec
+            applied.append({"lineIndex": i, "seed": seed,
+                            "previousSpec": previous})
+        return applied
 
     def _interpret_lines(self, requirements,
                          consult_interpreter: bool = True,
@@ -823,10 +871,11 @@ class HendleyApp:
                 plans, fam = self._family_plan(line) or ([], {})
                 found = self._merge(run_search(self._datasource_factory(), p)
                                     for p in plans)
-            return {"terms": line["family"], "planned": plans[0],
+            result = {"terms": line["family"], "planned": plans[0],
                     "queries": [f["query"] for f in found["parts"]],
                     "judged": False, "family": fam,
                     **{k: v for k, v in found.items() if k != "parts"}}
+            return self._with_search_receipt(result, line, body)
         if not terms:
             raise ApiError("'terms' is required — type what you want")
         if isinstance(sieve, list):
@@ -865,7 +914,87 @@ class HendleyApp:
         if category and line.get("designator"):
             self._remember_convention(line["designator"], category, plan)
         found = run_search(self._datasource_factory(), plan)
-        return {"terms": terms, "planned": plan, "judged": judged, **found}
+        return self._with_search_receipt(
+            {"terms": terms, "planned": plan, "judged": judged, **found}, line, body)
+
+    def _with_search_receipt(self, result: dict, line: dict, body: dict) -> dict:
+        """Bind one successful live execution to its eligible current candidates."""
+        from ..selection_history import component_identity
+
+        receipt = uuid.uuid4().hex
+        planned = result.get("planned") or {}
+        parts = result.get("candidates") or []
+        eligible = sorted({str(p.get("code") or p.get("componentCode") or "")
+                           for p in parts if p.get("code") or p.get("componentCode")})
+        self._search_receipts[receipt] = {
+            "created": time.monotonic(), "phrase": result.get("terms") or "",
+            "category": planned.get("category") or body.get("category") or "components",
+            "sieve": list(planned.get("sieve") or []), "eligible": eligible,
+            "identityKey": component_identity(line)["exactKey"],
+        }
+        # Opportunistically prune; receipts are deliberately process-local.
+        cutoff = time.monotonic() - 3600
+        self._search_receipts = {k: v for k, v in self._search_receipts.items()
+                                 if v["created"] >= cutoff}
+        result["searchReceipt"] = {"id": receipt, "expiresIn": 3600}
+        return result
+
+    def api_search_seed_lookup(self, body: dict) -> dict:
+        from ..selection_history import component_identity
+
+        line = self._search_line(body)
+        keys = component_identity(line)
+        found = self._store().lookup_search_seeds(keys["exactKey"], keys["similarityKey"])
+        # Ineligible identities can only receive suggestions, even if an empty
+        # key could otherwise collide with old/corrupt data.
+        if not keys["exactEligible"] and found["match"] == "exact":
+            found = {"match": "none", "seed": None, "suggestions": []}
+        for suggestion in found.get("suggestions", []):
+            suggestion["reason"] = keys["suggestionReason"]
+        return {**found, "identity": keys["identity"],
+                "exactEligible": keys["exactEligible"]}
+
+    def api_search_seed_validate(self, body: dict) -> dict:
+        from ..selection_history import component_identity
+
+        receipt_id = str(body.get("receipt") or "")
+        receipt = self._search_receipts.get(receipt_id)
+        if not receipt or time.monotonic() - receipt["created"] >= 3600:
+            self._search_receipts.pop(receipt_id, None)
+            raise ApiError("search receipt is missing or expired", status=409)
+        action = str(body.get("action") or "")
+        if action not in ("mounted", "alternate"):
+            raise ApiError("only a deliberate mounted or alternate selection validates history")
+        selected = str(body.get("selectedRef") or "")
+        if selected not in receipt["eligible"]:
+            raise ApiError("selected part was not eligible in that live search", status=409)
+        line = self._search_line(body)
+        keys = component_identity(line)
+        if not keys["exactEligible"]:
+            raise ApiError("this component identity is suggestion-only", status=409)
+        if receipt.get("identityKey") != keys["exactKey"]:
+            raise ApiError("search receipt belongs to a different component", status=409)
+        seed = self._store().validate_search_seed(
+            exact_key=keys["exactKey"], similarity_key=keys["similarityKey"],
+            identity=keys["identity"], phrase=receipt["phrase"],
+            category=receipt["category"], sieve=receipt["sieve"],
+            canonical_spec=(body.get("canonicalSpec")
+                            if isinstance(body.get("canonicalSpec"), dict) else None),
+            design=(body.get("requirements") or {}).get("design"),
+            selected_ref=selected, receipt_id=receipt_id, event=action,
+        )
+        return {"validated": True, "seed": seed}
+
+    def api_search_seed_forget(self, body: dict) -> dict:
+        try:
+            seed_id = int(body.get("seedId"))
+        except (TypeError, ValueError):
+            raise ApiError("'seedId' is required")
+        forgotten = self._store().forget_search_seed(
+            seed_id, (body.get("requirements") or {}).get("design"))
+        if not forgotten:
+            raise ApiError("no such search seed", status=404)
+        return {"forgotten": True}
 
     def api_categories(self, params: dict) -> dict:
         """Every table the catalog publishes, and the columns a search term can
@@ -921,6 +1050,9 @@ class HendleyApp:
                 # own geometry — the two things that decide which part may mount
                 "family": ln.get("family") or "",
                 "headline": ln.get("footprintHeadline") or "",
+                "footprintHeadline": ln.get("footprintHeadline") or "",
+                "libraryIdentity": ln.get("libraryIdentity"),
+                "mixedLibraryIdentity": ln.get("mixedLibraryIdentity", False),
                 "code": str(body.get("code") or
                             (ln.get("providerRefs") or {}).get("jlcpcb")
                             or "").strip()}
@@ -1222,6 +1354,25 @@ class HendleyApp:
         if not part.get("code"):
             raise ApiError("'part' (the approved part) is required")
         store = self._store()
+        # An exact seed may name this *new deliberate selection*, but history
+        # alone never resolves a line: require a fresh, unexpired receipt whose
+        # live eligible set contains the part the engineer just clicked.
+        receipt_id = str(body.get("receipt") or "")
+        receipt = self._search_receipts.get(receipt_id)
+        if (receipt and time.monotonic() - receipt["created"] < 3600
+                and str(part.get("code")) in receipt["eligible"]):
+            from ..selection_history import component_identity
+
+            keys = component_identity(line)
+            if (keys["exactEligible"]
+                    and receipt.get("identityKey") == keys["exactKey"]):
+                matched = store.lookup_search_seeds(
+                    keys["exactKey"], keys["similarityKey"])
+                seed = matched.get("seed") if matched.get("match") == "exact" else None
+                if seed and seed.get("canonicalSpec"):
+                    return {"spec": seed["canonicalSpec"],
+                            "rationale": "canonical specification from the exact saved search",
+                            "cached": True, "searchSeed": seed["id"]}
         key = {"kind_hint": _kind_hint(line.get("designator") or ""),
                "raw_value": _part_cache_value(line.get("value") or "",
                                                line.get("attributes")),
@@ -1435,6 +1586,9 @@ POST_ROUTES = {
     "/api/resolve": "api_resolve",
     "/api/read": "api_read",
     "/api/search": "api_search",
+    "/api/search-seed/lookup": "api_search_seed_lookup",
+    "/api/search-seed/validate": "api_search_seed_validate",
+    "/api/search-seed/forget": "api_search_seed_forget",
     "/api/key": "api_key",
     "/api/approve": "api_approve",
     "/api/emit": "api_emit",

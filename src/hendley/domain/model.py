@@ -121,6 +121,9 @@ class RequirementLine:
     # …and that footprint's own geometry, verbatim from the library. "SO16" cannot
     # tell a 3.9mm body from a 7.5mm one; "Small Outline package 150 mil" can.
     footprint_headline: str | None = None
+    # Stable library identity used only to recognize the same engineering intent
+    # across designs. Fusion object ids and design-local names never belong here.
+    library_identity: dict[str, Any] | None = None
     # Verbatim schematic attributes used as interpretation evidence. These are
     # not identity by themselves; in particular MP/MF remain stale metadata.
     attributes: dict[str, str] = field(default_factory=dict)
@@ -187,6 +190,8 @@ class RequirementLine:
             d["footprint"] = self.footprint
         if self.footprint_headline is not None:
             d["footprintHeadline"] = self.footprint_headline
+        if self.library_identity is not None:
+            d["libraryIdentity"] = dict(self.library_identity)
         if self.attributes:
             d["attributes"] = dict(self.attributes)
         if self.family is not None:
@@ -227,6 +232,8 @@ class RequirementLine:
             comment=d.get("comment"),
             footprint=d.get("footprint"),
             footprint_headline=d.get("footprintHeadline"),
+            library_identity=(dict(d["libraryIdentity"])
+                              if isinstance(d.get("libraryIdentity"), dict) else None),
             attributes={str(k): str(v) for k, v in
                         dict(d.get("attributes") or {}).items()},
             family=d.get("family"),

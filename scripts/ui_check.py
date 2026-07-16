@@ -105,7 +105,10 @@ class FakeBridge:
             return [{"object_id": 10, "name": "U1", "value": "ULN2003",
                      "device_object_id": 100}]
         if entity == "electronics.Device":
-            return [{"object_id": 100, "package_object_id": 50}]
+            return [{"object_id": 100, "package_object_id": 50,
+                     "device_set_urn": "urn:adsk.eagle:deviceset:ui-check-uln2003",
+                     "library_version": "1", "name": "ULN2003",
+                     "package_name": "SO16"}]
         if entity == "electronics.Package":
             return [{"object_id": 50, "name": "SO16",
                      "headline": "Small Outline package 150 mil"}]
@@ -198,6 +201,26 @@ def main() -> int:
             ok = "✓" in rail
             bad += 0 if ok else 1
             print(f"\npick -> rail {'GREEN ✓' if ok else 'NOT resolved: ' + rail!r}")
+            # A clean second read reuses only intent, performs another live
+            # search, and exposes provenance + Forget in the real page.
+            before = len(app._search_receipts)
+            page.click("#refresh-btn")
+            page.wait_for_selector('button.comp[data-line="0"]', timeout=60_000)
+            page.click('button.comp[data-line="0"]')
+            page.wait_for_selector("[data-forget-seed]", timeout=30_000)
+            page.wait_for_selector(".results", timeout=30_000)
+            exact = len(app._search_receipts) > before
+            bad += 0 if exact else 1
+            print("history -> provenance shown · fresh search " +
+                  ("FIRED ✓" if exact else "MISSING"))
+            page.click("[data-forget-seed]")
+            page.wait_for_timeout(1500)
+            forgotten = page.query_selector("[data-forget-seed]") is None
+            rail = page.inner_text('button.comp[data-line="0"]')
+            detached = "unpicked" in rail.lower()
+            bad += 0 if forgotten and detached else 1
+            print("forget -> " + ("disabled and detached ✓"
+                  if forgotten and detached else "STILL ACTIVE: " + rail))
 
         browser.close()
     srv.shutdown()

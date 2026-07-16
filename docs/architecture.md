@@ -1,5 +1,19 @@
 # System Architecture
 
+## Schema v5: reusable search intent
+
+`selection_search_seeds` holds the newest active search intent for an exact
+stable Fusion library identity. `selection_search_evidence` is append-only.
+Design is provenance only. Seeds contain phrase, category, sieve, and optional
+canonical specification—never candidates, stock, approvals, or mounted choices.
+The v4→v5 migration is transactional after a `.v4.bak` copy. Existing generic
+interpretations cannot authorize visual cross-design reuse.
+
+An exact active seed with a canonical specification is applied during intake.
+Concrete selection remains the resolver's job: it live-verifies the existing
+House Part AVL and walks approved choices in rank order for the new build
+quantity. Search history never supplies cached stock or candidates.
+
 # Hendley — AI-Assisted BOM Resolver
 
 **Version:** 1.0 Draft  

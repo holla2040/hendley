@@ -1,5 +1,15 @@
 # The Hendley app (`hendley app`)
 
+## Search history across designs
+
+Refresh checks validated search history before the visual reader. An exact
+stable-library identity attaches the previously approved specification and AVL;
+the normal resolver live-verifies the list and mounts the first choice covering
+this build, falling through existing alternates without another pick. Opening
+the component also runs a fresh discovery search without Codex planning. Weaker
+matches remain optional suggestions. Typed edits win. Provenance, Forget,
+catalog-failure Retry, and activity appear with the search.
+
 The primary interface (ADR-0003/0004): a local web app served by the CLI —
 Python stdlib only, zero extra dependencies, bound to `127.0.0.1`.
 

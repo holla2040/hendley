@@ -1,5 +1,11 @@
 # Hendley
 
+Validated searches can carry across designs for the exact same stable Fusion
+library identity. Hendley reuses the approved specification and complete
+alternate list, live-verifies them for the new build, and automatically mounts
+the first stocked choice. It also searches the current live catalog again;
+similar identities remain optional suggestions.
+
 <img src="image/hendley.png" alt="Hendley — James Garner as Hendley, 'the Scrounger', in The Great Escape" width="160" align="right">
 
 Hendley turns an Autodesk Fusion Electronics design into a ready-to-upload
