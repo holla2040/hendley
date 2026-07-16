@@ -414,3 +414,9 @@ The detail panel now also renders an immediate table-shaped activity state
 during both the lazy visual read and the live catalog search. A Playwright pass
 held each API response open and verified the visible `Reading the component…`
 and `Searching the live catalog…` states in the eventual results location.
+
+On a successful uncached lazy read, the UI now immediately fires that reading's
+generated first search. This applies only to `cached: false`: reopening a
+cached reading retains the explicit Search control and does not create surprise
+catalog traffic. The loading panel transitions from reading to searching under
+the original component click.

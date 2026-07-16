@@ -1514,3 +1514,11 @@ def test_the_results_area_immediately_shows_read_and_search_activity():
     assert 'Searching the live catalog…' in PAGE_HTML
     assert 'role="status" aria-live="polite"' in PAGE_HTML
     assert 'class="wait-grid"' in PAGE_HTML
+
+
+def test_a_fresh_visual_read_automatically_runs_its_first_search():
+    from hendley.app.ui import PAGE_HTML
+
+    assert 'searchFreshReading = d.cached === false && !!d.reading;' in PAGE_HTML
+    assert 'searchFreshReading && S.selected === i && !(key in S.results)' in PAGE_HTML
+    assert 'await doSearch(i);' in PAGE_HTML

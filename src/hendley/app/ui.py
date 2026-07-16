@@ -1851,6 +1851,7 @@ async function ensureReading(i) {
   const key = lineKey(rl);
   if (key in S.readings || S.reading === key) return;
   S.reading = key;
+  let searchFreshReading = false;
   render();   // say it AT ONCE — the guard above stops this recursing
   msg("reading this part …");
   try {
@@ -1861,6 +1862,10 @@ async function ensureReading(i) {
       // the catalog answer instead of the agent guessing
       code: (rl.providerRefs || {}).jlcpcb || l.ref || undefined});
     S.readings[key] = d.reading;      // null = the agent couldn't be reached
+    // The first uncached interpretation and its first catalog search are one
+    // user intent: the component click. Reopens keep the explicit Search
+    // button so a cached judgment never fires network work behind their back.
+    searchFreshReading = d.cached === false && !!d.reading;
     if (d.reading && d.requirementSpec) {
       rl.spec = d.requirementSpec;
       delete rl.family;
@@ -1876,6 +1881,8 @@ async function ensureReading(i) {
     S.reading = null;
   }
   if (S.selected === i) render();
+  if (searchFreshReading && S.selected === i && !(key in S.results))
+    await doSearch(i);
 }
 
 /* OPENING A FAMILY PART SEARCHES IT. There is nothing for the engineer to type:

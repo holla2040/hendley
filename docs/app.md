@@ -41,8 +41,12 @@ same library the CLI uses:
   current as of that click; when live access is down the cells say `????`
   rather than dressing cached values as current.
   Opening an uncached red/yellow part runs one lazy agent reading, records its
-  requirement, and re-resolves that row. Later opens and Refreshes reuse the
-  cache. Family lines skip generic reading and open their bounded family search.
+  requirement, re-resolves that row, and immediately runs the generated first
+  catalog search. The original component click is the whole first-use action;
+  there is no redundant Search click after waiting for categorization. Later
+  opens and Refreshes reuse the cached reading without automatically firing a
+  new search. Family lines skip generic reading and open their bounded family
+  search.
 - **Selections save themselves.** Tick a checkbox and that part is on the
   approved list; untick it and it is pruned (audited). Pick a radio and that
   part mounts. There is no button to press — it is a database write, and it
