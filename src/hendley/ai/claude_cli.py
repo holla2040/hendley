@@ -175,7 +175,7 @@ zener and TVS; capacitor_type is "unknown" and diode_type is "general_purpose"
 for all of them. Those columns are NOT listed below and MUST NOT be used — a
 term on one returns ZERO parts while looking like it filtered. The part's class
 is catalog.secondType ("Aluminum Electrolytic Capacitors - SMD", "Schottky
-Barrier Diodes (SBD)", "Chip Resistor - Surface Mount"). Read it there. If you
+Diodes", "Chip Resistor - Surface Mount"). Read it there. If you
 need a class you cannot prove, say so in "say" — do not fake it with a flag.
 
 Column traps:
@@ -307,12 +307,11 @@ HOW TO READ IT
   footprint's digits as the measurement. When a diameter is visually supported,
   include it both as a live catalog `Diameter` sieve term (unit `mm`) and as a
   compact discovery token such as `D5`; the token fetches while the catalog
-  parameter proves. Never claim
-  `visualEvidence.boardCrops` gives exact physical width/height for a crop
-  centered on the requested designator. Use that known frame as the preferred
+  parameter proves. `visualEvidence.boardCrops` gives the exact physical
+  width/height for a crop centered on the requested designator. Use that known frame as the preferred
   ruler; the target land is at its center. Do not mistake a neighboring label
-  or footprint for the centered target.
-  a subtype the drawing does not show. State visual cues in the rationale and
+  or footprint for the centered target. Never claim a subtype the drawing does
+  not show. State visual cues in the rationale and
   lower confidence when the symbol is generic or the target cannot be located.
 
 WHAT TO HAND BACK
@@ -320,7 +319,9 @@ WHAT TO HAND BACK
   ("10 uF 50 V aluminium electrolytic, through-hole, D5 x 11 mm, 2 mm pitch").
 - "spec": the canonical key — kind, value, package (CATALOG package),
   qualifier (the ratings: "50V", "X7R", "1%"). Leave value "" if the part
-  genuinely has none (a general-purpose diode); never invent one.
+  genuinely has none (a general-purpose diode); never invent one. Keep kind at
+  the broad canonical family (`diode`, `capacitor`, `resistor`); put Schottky,
+  TVS, Zener and similar subtypes in value/qualifier and executable plan terms.
 - "search": the words that go in the search box — what an engineer would type
   to find this part again. Keep them few and searchable. NEVER put a library
   footprint name ("C-E-5") or the schematic's punctuation ("10uF@50V") in it.
@@ -339,6 +340,14 @@ WHAT TO HAND BACK
   hide valid catalog-class matches before proof.
   Use mode `parametric` when an exact catalog package or a sufficiently narrow
   dense value net is known.
+  A schematic family such as `BAT54` or `1N4148` is an identity constraint, not
+  merely a discovery hint. Put it in coarse FTS discovery and also prove it
+  against the live catalog model with a `componentModel contains` sieve term.
+  Do not add that term for a descriptive rating such as `18V TVS` which is not
+  a model family. FTS accepts an exact package alongside `search`; when a
+  standard package is known, put it in BOTH `net.package` and the package sieve
+  term so discovery narrows before the 100-row cap and proof still remains
+  authoritative.
   When "catalog" is present, build the SIEVE FROM catalog.parameters — one term
   per parameter that genuinely constrains the part, each field spelled VERBATIM
   as the catalog spells it, each unit declared. The engineer sees these terms
@@ -763,10 +772,13 @@ class ClaudeCLIInterpreter:
         crops = [c for c in (visual.get("boardCrops") or [])
                  if str(c.get("designator") or "") == target]
         crop_images = [str(c.get("image")) for c in crops if c.get("image")]
-        board = str(visual.get("boardImage") or "").strip()
-        images = crop_images + ([board] if board else []) + [
-            str(p) for p in (visual.get("images") or [])
-            if str(p).strip() and str(p) != board and str(p) not in crop_images]
+        sheet_images = [str(s.get("image")) for s in (visual.get("sheets") or [])
+                        if s.get("image")]
+        # The complete board adds little once a centered, dimensioned crop is
+        # available, and other components' crops add no evidence for this part.
+        # Keeping the attachment set target-scoped also prevents a multi-sheet
+        # design from exceeding the model transport's request-size limit.
+        images = crop_images + [p for p in sheet_images if p not in crop_images]
         obj = self._ask(READ_PROMPT.format(
             dossier=json.dumps(dossier, indent=2, ensure_ascii=False),
             index_facts=INDEX_FACTS + _class_notes(dossier.get("catalog"))),

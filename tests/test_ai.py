@@ -213,7 +213,7 @@ def test_the_class_note_reaches_the_agent(monkeypatch, tmp_path):
     # with no catalog record to key on, the slug is the honest fallback
     assert "package string" in _class_notes(None, "capacitors")
     # a class nobody has written up gets NOTHING — never a guess
-    assert _class_notes({"secondType": "Schottky Barrier Diodes (SBD)"}) == ""
+    assert _class_notes({"secondType": "Schottky Diodes"}) == ""
 
 
 def test_no_notes_directory_is_silence_not_an_error(monkeypatch, tmp_path):
@@ -240,6 +240,8 @@ def test_documented_catalog_class_vocabulary_is_available_to_unpinned_reads():
     assert "Aluminum Electrolytic Capacitors - SMD" in types
     assert "Aluminum Electrolytic Capacitors - Leaded" in types
     assert "Zener Diodes" in types
+    assert "Schottky Diodes" in types
+    assert "ESD And Surge Protection (TVS/ESD)" in types
 
 
 def test_read_part_can_choose_class_narrowing_keyword_discovery(monkeypatch):
@@ -258,6 +260,32 @@ def test_read_part_can_choose_class_narrowing_keyword_discovery(monkeypatch):
 
     assert got["plan"]["mode"] == "fts"
     assert got["plan"]["category"] == "components"
+
+
+def test_part_read_attaches_only_target_crop_and_schematic_sheets(monkeypatch):
+    seen = {}
+
+    def answer(_self, _prompt, **kwargs):
+        seen.update(kwargs)
+        return {"is": "diode", "spec": {"kind": "diode", "value": "",
+                "package": "SOD-323", "qualifier": ""}, "search": "diode",
+                "plan": {"mode": "parametric", "category": "diodes",
+                         "net": {"package": "SOD-323"}, "sieve": []},
+                "confidence": 0.8}
+
+    monkeypatch.setattr(ClaudeCLIInterpreter, "_ask", answer)
+    ClaudeCLIInterpreter().read_part({"visualEvidence": {
+        "designator": "D3",
+        "sheets": [{"image": "/tmp/sheet-1.png"},
+                   {"image": "/tmp/sheet-2.png"}],
+        "boardImage": "/tmp/full-board.png",
+        "boardCrops": [{"designator": "C3", "image": "/tmp/C3.png"},
+                       {"designator": "D3", "image": "/tmp/D3.png"}],
+        "images": ["/tmp/full-board.png", "/tmp/C3.png", "/tmp/D3.png"],
+    }})
+
+    assert seen["images"] == [
+        "/tmp/D3.png", "/tmp/sheet-1.png", "/tmp/sheet-2.png"]
 
 
 def test_the_shipped_chip_resistor_note_is_wired_up():

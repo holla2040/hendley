@@ -6,10 +6,12 @@ import hashlib
 import json
 import os
 import re
+import struct
 import time
+import zlib
 from pathlib import Path
 
-VISUAL_SCHEMA_VERSION = 2
+VISUAL_SCHEMA_VERSION = 3
 DEFAULT_WINDOWS_DIR = r"C:\tmp\hendley-visual"
 DEFAULT_LOCAL_DIR = "~/tmp/hendley-visual"
 
@@ -38,9 +40,59 @@ def _fresh_export(path: Path, fire) -> bool:
     deadline = time.monotonic() + 15
     while time.monotonic() < deadline:
         if path.is_file() and path.stat().st_size:
+            _recompress_png(path)
             return True
         time.sleep(0.05)
     return False
+
+
+def _recompress_png(path: Path) -> None:
+    """Losslessly recompress Fusion's unusually large PNG exports in place.
+
+    Fusion emits normal PNG scanlines but uses little effective DEFLATE
+    compression: one schematic sheet can exceed 25 MB and a multi-sheet Codex
+    request can be rejected before inference. Recompress the existing IDAT
+    stream without decoding or changing a pixel. Unknown/malformed PNGs stay
+    untouched so visual capture remains best-effort.
+    """
+    try:
+        data = path.read_bytes()
+        if not data.startswith(b"\x89PNG\r\n\x1a\n"):
+            return
+        pos = 8
+        chunks: list[tuple[bytes, bytes]] = []
+        idat = bytearray()
+        first_idat: int | None = None
+        while pos + 12 <= len(data):
+            size = struct.unpack(">I", data[pos:pos + 4])[0]
+            kind = data[pos + 4:pos + 8]
+            end = pos + 12 + size
+            if end > len(data):
+                return
+            payload = data[pos + 8:pos + 8 + size]
+            if kind == b"IDAT":
+                if first_idat is None:
+                    first_idat = len(chunks)
+                idat.extend(payload)
+            else:
+                chunks.append((kind, payload))
+            pos = end
+            if kind == b"IEND":
+                break
+        if first_idat is None or not idat:
+            return
+        packed = zlib.compress(zlib.decompress(bytes(idat)), level=9)
+        chunks.insert(first_idat, (b"IDAT", packed))
+        out = bytearray(data[:8])
+        for kind, payload in chunks:
+            out.extend(struct.pack(">I", len(payload)))
+            out.extend(kind)
+            out.extend(payload)
+            out.extend(struct.pack(">I", zlib.crc32(kind + payload) & 0xFFFFFFFF))
+        if len(out) < len(data):
+            path.write_bytes(out)
+    except (OSError, ValueError, zlib.error, struct.error):
+        return
 
 
 def _settle_eagle(bridge, command: str, seconds: float = 0.75) -> None:

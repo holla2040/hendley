@@ -233,6 +233,8 @@ def _sift(sieve: list[dict], row: dict, cand: dict) -> list[dict]:
                         if _same(k, field) or (alias and _same(k, alias))), None)
         if catalog is None and field in ("firstTypeName", "secondTypeName"):
             catalog = cand.get(field)
+        if catalog is None and field == "componentModel":
+            catalog = cand.get("model")
         entry: dict[str, Any] = {"field": field, "op": op, "unit": unit,
                                  "catalog": catalog is not None}
         if want is not None:
@@ -273,6 +275,8 @@ def _field(field: str, row: dict, cand: dict) -> Any:
     The index's ``attributes`` blob is deliberately not consulted; see the
     module docstring. None means nothing we hold can prove the term — and
     unprovable is a miss, never a pass."""
+    if field == "componentModel":
+        return cand.get("model")
     if field not in STRUCTURAL and cand.get(field) is not None:
         return cand[field]
     for key, value in row.items():

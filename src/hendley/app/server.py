@@ -58,7 +58,7 @@ from .ui import PAGE_HTML
 DEFAULT_OUTDIR = "~/tmp/hendley_output"
 DEFAULT_DRAFT_PATH = "~/.hendley/draft.json"
 DEFAULT_CACHE_PATH = "~/.hendley/design-cache.json"
-READ_PLAN_SCHEMA_VERSION = 7
+READ_PLAN_SCHEMA_VERSION = 8
 
 
 class PackageListing(list):

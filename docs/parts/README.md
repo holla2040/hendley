@@ -30,7 +30,7 @@ A note opens with a fenced `applies-to` block:
 - **`catalogType`** — the live catalog's own `secondTypeName`. This is the only
   honest name for what a part *is*, and it is what a note should key on. Repeat
   the line for each class the note covers. Real examples:
-  `Aluminum Electrolytic Capacitors - SMD`, `Schottky Barrier Diodes (SBD)`,
+  `Aluminum Electrolytic Capacitors - SMD`, `Schottky Diodes`,
   `Zener Diodes`, `Chip Resistor - Surface Mount`,
   `ESD And Surge Protection (TVS/ESD)`.
 - **`category`** — the jlcsearch slug (`capacitors`, `diodes`, `resistors`, …).
@@ -94,9 +94,12 @@ than silence, because the agent will believe it.
 - [Zener diodes and local voltage labels](zener-diodes.md) — the shop aliases
   `VZ10`, `10V0`, and `10.0`, why they are specifications rather than families,
   and the catalog-class boundary that keeps Schottky/TVS parts separate.
+- [Schottky and TVS diodes](schottky-and-tvs-diodes.md) — visual/text intent,
+  exact live catalog class proof, and the electrical choices a family label
+  does not establish.
 
 ## Still to write
 
 - MOSFETs
-- The remaining diode families — small-signal, Schottky, avalanche/TVS — which
-  the catalog's `secondTypeName` distinguishes and the index does not.
+- Small-signal and other remaining diode families whose exact live catalog
+  `secondTypeName` values have not yet been measured and documented.

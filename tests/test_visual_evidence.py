@@ -1,7 +1,7 @@
 from pathlib import Path
 
 from hendley.ingestion.fusion.bridge import FusionBridge
-from hendley.ingestion.fusion.visual import capture_visual_evidence
+from hendley.ingestion.fusion.visual import _recompress_png, capture_visual_evidence
 
 
 class ExportBridge:
@@ -38,7 +38,7 @@ def test_capture_enumerates_existing_sheets_and_exports_board(tmp_path, monkeypa
     assert any("WINDOW (10 61) (22 73);" in c for c in bridge.commands)
     assert [s["number"] for s in got["sheets"]] == [1, 2]
     assert len(got["images"]) == 4 and len(got["digest"]) == 64
-    assert got["schemaVersion"] == 2
+    assert got["schemaVersion"] == 3
     assert got["boardCrops"][0]["widthMm"] == 12
 
 
@@ -69,3 +69,27 @@ def test_eagle_command_preserves_windows_path_in_generated_python():
     bridge.run_eagle(r"EXPORT IMAGE C:\tmp\hendley-visual\sheet-1.png 300;")
 
     assert r"C:\\tmp\\hendley-visual\\sheet-1.png" in bridge.source
+
+
+def test_fusion_png_is_losslessly_recompressed(tmp_path):
+    import struct
+    import zlib
+
+    path = tmp_path / "sheet.png"
+    raw = b"\x00" + b"\xff\xff\xff" * 1000
+    chunks = []
+    for kind, payload in (
+        (b"IHDR", struct.pack(">IIBBBBB", 1000, 1, 8, 2, 0, 0, 0)),
+        (b"IDAT", zlib.compress(raw, level=0)),
+        (b"IEND", b""),
+    ):
+        chunks.append(struct.pack(">I", len(payload)) + kind + payload
+                      + struct.pack(">I", zlib.crc32(kind + payload) & 0xFFFFFFFF))
+    path.write_bytes(b"\x89PNG\r\n\x1a\n" + b"".join(chunks))
+    before = path.read_bytes()
+
+    _recompress_png(path)
+
+    after = path.read_bytes()
+    assert len(after) < len(before) / 10
+    assert after.startswith(b"\x89PNG\r\n\x1a\n")

@@ -140,6 +140,34 @@ def test_catalog_class_intent_is_proved_from_live_verified_type():
     assert got["misses"][0]["failed"][0]["field"] == "secondTypeName"
 
 
+def test_catalog_model_family_is_proved_from_live_verified_model():
+    src = LyingIndex([
+        {"code": "C_BAT", "package": "SOD-323"},
+        {"code": "C_OTHER", "package": "SOD-323"},
+    ])
+    original_verify = src.verify
+
+    def verify(refs):
+        facts = original_verify(refs)
+        facts["C_BAT"].raw["componentModel"] = "BAT54WS"
+        facts["C_OTHER"].raw["componentModel"] = "1N4148WS"
+        return facts
+
+    src.verify = verify
+    got = run_search(src, {
+        "mode": "fts", "category": "components",
+        "net": {"search": "BAT54", "package": "SOD-323"},
+        "sieve": [
+            {"field": "package", "op": "eq", "value": "SOD-323"},
+            {"field": "componentModel", "op": "contains", "value": "BAT54"},
+        ],
+    })
+
+    assert [c["code"] for c in got["candidates"]] == ["C_BAT"]
+    assert got["candidates"][0]["proof"][1]["catalog"] is True
+    assert got["misses"][0]["failed"][0]["field"] == "componentModel"
+
+
 def test_a_unit_the_agent_did_not_declare_is_never_guessed_at():
     # "100mW" is text, not a number. Coercing it unasked would silently decide
     # 100mW >= 250. With no unit declared it stays uncheckable — a miss.
