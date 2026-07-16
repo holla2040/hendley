@@ -79,6 +79,7 @@ class DesignPart:
     # 7.50" — a 300-mil body. Without this a ULN2003 in SO16 is a coin-flip
     # between SOIC-16 (3.9mm) and SO-16-208mil, and they are different parts.
     footprint_headline: str | None = None
+    library_identity: dict | None = None
     attributes: dict[str, str] = field(default_factory=dict)  # raw Fusion attrs
 
     @classmethod
@@ -94,6 +95,8 @@ class DesignPart:
             package=d.get("package"),
             footprint=d.get("footprint"),
             footprint_headline=d.get("footprintHeadline"),
+            library_identity=(dict(d["libraryIdentity"])
+                              if isinstance(d.get("libraryIdentity"), dict) else None),
             attributes=dict(d.get("attributes") or {}),
         )
 

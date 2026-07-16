@@ -55,7 +55,7 @@ from pathlib import Path
 
 from ..domain.model import SpecKey
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 # Interpretation provenance, weakest → strongest. A stronger source
 # overwrites a weaker one; never the reverse (a user's confirmation is
@@ -129,6 +129,33 @@ _SCHEMA_STATEMENTS = (
 )""",
     """CREATE UNIQUE INDEX IF NOT EXISTS ux_interpretation
   ON interpretations(scope, kind_hint, raw_value, footprint)""",
+    """CREATE TABLE IF NOT EXISTS selection_search_seeds (
+  id              INTEGER PRIMARY KEY,
+  exact_key       TEXT NOT NULL UNIQUE,
+  similarity_key  TEXT NOT NULL,
+  identity_json   TEXT NOT NULL,
+  phrase          TEXT NOT NULL,
+  category        TEXT NOT NULL,
+  sieve_json      TEXT NOT NULL,
+  canonical_spec  TEXT,
+  active          INTEGER NOT NULL DEFAULT 1,
+  validated_at    TEXT NOT NULL,
+  last_design     TEXT
+)""",
+    """CREATE INDEX IF NOT EXISTS ix_search_seed_similar
+  ON selection_search_seeds(similarity_key, active, validated_at DESC)""",
+    """CREATE TABLE IF NOT EXISTS selection_search_evidence (
+  id              INTEGER PRIMARY KEY,
+  seed_id         INTEGER NOT NULL REFERENCES selection_search_seeds(id),
+  event           TEXT NOT NULL,
+  at              TEXT NOT NULL,
+  design          TEXT,
+  selected_ref    TEXT,
+  receipt_id      TEXT,
+  detail          TEXT
+)""",
+    """CREATE INDEX IF NOT EXISTS ix_search_evidence_seed
+  ON selection_search_evidence(seed_id, id)""",
     """CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)""",
 )
 
@@ -201,6 +228,9 @@ def open_db(path: str | Path | None = None) -> sqlite3.Connection:
             version = 3
         if version == 3:
             _run_in_transaction(conn, _migrate_v3_to_v4_body)
+            version = 4
+        if version == 4:
+            _run_in_transaction(conn, _migrate_v4_to_v5_body)
     else:
         for stmt in _SCHEMA_STATEMENTS:
             conn.execute(stmt)
@@ -337,6 +367,14 @@ def _migrate_v3_to_v4_body(conn: sqlite3.Connection) -> None:
         if "interpretations" in stmt or "ux_interpretation" in stmt:
             conn.execute(stmt)
     conn.execute("UPDATE meta SET value='4' WHERE key='schema_version'")
+
+
+def _migrate_v4_to_v5_body(conn: sqlite3.Connection) -> None:
+    """v4 → v5: reusable search intent and its append-only audit evidence."""
+    for stmt in _SCHEMA_STATEMENTS:
+        if "selection_search_" in stmt or "ix_search_" in stmt:
+            conn.execute(stmt)
+    conn.execute("UPDATE meta SET value='5' WHERE key='schema_version'")
 
 
 def _now() -> str:
@@ -867,6 +905,86 @@ def delete_interpretation(
     return bool(cur.rowcount)
 
 
+def _seed_to_dict(row: sqlite3.Row) -> dict:
+    return {
+        "id": row["id"], "identity": json.loads(row["identity_json"]),
+        "phrase": row["phrase"], "category": row["category"],
+        "sieve": json.loads(row["sieve_json"]),
+        "canonicalSpec": (json.loads(row["canonical_spec"])
+                          if row["canonical_spec"] else None),
+        "active": bool(row["active"]), "validatedAt": row["validated_at"],
+        "lastDesign": row["last_design"],
+    }
+
+
+def lookup_search_seeds(conn: sqlite3.Connection, exact_key: str,
+                        similarity_key: str, limit: int = 3) -> dict:
+    exact = conn.execute(
+        "SELECT * FROM selection_search_seeds WHERE exact_key=? AND active=1",
+        (exact_key,),
+    ).fetchone()
+    if exact:
+        return {"match": "exact", "seed": _seed_to_dict(exact), "suggestions": []}
+    rows = conn.execute(
+        "SELECT * FROM selection_search_seeds "
+        "WHERE similarity_key=? AND active=1 AND exact_key<>? "
+        "ORDER BY validated_at DESC, id DESC LIMIT ?",
+        (similarity_key, exact_key, limit),
+    ).fetchall()
+    return {"match": "similar" if rows else "none", "seed": None,
+            "suggestions": [_seed_to_dict(r) for r in rows]}
+
+
+def validate_search_seed(conn: sqlite3.Connection, *, exact_key: str,
+                         similarity_key: str, identity: dict, phrase: str,
+                         category: str, sieve: list, canonical_spec: dict | None,
+                         design: str | None, selected_ref: str | None,
+                         receipt_id: str, event: str) -> dict:
+    """Replace/reactivate the current exact seed; evidence is append-only."""
+    now = _now()
+    with conn:
+        conn.execute(
+            "INSERT INTO selection_search_seeds "
+            "(exact_key, similarity_key, identity_json, phrase, category, sieve_json, "
+            " canonical_spec, active, validated_at, last_design) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?) "
+            "ON CONFLICT(exact_key) DO UPDATE SET similarity_key=excluded.similarity_key, "
+            "identity_json=excluded.identity_json, phrase=excluded.phrase, "
+            "category=excluded.category, sieve_json=excluded.sieve_json, "
+            "canonical_spec=excluded.canonical_spec, active=1, "
+            "validated_at=excluded.validated_at, last_design=excluded.last_design",
+            (exact_key, similarity_key, json.dumps(identity, sort_keys=True), phrase,
+             category, json.dumps(sieve, sort_keys=True),
+             json.dumps(canonical_spec, sort_keys=True) if canonical_spec else None,
+             now, design),
+        )
+        row = conn.execute(
+            "SELECT * FROM selection_search_seeds WHERE exact_key=?", (exact_key,)
+        ).fetchone()
+        conn.execute(
+            "INSERT INTO selection_search_evidence "
+            "(seed_id,event,at,design,selected_ref,receipt_id,detail) "
+            "VALUES (?,?,?,?,?,?,?)",
+            (row["id"], event, now, design, selected_ref, receipt_id,
+             json.dumps({"phrase": phrase, "category": category}, sort_keys=True)),
+        )
+    return _seed_to_dict(row)
+
+
+def forget_search_seed(conn: sqlite3.Connection, seed_id: int,
+                       design: str | None = None) -> bool:
+    with conn:
+        row = conn.execute("SELECT id FROM selection_search_seeds WHERE id=?", (seed_id,)).fetchone()
+        if not row:
+            return False
+        conn.execute("UPDATE selection_search_seeds SET active=0 WHERE id=?", (seed_id,))
+        conn.execute(
+            "INSERT INTO selection_search_evidence (seed_id,event,at,design) VALUES (?,?,?,?)",
+            (seed_id, "forgotten", _now(), design),
+        )
+    return True
+
+
 class PartsDb:
     """The SQLite house-parts store behind the KnowledgeStore contract.
 
@@ -930,3 +1048,12 @@ class PartsDb:
                               source: str | None = None) -> bool:
         return delete_interpretation(self.conn, scope, kind_hint, raw_value,
                                      footprint, source=source)
+
+    def lookup_search_seeds(self, exact_key: str, similarity_key: str) -> dict:
+        return lookup_search_seeds(self.conn, exact_key, similarity_key)
+
+    def validate_search_seed(self, **kwargs) -> dict:
+        return validate_search_seed(self.conn, **kwargs)
+
+    def forget_search_seed(self, seed_id: int, design: str | None = None) -> bool:
+        return forget_search_seed(self.conn, seed_id, design)

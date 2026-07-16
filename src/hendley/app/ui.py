@@ -329,6 +329,8 @@ const S = {
   acks: {},            // lineKey -> the unnamed part was looked at (draft)
   results: {},         // lineKey ("" = overview) -> the last search's result
   familyTried: {},     // lineKey -> the family search has been fired ONCE.
+  searchHistory: {},   // lineKey -> lookup/provenance/suggestions for this identity
+  historyBusy: {},     // lineKey -> request token; guards component navigation
                        // Kept apart from `results` because a FAILED family search
                        // leaves no result, and "no result" is exactly the
                        // condition that fires it — without this it would retry on
@@ -415,6 +417,8 @@ async function hydrate(data, readAt) {
   S.typed = {};
   S.staged = {};
   S.familyTried = {};   // a fresh read of the design searches its families afresh
+  S.searchHistory = {};
+  S.historyBusy = {};
   if (d.draft) {
     if (d.draft.productionQuantity) $("qty").value = d.draft.productionQuantity;
     const valid = new Set(S.requirements.lines.map(lineKey));
@@ -1074,6 +1078,8 @@ function seedFor(i) {
   const key = lineKey(rl);
   if (S.typed[key]) return S.typed[key];
   if (S.searches[key]) return S.searches[key];
+  const history = S.searchHistory[key];
+  if (history && history.seed) return history.seed.phrase || "";
   const read0 = S.readings[key];
   if (read0 && read0.search) return read0.search;
   // A pure FAMILY line's box stays EMPTY, and that is the point: empty means
@@ -1168,18 +1174,39 @@ function searchHtml(i) {
   const more = noTypeHintHtml(i, key) + readingHtml(i, key) +
     queryHtml(i, key) + (i == null ? "" : recordedHtml(i));
   // ONE line: what kind of part · what you want · Search
+  const history = i == null ? "" : historyHtml(i, key);
   return '<div class="sect search"><p class="eyebrow">Search in-stock parts</p>' +
     '<div class="form">' + catSelectHtml(i, key) + field +
     '<button class="btn solid" id="terms-search" data-line="' +
     (i == null ? -1 : i) + '"' +
     (busy || reading ? ' aria-disabled="true"' : "") + ">" + label +
     "</button></div>" +
-    (more
+    history + (more
       ? '<details class="more"' + (S.showSearchMore ? " open" : "") +
         "><summary>the actual search — what it read, every term, add a term" +
         "</summary>" + more + "</details>"
       : "") +
     "</div>";
+}
+
+function historyHtml(i, key) {
+  const h = S.searchHistory[key];
+  if (!h) return "";
+  if (h.seed) return '<p class="note history">Last used ' +
+    esc(new Date(h.seed.validatedAt).toLocaleString()) +
+    (h.seed.lastDesign ? " in “" + esc(h.seed.lastDesign) + "”" : "") +
+    ' · fresh catalog results only ' +
+    '<button class="btn mini" data-forget-seed="' + h.seed.id +
+    '" data-line="' + i + '">Forget</button>' +
+    (h.catalogError ? ' · catalog unavailable: ' + esc(h.catalogError) +
+      ' <button class="btn mini" data-retry-seed="1" data-line="' + i +
+      '">Retry</button>' : '') + '</p>';
+  if ((h.suggestions || []).length) return '<div class="note history">Similar saved searches: ' +
+    h.suggestions.slice(0, 3).map(s => '<button class="btn mini" data-use-seed="' +
+      s.id + '" data-line="' + i + '">' + esc(s.phrase) + '</button> ' +
+      '<span>' + esc(s.reason || "similar library identity") + '</span>').join(" · ") +
+    '</div>';
+  return "";
 }
 
 /* what the agent read this part to BE, and where it got it — so a reading
@@ -1853,6 +1880,33 @@ function wireMain() {
   document.querySelectorAll("#main [data-act]").forEach(btn => {
     btn.onclick = () => clearOverride(S.selected);
   });
+  document.querySelectorAll("#main [data-forget-seed]").forEach(btn => {
+    btn.onclick = async () => {
+      const i = parseInt(btn.dataset.line, 10), key = lineKey(S.requirements.lines[i]);
+      await run("forgetting search", async () => {
+        await api("/api/search-seed/forget", {seedId: parseInt(btn.dataset.forgetSeed, 10),
+          requirements: S.requirements});
+        delete S.searchHistory[key]; delete S.results[key];
+        render(); ensureSearchHistory(i);
+      });
+    };
+  });
+  document.querySelectorAll("#main [data-use-seed]").forEach(btn => {
+    btn.onclick = () => {
+      const i = parseInt(btn.dataset.line, 10), key = lineKey(S.requirements.lines[i]);
+      const seed = (S.searchHistory[key].suggestions || []).find(
+        s => s.id === parseInt(btn.dataset.useSeed, 10));
+      if (!seed) return;
+      S.typed[key] = seed.phrase; S.catPick[key] = seed.category; render();
+      doSearch(i, {category: seed.category, sieve: seed.sieve, say: seed.phrase});
+    };
+  });
+  document.querySelectorAll("#main [data-retry-seed]").forEach(btn => {
+    btn.onclick = () => {
+      const i = parseInt(btn.dataset.line, 10), key = lineKey(S.requirements.lines[i]);
+      delete S.searchHistory[key]; ensureSearchHistory(i);
+    };
+  });
   const dnp = $("dnp-btn");
   if (dnp) dnp.onclick = () => {
     S.manualDnp[lineKey(S.requirements.lines[S.selected])] = true;
@@ -1864,7 +1918,55 @@ function wireMain() {
     run("re-resolving", resolveNow);
   };
   if (S.selected != null) {
-    ensureReading(S.selected); ensureAvl(S.selected); ensureFamily(S.selected);
+    ensureSearchHistory(S.selected); ensureAvl(S.selected);
+  }
+}
+
+/* Search memory is consulted before the visual reader. Exact identity reuses
+   only intent and immediately asks the live catalog again; suggestions never
+   suppress the normal reader or fire a search by themselves. */
+async function ensureSearchHistory(i) {
+  const rl = S.requirements.lines[i];
+  if (!rl || S.resolution.lines[i].dnp) return;
+  const key = lineKey(rl);
+  if (key in S.searchHistory || S.historyBusy[key]) return;
+  const token = String(Date.now()) + Math.random();
+  S.historyBusy[key] = token;
+  const typedBefore = Object.prototype.hasOwnProperty.call(S.typed, key)
+    ? S.typed[key] : undefined;
+  try {
+    const h = await api("/api/search-seed/lookup", {
+      lineIndex: i, requirements: S.requirements});
+    if (S.historyBusy[key] !== token || lineKey(S.requirements.lines[i]) !== key) return;
+    S.searchHistory[key] = h;
+    if (h.match === "exact" && h.seed &&
+        (typedBefore === undefined || S.typed[key] === typedBefore)) {
+      S.catPick[key] = h.seed.category;
+      render();
+      S.busySearch = key;
+      try {
+        const result = await api("/api/search", {
+          terms: h.seed.phrase, lineIndex: i, requirements: S.requirements,
+          category: h.seed.category, sieve: h.seed.sieve,
+          say: h.seed.phrase});
+        if (S.historyBusy[key] === token &&
+            (typedBefore === undefined || S.typed[key] === typedBefore))
+          S.results[key] = result;
+      } catch (e) {
+        if (S.historyBusy[key] === token) h.catalogError = e.message;
+      } finally { if (S.busySearch === key) S.busySearch = null; }
+      if (S.selected === i) render();
+      return; // exact identity deliberately skips Codex/visual planning
+    }
+    if (S.selected === i) render();
+    await ensureReading(i);
+    await ensureFamily(i);
+  } catch (e) {
+    S.searchHistory[key] = {match: "none", suggestions: []};
+    await ensureReading(i);
+    await ensureFamily(i);
+  } finally {
+    if (S.historyBusy[key] === token) delete S.historyBusy[key];
   }
 }
 
@@ -2057,6 +2159,22 @@ function modelFor(i, code) {
   return c ? c.model : null;
 }
 
+async function validateSearchSelection(i, action, code) {
+  const rl = S.requirements.lines[i], key = lineKey(rl), r = S.results[key] || {};
+  const receipt = r.searchReceipt && r.searchReceipt.id;
+  if (!receipt || !(r.candidates || []).some(c => c.code === code)) return;
+  try {
+    const v = await api("/api/search-seed/validate", {
+      receipt: receipt, action: action, selectedRef: code,
+      canonicalSpec: rl.spec || undefined, lineIndex: i,
+      requirements: S.requirements});
+    S.searchHistory[key] = {match: "exact", seed: v.seed, suggestions: []};
+  } catch (e) {
+    // Missing/modified/mixed library identity is intentionally suggestion-only;
+    // the part selection itself has already saved and must remain successful.
+  }
+}
+
 /* SAVE THE SELECTION YOU JUST MADE. Fires on the tick itself, not on a button:
    first pick -> rank 1; a checked part joins the approved list; an unchecked one
    is pruned from it (audited); an overriding radio pins this order only.
@@ -2099,6 +2217,7 @@ async function applyStaged(i, ack) { await run("saving", async () => {
     const named = await api("/api/key", {
       lineIndex: i, requirements: S.requirements,
       terms: S.typed[key] || S.searches[key] || "",   // YOUR words, if any
+      receipt: (((S.results[key] || {}).searchReceipt || {}).id),
       part: candFor(i, pick) || {code: pick}});
     rekeyed = JSON.stringify(named.spec) !== JSON.stringify(rl.spec);
     rl.spec = named.spec;
@@ -2152,6 +2271,13 @@ async function applyStaged(i, ack) { await run("saving", async () => {
   let approved = null;
   if (approvals.length)
     approved = await api("/api/approve", {approvals: approvals});
+  // History follows the successful save. Removals, failed saves, automatic
+  // resolution, and rejected candidates never reach this path.
+  if (st.radio && found.some(c => c.code === st.radio))
+    await validateSearchSelection(i, "mounted", st.radio);
+  for (const a of approvals)
+    if (a.lcsc !== st.radio && found.some(c => c.code === a.lcsc))
+      await validateSearchSelection(i, "alternate", a.lcsc);
   // A backup checkbox on an already-resolved line cannot change what mounts.
   // The row was live-verified by the search that displayed the checkbox, so
   // record and show that snapshot immediately: no resolve and no second JLC

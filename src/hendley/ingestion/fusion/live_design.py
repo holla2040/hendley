@@ -95,7 +95,8 @@ def is_dnp(part: DesignPart) -> bool:
 
 
 def part_from_row(part_row: dict, attrs: dict[str, str],
-                  footprint: dict | None = None) -> DesignPart:
+                  footprint: dict | None = None,
+                  library_identity: dict | None = None) -> DesignPart:
     """Map a Part row + its attributes onto the :class:`DesignPart` contract.
 
     The MPN is the ``MPN`` attribute and **only** that. The legacy ``MP`` is NOT
@@ -113,6 +114,7 @@ def part_from_row(part_row: dict, attrs: dict[str, str],
         package=attrs.get("PACKAGE"),
         footprint=footprint.get("name"),
         footprint_headline=footprint.get("headline"),
+        library_identity=library_identity,
         quantity=1,
         attributes=dict(attrs),
     )
@@ -165,6 +167,27 @@ def extract_schematic(bridge: FusionBridge) -> tuple[str, list[DesignPart]]:
     device_footprint = {d["object_id"]: bool(d.get("package_object_id")) for d in devices}
     device_package = {d["object_id"]: packages.get(d.get("package_object_id"))
                       for d in devices}
+    def stable_identity(device: dict, package: dict | None) -> dict | None:
+        """Keep Fusion library identity while deliberately dropping object ids."""
+        aliases = {
+            "deviceSetUrn": ("device_set_urn", "deviceSetUrn", "deviceset_urn", "urn"),
+            "libraryVersion": ("library_version", "libraryVersion", "version"),
+            "deviceVariant": ("name", "device_name", "deviceName", "variant"),
+            "packageVariant": ("package_name", "packageName"),
+            "libraryName": ("library_name", "libraryName"),
+            "locallyModified": ("locally_modified", "locallyModified", "modified"),
+        }
+        out = {}
+        for target, names in aliases.items():
+            for name in names:
+                if device.get(name) not in (None, ""):
+                    out[target] = device[name]
+                    break
+        if package:
+            out.setdefault("packageVariant", package.get("name"))
+        # A URN is the minimum stable global identity. Names alone are local.
+        return out if out.get("deviceSetUrn") else None
+    device_rows = {d["object_id"]: d for d in devices}
     parts: list[DesignPart] = []
     for row in part_rows:
         attr_rows = bridge.read_all(
@@ -174,8 +197,10 @@ def extract_schematic(bridge: FusionBridge) -> tuple[str, list[DesignPart]]:
         attrs = {a["name"]: a["value"] for a in attr_rows}
         has_footprint = device_footprint.get(row.get("device_object_id"), False)
         if not is_pseudo_part(row, attrs, has_footprint):
-            parts.append(part_from_row(row, attrs,
-                                       device_package.get(row.get("device_object_id"))))
+            device = device_rows.get(row.get("device_object_id"), {})
+            package = device_package.get(row.get("device_object_id"))
+            parts.append(part_from_row(row, attrs, package,
+                                       stable_identity(device, package)))
     parts.sort(key=lambda p: natural_key(p.designator))
     return design, parts
 

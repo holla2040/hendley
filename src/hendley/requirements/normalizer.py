@@ -25,6 +25,8 @@ mode-less lines — a visible decision downstream, never a silent guess.
 
 from __future__ import annotations
 
+import json
+
 from ..domain.model import RequirementLine, RequirementsBom, SpecKey
 from ..ingestion.fusion.live_design import Placement, is_dnp, natural_key
 from ..ingestion.fusion.parts_json import DesignPart
@@ -129,6 +131,7 @@ def requirements_from_design(
                                and not mpn and spec is None else "")
         key = (part.jlc_code or "", mpn or "", family or "", spec, comment or "",
                footprint, dnp, tuple(sorted(attributes.items())),
+               json.dumps(part.library_identity, sort_keys=True) if part.library_identity else "",
                unresolved_instance)
         g = groups.setdefault(key, {"part": part, "designators": [], "dnp": dnp,
                                     "footprint": footprint, "comment": comment,
@@ -148,6 +151,7 @@ def requirements_from_design(
             comment=g["comment"],
             footprint=g["footprint"] or None,
             footprint_headline=part.footprint_headline,
+            library_identity=part.library_identity,
             attributes=g["attributes"],
             family=g["family"],
             spec=g["spec"],
