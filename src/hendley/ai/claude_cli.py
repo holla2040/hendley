@@ -279,7 +279,7 @@ HOW TO READ IT
   A library footprint name is NOT a catalog package. It never goes in a
   query — it would match nothing. Use the catalog package if you have one;
   otherwise normalize the footprint if it plainly denotes a standard package
-  ("R-0603" → "0603", "D-SOD323" → "SOD-323"), and if it does not, leave the
+  ("R-0603" → "0603", "D-SOD323" → "SOD-323", `SOT23-3` → `SOT-23`), and if it does not, leave the
   package OUT of the query entirely and say what it implies as sieve terms
   instead (is_polarized, is_surface_mount, mounting_style ...).
 - Digits in a library footprint name are not measurements unless the library
@@ -588,7 +588,8 @@ def _term(p: Any) -> dict | None:
     return term
 
 
-def _class_notes(catalog: dict | None, category: str | None = None) -> str:
+def _class_notes(catalog: dict | None, category: str | None = None,
+                 designator: str | None = None) -> str:
     """What this shop knows about THIS class of part (``docs/parts/``).
 
     Every part class has its own traps, and no prompt can carry them all. The
@@ -596,7 +597,8 @@ def _class_notes(catalog: dict | None, category: str | None = None) -> str:
     written up gets nothing, and the agent stays conservative rather than
     guessing. See ``partnotes.py``.
     """
-    note = note_for((catalog or {}).get("secondType"), category)
+    note = note_for((catalog or {}).get("secondType"), category,
+                    designator=designator)
     if not note:
         return ""
     vocabulary = ""
@@ -781,7 +783,9 @@ class ClaudeCLIInterpreter:
         images = crop_images + [p for p in sheet_images if p not in crop_images]
         obj = self._ask(READ_PROMPT.format(
             dossier=json.dumps(dossier, indent=2, ensure_ascii=False),
-            index_facts=INDEX_FACTS + _class_notes(dossier.get("catalog"))),
+            index_facts=INDEX_FACTS + _class_notes(
+                dossier.get("catalog"),
+                designator=str((dossier.get("schematic") or {}).get("prefix") or ""))),
             images=images)
         if obj is None:
             return None

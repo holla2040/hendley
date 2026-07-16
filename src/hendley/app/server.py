@@ -58,7 +58,7 @@ from .ui import PAGE_HTML
 DEFAULT_OUTDIR = "~/tmp/hendley_output"
 DEFAULT_DRAFT_PATH = "~/.hendley/draft.json"
 DEFAULT_CACHE_PATH = "~/.hendley/design-cache.json"
-READ_PLAN_SCHEMA_VERSION = 8
+READ_PLAN_SCHEMA_VERSION = 11
 
 
 class PackageListing(list):
@@ -321,6 +321,13 @@ class HendleyApp:
         try:
             bridge = self._bridge_factory(body.get("fusionHost") or self.fusion_host)
             design, parts = extract_schematic(bridge)
+            # Capture every schematic sheet before BOARD. Some Fusion MCP
+            # builds cannot execute EDIT after entering board context.
+            try:
+                from ..ingestion.fusion.visual import capture_visual_evidence
+                visual = capture_visual_evidence(bridge, design)
+            except Exception:
+                visual = None
             placements = extract_board(bridge)
         except Exception as exc:  # bridge errors are operational, not bugs
             raise ApiError(f"Fusion read failed: {exc}", status=502)
@@ -328,7 +335,9 @@ class HendleyApp:
         # Refresh is a design read, never an agent sweep. Deterministic specs
         # and cached judgments apply immediately; an uncached yellow/red line is
         # read only when the engineer opens that part.
-        uninterpreted = self._interpret_lines(requirements, consult_interpreter=False)
+        uninterpreted = self._interpret_lines(
+            requirements, consult_interpreter=False,
+            visual_available=bool(visual))
         out = {
             "requirements": requirements.to_dict(),
             "uninterpreted": uninterpreted,
@@ -340,14 +349,14 @@ class HendleyApp:
         # Local image export contains no model call. It is best-effort evidence
         # consumed only when an unresolved part is opened through /api/read.
         try:
-            from ..ingestion.fusion.visual import capture_visual_evidence
+            from ..ingestion.fusion.visual import add_board_crops
             unresolved = {d for row in uninterpreted
                           for d in row.get("designators", [])}
             targets = [p for p in out["placements"]
                        if p["designator"] in unresolved]
-            visual = capture_visual_evidence(bridge, design, targets=targets)
+            visual = add_board_crops(bridge, visual, targets)
         except Exception:
-            visual = None
+            pass
         if visual:
             visual["placements"] = out["placements"]
             out["visualEvidence"] = visual
@@ -380,7 +389,9 @@ class HendleyApp:
         except ValueError:
             return {"cached": None}
         old = {u.get("lineIndex"): u for u in doc.get("uninterpreted") or []}
-        fresh = self._interpret_lines(requirements, consult_interpreter=False)
+        fresh = self._interpret_lines(
+            requirements, consult_interpreter=False,
+            visual_available=bool(doc.get("visualEvidence")))
         for u in fresh:  # keep the read-time LLM guess as the prefill
             guess = (old.get(u["lineIndex"]) or {}).get("guess") or {}
             if guess.get("spec"):
@@ -390,7 +401,8 @@ class HendleyApp:
         return {"cached": doc}
 
     def _interpret_lines(self, requirements,
-                         consult_interpreter: bool = True) -> list[dict]:
+                         consult_interpreter: bool = True,
+                         visual_available: bool = False) -> list[dict]:
         """Judge every mode-less line: cache first, then the LLM, else the
         engineer (returned as confirm-card material). Each unique string is
         judged once, ever; user answers are authoritative. With
@@ -414,10 +426,19 @@ class HendleyApp:
                 line.spec = None
                 continue
             hint = _kind_hint(line.designators[0])
+            target_hint = f"{hint}\x1f{line.designators[0]}"
             raw_value = line.comment or ""
             footprint = line.footprint or ""
             cache_value = _part_cache_value(raw_value, line.attributes)
-            cached = store.get_interpretation("part", hint, cache_value, footprint)
+            specific = store.get_interpretation(
+                "part", target_hint, cache_value, footprint)
+            generic = store.get_interpretation("part", hint, cache_value, footprint)
+            # Model readings that did not inspect this exact symbol must never
+            # cross designators. A user-recorded correction is authoritative
+            # and intentionally remains reusable for equivalent written specs.
+            generic_allowed = ((generic or {}).get("source") == "user"
+                               or not visual_available)
+            cached = specific or (generic if generic_allowed else None)
             pinned = bool(line.mpn or line.provider_refs)
             if pinned:
                 # The schematic names an exact part, and that is normally the end
@@ -565,11 +586,13 @@ class HendleyApp:
         store = self._store()
         prefix = _kind_hint(line.get("designator") or "")
         visual = body.get("visualEvidence") or {}
+        target = line.get("designator") or ""
+        interpretation_hint = (f"{prefix}\x1f{target}" if visual else prefix)
         visual_token = f"\x1fread-plan:{READ_PLAN_SCHEMA_VERSION}"
         if visual.get("digest"):
             visual_token += (f"\x1fvisual:{visual.get('schemaVersion') or 1}:"
                              f"{visual['digest']}")
-        key = {"kind_hint": prefix,
+        key = {"kind_hint": interpretation_hint,
                # the part number belongs in the key: change it in the schematic
                # and this is a different part, which must be read again
                "raw_value": (f"{_part_cache_value(line.get('value') or '', line.get('attributes'))}"
@@ -591,7 +614,7 @@ class HendleyApp:
                 store.put_interpretation(
                     "part", {"spec": accepted_spec,
                              "rationale": result.get("rationale") or ""},
-                    "llm", kind_hint=prefix,
+                    "llm", kind_hint=interpretation_hint,
                     raw_value=_part_cache_value(line.get("value") or "",
                                                 line.get("attributes")),
                     footprint=line.get("footprint") or "",
@@ -647,7 +670,7 @@ class HendleyApp:
             store.put_interpretation(
                 "part", {"spec": accepted_spec,
                          "rationale": reading.get("rationale") or ""},
-                "llm", kind_hint=prefix,
+                "llm", kind_hint=interpretation_hint,
                 raw_value=_part_cache_value(line.get("value") or "",
                                             line.get("attributes")),
                 footprint=line.get("footprint") or "",

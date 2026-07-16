@@ -1,7 +1,11 @@
 from pathlib import Path
 
 from hendley.ingestion.fusion.bridge import FusionBridge
-from hendley.ingestion.fusion.visual import _recompress_png, capture_visual_evidence
+from hendley.ingestion.fusion.visual import (
+    _recompress_png,
+    add_board_crops,
+    capture_visual_evidence,
+)
 
 
 class ExportBridge:
@@ -55,6 +59,30 @@ def test_capture_without_sheet_rows_is_a_nonfatal_noop(tmp_path, monkeypatch):
     assert capture_visual_evidence(NoSheets(), "empty") is None
 
 
+def test_capture_settles_after_returning_from_board_before_reading_sheets(
+        tmp_path, monkeypatch):
+    monkeypatch.setenv("HENDLEY_VISUAL_DIR", str(tmp_path))
+    events = []
+    monkeypatch.setattr("hendley.ingestion.fusion.visual.time.sleep",
+                        lambda seconds: events.append(("sleep", seconds)))
+
+    class DeferredContext:
+        def run_eagle(self, command):
+            events.append(("command", command))
+
+        def read_all(self, entity_type):
+            events.append(("read", entity_type))
+            return []
+
+    capture_visual_evidence(DeferredContext(), "deferred")
+
+    assert events[:3] == [
+        ("command", "EDIT .S1;"),
+        ("sleep", 0.75),
+        ("read", "electronics.Sheet"),
+    ]
+
+
 def test_eagle_command_preserves_windows_path_in_generated_python():
     class RecordingBridge(FusionBridge):
         def __init__(self):
@@ -93,3 +121,21 @@ def test_fusion_png_is_losslessly_recompressed(tmp_path):
     after = path.read_bytes()
     assert len(after) < len(before) / 10
     assert after.startswith(b"\x89PNG\r\n\x1a\n")
+
+
+def test_board_crop_phase_never_returns_to_schematic(tmp_path, monkeypatch):
+    monkeypatch.setenv("HENDLEY_VISUAL_DIR", str(tmp_path))
+    monkeypatch.setenv("HENDLEY_FUSION_VISUAL_DIR", r"C:\hendley")
+    bridge = ExportBridge(tmp_path)
+    sheet = tmp_path / "sheet.png"
+    sheet.write_bytes(b"sheet")
+    manifest = {"schemaVersion": 3, "design": "test", "dpi": 300,
+                "sheets": [{"number": 1, "image": str(sheet)}],
+                "boardImage": None, "boardCrops": [], "images": [str(sheet)],
+                "digest": "old"}
+
+    got = add_board_crops(
+        bridge, manifest, [{"designator": "Q2", "x": 10, "y": 20}])
+
+    assert got["boardCrops"][0]["designator"] == "Q2"
+    assert not any(command.startswith("EDIT") for command in bridge.commands)

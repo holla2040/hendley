@@ -116,7 +116,7 @@ def capture_visual_evidence(bridge, design: str, dpi: int = 300,
         # Sheet entities are context-sensitive and read empty on the board.
         # Sheet 1 necessarily exists in a paired schematic; activate it before
         # enumerating, then never probe beyond the returned rows.
-        bridge.run_eagle("EDIT .S1;")
+        _settle_eagle(bridge, "EDIT .S1;")
         sheets = sorted(
             ({"number": int(row["number"]), "name": str(row.get("name") or ""),
               "description": str(row.get("description") or "")}
@@ -181,3 +181,56 @@ def capture_visual_evidence(bridge, design: str, dpi: int = 300,
                 "digest": _digest(exported, metadata)}
     except (OSError, TypeError, ValueError, KeyError, RuntimeError):
         return None
+
+
+def add_board_crops(bridge, manifest: dict | None,
+                    targets: list[dict]) -> dict | None:
+    """Add dimensioned crops while Fusion is already in board context.
+
+    Refresh captures sheets before its one-way BOARD transition, then learns
+    placement coordinates from the board. This second phase deliberately never
+    calls EDIT: some Fusion MCP builds wedge their script proxy when asked to
+    return from board to schematic.
+    """
+    if not manifest:
+        return None
+    local_dir = Path(os.environ.get("HENDLEY_VISUAL_DIR", DEFAULT_LOCAL_DIR)).expanduser()
+    windows_dir = os.environ.get("HENDLEY_FUSION_VISUAL_DIR", DEFAULT_WINDOWS_DIR)
+    stem = _slug(str(manifest.get("design") or "design"))
+    dpi = int(manifest.get("dpi") or 300)
+    crops: list[dict] = []
+    try:
+        for target in targets:
+            try:
+                designator = str(target["designator"])
+                x, y = float(target["x"]), float(target["y"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            half = 6.0
+            filename = f"{stem}-board-{_slug(designator)}.png"
+            path = local_dir / filename
+            _settle_eagle(
+                bridge, f"BOARD; DISPLAY -UNROUTED; "
+                f"WINDOW ({x - half:g} {y - half:g}) "
+                f"({x + half:g} {y + half:g});")
+            fresh = _fresh_export(path, lambda: bridge.run_eagle(
+                f"EXPORT IMAGE {windows_dir}\\{filename} {dpi};"))
+            bridge.run_eagle("DISPLAY UNROUTED; WINDOW FIT;")
+            if fresh:
+                crops.append({"designator": designator,
+                              "image": str(path.resolve()),
+                              "widthMm": half * 2, "heightMm": half * 2,
+                              "center": {"x": x, "y": y}})
+        metadata = {k: v for k, v in manifest.items()
+                    if k not in ("images", "digest", "boardCrops")}
+        metadata["boardCrops"] = crops
+        paths = [Path(str(s["image"])) for s in metadata.get("sheets", [])
+                 if s.get("image")]
+        if metadata.get("boardImage"):
+            paths.append(Path(str(metadata["boardImage"])))
+        paths.extend(Path(c["image"]) for c in crops)
+        paths = [p for p in paths if p.is_file()]
+        return {**metadata, "images": [str(p.resolve()) for p in paths],
+                "digest": _digest(paths, metadata)}
+    except (OSError, TypeError, ValueError, KeyError, RuntimeError):
+        return manifest

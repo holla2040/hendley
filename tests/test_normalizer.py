@@ -51,6 +51,18 @@ def test_a_family_in_the_value_is_a_seed_not_a_spec():
     assert line.footprint_headline == "Small Outline package 150 mil"
 
 
+def test_unresolved_same_value_semiconductors_stay_separate_for_visual_reading():
+    parts = [
+        DesignPart(designator="Q2", value="40V", footprint="SOT23-3"),
+        DesignPart(designator="Q3", value="40V", footprint="SOT23-3"),
+    ]
+
+    bom = requirements_from_design(None, parts, 1)
+
+    assert [line.designators for line in bom.lines] == [["Q2"], ["Q3"]]
+    assert all(line.family == "40V" for line in bom.lines)
+
+
 def test_a_family_in_the_mpn_attribute_does_not_pin_the_line():
     # THE BUG THIS FIXES. A family in the MPN attribute used to land in `mpn`, so
     # the line was PINNED: Hendley treated "ULN2003" as an exact orderable part,

@@ -122,8 +122,14 @@ def requirements_from_design(
             spec = infer_spec(part.designator, part.value, footprint)
 
         attributes = {str(k): str(v) for k, v in (part.attributes or {}).items()}
+        # A mode-less/family line may derive its class from a unique schematic
+        # symbol. Keep it separate until that intent is read: grouping Q2/Q3
+        # merely because both say `40V` on SOT-23 destroys N/P-channel evidence.
+        unresolved_instance = (part.designator if not dnp and not provider_refs
+                               and not mpn and spec is None else "")
         key = (part.jlc_code or "", mpn or "", family or "", spec, comment or "",
-               footprint, dnp, tuple(sorted(attributes.items())))
+               footprint, dnp, tuple(sorted(attributes.items())),
+               unresolved_instance)
         g = groups.setdefault(key, {"part": part, "designators": [], "dnp": dnp,
                                     "footprint": footprint, "comment": comment,
                                     "spec": spec, "family": family,

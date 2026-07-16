@@ -2,8 +2,8 @@
 
 The read side of the ``hendley pcba`` flow: pull the open design over the HTTP
 bridge (parts + part-scoped attributes), switch the electronics engine's
-current drawing to the board (``BOARD;`` — one-way; the schematic must be read
-*first*), and read the placements. All state stays in memory; turning the
+current drawing to the schematic when needed (``EDIT .S1;``), read it, switch
+to the board (``BOARD;``), and read the placements. All state stays in memory; turning the
 extraction into JLCPCB order files is the provider adapter's job
 (:mod:`hendley.providers.jlcpcb.order_files`).
 
@@ -29,13 +29,14 @@ Extraction rules (verified live, documented in ``docs/fusion-notes.md``):
   ``BOARD;`` switch. The headline is what distinguishes a 150-mil ``SO16`` from a
   300-mil one; the name alone cannot.
 - Board entities read empty until the board is the engine's current drawing;
-  ``BOARD;`` switches it (without raising the board window). There is no
-  command back — the user re-activates the schematic in the Fusion UI.
+  ``BOARD;`` switches it (without raising the board window). ``EDIT .S1;``
+  switches back to schematic sheet 1 even when the board layout is frontmost.
 """
 
 from __future__ import annotations
 
 import re
+import time
 from dataclasses import dataclass
 
 from .bridge import BridgeError, FusionBridge
@@ -127,10 +128,17 @@ def extract_schematic(bridge: FusionBridge) -> tuple[str, list[DesignPart]]:
 
     part_rows = bridge.read_all("electronics.Part")
     if not part_rows:
+        # Verified live 2026-07-15: unlike BOARD;, EDIT .S1 works across editor
+        # contexts and makes schematic entities readable while the layout is
+        # frontmost. Sheet 1 necessarily exists in a paired schematic; never
+        # probe higher numbers because EDIT creates a missing sheet.
+        bridge.run_eagle("EDIT .S1;")
+        time.sleep(0.75)  # Fusion changes Electronics context asynchronously.
+        part_rows = bridge.read_all("electronics.Part")
+    if not part_rows:
         raise BridgeError(
-            "no schematic parts readable — activate the schematic in Fusion first "
-            "(board→schematic has no command; click the schematic tab) and check for "
-            "open modal dialogs"
+            "no schematic parts readable even after EDIT .S1 — check for open "
+            "modal dialogs and confirm the Electronics design has a schematic"
         )
     # The library FOOTPRINT, read schematic-side — no BOARD; switch needed. The
     # device already names its package; joining electronics.Package gives us the
@@ -171,8 +179,8 @@ def extract_schematic(bridge: FusionBridge) -> tuple[str, list[DesignPart]]:
 def extract_board(bridge: FusionBridge) -> list[Placement]:
     """Read all board placements, switching the engine to the board if needed.
 
-    The ``BOARD;`` switch is one-way (no command returns to the schematic), so
-    call this only after :func:`extract_schematic`.
+    Read the schematic first for a coherent snapshot. A later schematic read can
+    return from the board with ``EDIT .S1;``.
     """
     probe = bridge.read("electronics.Element", {"pagination": {"limit": 1, "offset": 0}})
     if not probe.get("items"):

@@ -242,6 +242,28 @@ def test_documented_catalog_class_vocabulary_is_available_to_unpinned_reads():
     assert "Zener Diodes" in types
     assert "Schottky Diodes" in types
     assert "ESD And Surge Protection (TVS/ESD)" in types
+    assert "MOSFETs" in types
+    assert "Bipolar (BJT)" in types
+    assert "JFETs" in types
+
+
+def test_transistor_note_reaches_unpinned_q_visual_read(monkeypatch):
+    seen = {}
+
+    def answer(_self, prompt, **_kwargs):
+        seen["prompt"] = prompt
+        return {"is": "N-channel MOSFET", "spec": {"kind": "mosfet",
+                "value": "N-channel", "package": "SOT-23", "qualifier": ""},
+                "search": "N-channel MOSFET", "plan": {"mode": "parametric",
+                "category": "mosfets", "net": {"package": "SOT-23"},
+                "sieve": []}, "confidence": 0.9}
+
+    monkeypatch.setattr(ClaudeCLIInterpreter, "_ask", answer)
+    ClaudeCLIInterpreter().read_part({
+        "schematic": {"prefix": "Q"}, "catalog": None})
+
+    assert "FET Type = N-Channel" in seen["prompt"]
+    assert "type = NPN" in seen["prompt"]
 
 
 def test_read_part_can_choose_class_narrowing_keyword_discovery(monkeypatch):

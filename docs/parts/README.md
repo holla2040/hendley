@@ -97,9 +97,10 @@ than silence, because the agent will believe it.
 - [Schottky and TVS diodes](schottky-and-tvs-diodes.md) — visual/text intent,
   exact live catalog class proof, and the electrical choices a family label
   does not establish.
+- [Discrete transistors](transistors.md) — MOSFET/BJT/JFET class, channel or
+  polarity, rating vocabulary, and the SOT-23 spelling boundary.
 
 ## Still to write
 
-- MOSFETs
 - Small-signal and other remaining diode families whose exact live catalog
   `secondTypeName` values have not yet been measured and documented.

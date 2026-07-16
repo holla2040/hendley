@@ -444,6 +444,52 @@ def test_lazy_read_cache_is_invalidated_when_visual_evidence_changes(tmp_path):
         server.server_close()
 
 
+def test_visual_read_cache_is_scoped_to_the_exact_designator(tmp_path):
+    interp = CountingInterpreter(confidence=0.9)
+    call, server = _mystery_app(tmp_path, interp)
+    try:
+        data = call("/api/intake", {"productionQuantity": 5})
+        line = data["requirements"]["lines"][0]
+        visual = {"digest": "same-design", "schemaVersion": 3}
+        line["designators"] = ["Q2"]
+        first = call("/api/read", {"lineIndex": 0,
+                                    "requirements": data["requirements"],
+                                    "visualEvidence": visual})
+        line["designators"] = ["Q3"]
+        second = call("/api/read", {"lineIndex": 0,
+                                     "requirements": data["requirements"],
+                                     "visualEvidence": visual})
+
+        assert first["cached"] is False
+        assert second["cached"] is False
+        assert interp.read_calls == 2
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_generic_llm_part_cache_does_not_cross_visual_designators(tmp_path):
+    app = HendleyApp(db_path=tmp_path / "parts.db", outdir=tmp_path,
+                     draft_path=tmp_path / "draft.json",
+                     cache_path=tmp_path / "cache.json")
+    store = app._store()
+    store.put_interpretation(
+        "part", {"spec": {"kind": "mosfet", "value": "N-channel",
+                           "package": "SOT-23", "qualifier": "40V"}},
+        "llm", kind_hint="transistor", raw_value="40V", footprint="SOT23-3",
+        confidence=0.9)
+    from hendley.domain.model import RequirementLine, RequirementsBom
+    requirements = RequirementsBom(1, [
+        RequirementLine(["Q3"], comment="40V", footprint="SOT23-3",
+                        family="40V")])
+
+    unresolved = app._interpret_lines(
+        requirements, consult_interpreter=False, visual_available=True)
+
+    assert requirements.lines[0].spec is None
+    assert unresolved[0]["designators"] == ["Q3"]
+
+
 def test_ui_does_not_persist_its_generated_search_as_engineer_input():
     from hendley.app.ui import PAGE_HTML
 

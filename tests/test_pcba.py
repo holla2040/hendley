@@ -5,6 +5,7 @@ import json
 
 from hendley.ingestion.fusion.live_design import (
     Placement,
+    extract_schematic,
     is_dnp,
     is_pseudo_part,
     natural_key,
@@ -76,6 +77,42 @@ def test_the_footprints_geometry_is_carried_not_thrown_away():
     )
     assert p.footprint == "SO16"
     assert p.footprint_headline == "Small Outline package 150 mil"
+
+
+def test_schematic_read_returns_from_frontmost_board_with_edit_s1(monkeypatch):
+    sleeps = []
+    monkeypatch.setattr("hendley.ingestion.fusion.live_design.time.sleep",
+                        sleeps.append)
+    class BoardFrontBridge:
+        def __init__(self):
+            self.schematic = False
+            self.commands = []
+
+        def read_all(self, entity_type, obj=None, page=1000):
+            if entity_type == "electronics.Schematic":
+                return [{"name": "hendley test sch.sch"}]
+            if entity_type == "electronics.Part":
+                return ([{"object_id": 1, "name": "C3", "value": "10u/25V",
+                          "device_object_id": 10}] if self.schematic else [])
+            if entity_type == "electronics.Package":
+                return [{"object_id": 20, "name": "C-E-10",
+                         "headline": "Aluminium Electrolytic Capacitor"}]
+            if entity_type == "electronics.Device":
+                return [{"object_id": 10, "package_object_id": 20}]
+            if entity_type == "electronics.Attribute":
+                return []
+            return []
+
+        def run_eagle(self, command):
+            self.commands.append(command)
+            self.schematic = command == "EDIT .S1;"
+
+    bridge = BoardFrontBridge()
+    design, parts = extract_schematic(bridge)
+
+    assert bridge.commands == ["EDIT .S1;"]
+    assert sleeps == [0.75]
+    assert design == "hendley test" and [p.designator for p in parts] == ["C3"]
 
 
 def test_bom_groups_identical_parts_and_sorts_designators():
