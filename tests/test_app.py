@@ -558,6 +558,20 @@ def test_low_confidence_lazy_read_does_not_resolve_or_seed_refresh(tmp_path):
         server.server_close()
 
 
+def test_ambiguous_rating_never_auto_accepts_a_confident_read(tmp_path):
+    app = HendleyApp(db_path=tmp_path / "parts.db", outdir=tmp_path,
+                     draft_path=tmp_path / "draft.json",
+                     cache_path=tmp_path / "cache.json")
+    assert not app._reading_can_auto_accept({
+        "confidence": 0.99,
+        "intent": {"family": "surge suppressor", "ratingAmbiguous": True},
+    })
+    assert app._reading_can_auto_accept({
+        "confidence": 0.99,
+        "intent": {"family": "surge suppressor", "ratingAmbiguous": False},
+    })
+
+
 class TwoMysteryBridge(MysteryBridge):
     """C7 (47u/50V on C-E-5) plus D6: a diode with NO value, on D-SOD323."""
 

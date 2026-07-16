@@ -38,3 +38,14 @@ symbol or family name. Use the descriptive TVS words for coarse FTS discovery,
 but do not claim which catalog voltage parameter they constrain. If that
 ambiguity changes which part is acceptable, keep the reading below automatic
 acceptance confidence until the engineer identifies the intended parameter.
+
+## Shop convention status
+
+No Hendley shop convention currently defines a bare TVS voltage as
+`Reverse Stand-Off Voltage (Vrwm)`. Therefore `18V TVS` is class intent and a
+descriptive discovery phrase, not an automatic voltage acceptance term. The
+reader must omit voltage from the live sieve and set
+`intent.ratingAmbiguous=true`; the server honors that structured guard
+regardless of numeric confidence. An engineer may still state `Vrwm 18V`, choose an exact
+family/part, or record a future convention explicitly; those are new evidence,
+not an inference from the number alone.

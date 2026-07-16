@@ -58,7 +58,7 @@ from .ui import PAGE_HTML
 DEFAULT_OUTDIR = "~/tmp/hendley_output"
 DEFAULT_DRAFT_PATH = "~/.hendley/draft.json"
 DEFAULT_CACHE_PATH = "~/.hendley/design-cache.json"
-READ_PLAN_SCHEMA_VERSION = 13
+READ_PLAN_SCHEMA_VERSION = 14
 
 
 class PackageListing(list):
@@ -625,8 +625,7 @@ class HendleyApp:
         if (result.get("search") and "catalog" in result
                 and not self._stale_plan(result.get("plan"))):
             accepted_spec = (result.get("spec")
-                             if float(result.get("confidence") or 0)
-                             >= CONFIDENCE_THRESHOLD else None)
+                             if self._reading_can_auto_accept(result) else None)
             if accepted_spec:
                 store.put_interpretation(
                     "part", {"spec": accepted_spec,
@@ -681,8 +680,7 @@ class HendleyApp:
         # it to the cache-only intake path; do not wake a second agent next
         # Refresh merely to obtain the same SpecKey in another JSON envelope.
         accepted_spec = (reading.get("spec")
-                         if float(reading.get("confidence") or 0)
-                         >= CONFIDENCE_THRESHOLD else None)
+                         if self._reading_can_auto_accept(reading) else None)
         if accepted_spec:
             store.put_interpretation(
                 "part", {"spec": accepted_spec,
@@ -694,6 +692,13 @@ class HendleyApp:
                 confidence=reading.get("confidence"))
         return {"reading": reading, "requirementSpec": accepted_spec,
                 "cached": False}
+
+    @staticmethod
+    def _reading_can_auto_accept(reading: dict) -> bool:
+        """Reject automatic naming when a stated rating has no fixed meaning."""
+        intent = reading.get("intent") or {}
+        return (float(reading.get("confidence") or 0) >= CONFIDENCE_THRESHOLD
+                and intent.get("ratingAmbiguous") is not True)
 
     def _stale_plan(self, plan: dict | None) -> bool:
         """Was this plan written against a column we now know is a lie?

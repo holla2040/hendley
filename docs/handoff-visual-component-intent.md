@@ -231,10 +231,12 @@ BAT54 Schottky, and 18 V TVS. The important fixes and results were:
   parameter is `Reverse Stand-Off Voltage (Vrwm)`.
 
 The ordinary BAT54 plan proved model family, `Schottky Diodes`, and SOD-323,
-yielding 15 eligible candidates. `18V TVS` remains an engineering convention:
-the current reader treats 18 V as reverse stand-off voltage, but Craig has not
-explicitly confirmed whether this shop always means Vrwm rather than breakdown
-or clamp voltage.
+yielding 15 eligible candidates. No shop convention defines bare `18V TVS` as
+reverse stand-off voltage. It remains class intent and descriptive discovery
+text, not an automatic voltage proof: absent explicit `Vrwm`, an exact family,
+or an engineer-recorded convention, the reader omits voltage from the sieve and
+sets `intent.ratingAmbiguous=true`, which prevents automatic acceptance
+regardless of numeric confidence.
 
 See `docs/parts/schottky-and-tvs-diodes.md`.
 
@@ -358,14 +360,18 @@ Craig explicitly wants the agent to own the test loop. The next agent should:
 
 ## Recommended next work
 
-1. Decide whether `18V TVS` is a shop convention for Vrwm. If Craig confirms,
-   document it as a convention; otherwise keep the voltage interpretation below
-   automatic acceptance.
-2. Review the remaining dirty worktree separately. At handoff it contains only
-   older unrelated changes in `CLAUDE.md`, `HANDOFF.md`, `README.md`,
-   `docs/app.md`, `docs/cli.md`, `docs/fusion-notes.md`, `scripts/ui_check.py`,
-   and `src/hendley/cli/manufacturing.py`. Do not sweep them into this branch's
-   next commit without Craig's explicit scope decision.
+The two follow-ups are closed for this branch:
+
+1. Bare TVS voltage is explicitly *not* a shop `Vrwm` convention. The structured
+   `intent.ratingAmbiguous` guard prevents automatic acceptance without parsing
+   component-specific words in Python.
+2. The remaining dirty worktree was audited. Its eight files form an older
+   reversible-Fusion-context documentation/comment set. That claim conflicts
+   with the later live behavior recorded here: returning from board can wedge
+   this MCP proxy, so Refresh deliberately makes its one `BOARD` transition
+   only after all schematic capture. The older edits remain preserved and
+   unstaged for an explicit reconciliation; committing them now would publish
+   contradictory operating instructions.
 
 The definitive post-acceptance run completed with `320 passed in 49.72s`;
 Ruff and `git diff --check` were clean.

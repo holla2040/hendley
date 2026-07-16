@@ -353,7 +353,11 @@ WHAT TO HAND BACK
   merely a discovery hint. Put it in coarse FTS discovery and also prove it
   against the live catalog model with a `componentModel contains` sieve term.
   Do not add that term for a descriptive rating such as `18V TVS` which is not
-  a model family. FTS accepts an exact package alongside `search`; when a
+  a model family. A descriptive TVS voltage does not identify whether the
+  engineer means reverse stand-off, breakdown, or clamp voltage. Unless the
+  schematic, an engineer-recorded convention, or an exact family/catalog record
+  names the parameter, add NO voltage sieve term and keep confidence below
+  automatic acceptance. FTS accepts an exact package alongside `search`; when a
   standard package is known, put it in BOTH `net.package` and the package sieve
   term so discovery narrows before the 100-row cap and proof still remains
   authoritative.
@@ -381,12 +385,18 @@ WHAT TO HAND BACK
   families; never substitute an index class flag. If your `intent.subtype`
   names one of those distinctions and the vocabulary contains the matching
   class, the term is REQUIRED rather than something to defer until after search.
+- Set `intent.ratingAmbiguous` true whenever the schematic gives a numeric
+  rating but the evidence does not establish which live catalog parameter it
+  means. Omit that rating from the sieve. This flag prevents automatic
+  acceptance even when the rest of the reading is confident; it is not ordinary
+  uncertainty such as an unspecified pinout.
 
 {index_facts}
 Answer with ONLY this JSON object, no prose, no code fences:
 {{"is": "...",
   "intent": {{"family": "...", "subtype": "...", "polarity": "...",
-               "mount": "...", "visualCues": ["..."],
+               "mount": "...", "ratingAmbiguous": false,
+               "visualCues": ["..."],
                "uncertainties": ["..."]}},
   "spec": {{"kind": "...", "value": "...", "package": "...",
             "qualifier": "..."}},

@@ -247,6 +247,15 @@ def test_documented_catalog_class_vocabulary_is_available_to_unpinned_reads():
     assert "JFETs" in types
 
 
+def test_tvs_note_keeps_bare_voltage_below_automatic_acceptance():
+    from hendley.ai.partnotes import note_for
+
+    note = note_for("ESD And Surge Protection (TVS/ESD)")
+    assert note and "No Hendley shop convention" in note
+    assert "omit voltage from the live sieve" in note
+    assert "below automatic" in note and "acceptance confidence" in note
+
+
 def test_transistor_note_reaches_unpinned_q_visual_read(monkeypatch):
     seen = {}
 

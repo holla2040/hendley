@@ -55,6 +55,12 @@ Reapplying only its compact `SpecKey` would lose class, polarity, ratings, and
 package proof. User decisions retain higher provenance and may resolve the row
 immediately.
 
+Numeric confidence cannot override an unresolved rating definition. The reader
+sets `intent.ratingAmbiguous` when a schematic number cannot be mapped to one
+live catalog parameter; that rating stays out of the sieve and the server will
+not automatically accept the resulting `SpecKey` until an engineer supplies
+the missing convention or exact parameter.
+
 A physical land can have several exact package spellings in the live catalog.
 When measured evidence establishes that equivalence, `net.package` may carry
 the spelling set. The executor sends one narrow request per spelling, unions
