@@ -168,6 +168,126 @@ Refresh, make the schematic the current document in Fusion (click its tab) —
 a Refresh leaves Fusion on the board view. The guide is
 [`docs/app.md`](docs/app.md).
 
+### Refresh-to-approved-parts flow
+
+```mermaid
+flowchart TD
+    clickRefresh([Engineer clicks Refresh])
+
+    subgraph intake[Read the design without an AI call]
+        readSchematic[Read Fusion schematic<br/>parts, values, attributes, devices, packages]
+        readBoard[Switch to board and read placements<br/>x, y, rotation, mirror, populate]
+        normalize[Normalize into requirement lines<br/>group identical parts and mark DNP]
+        cachedMeaning[Apply deterministic meanings and<br/>previously cached or user-recorded SpecKeys]
+        unresolved[Collect unresolved lines]
+        capture[Best-effort visual capture<br/>all schematic sheets, clean board, unresolved-part crops]
+        cacheDesign[Write design-cache.json<br/>requirements, placements, visual manifest]
+    end
+
+    clickRefresh --> readSchematic --> readBoard --> normalize --> cachedMeaning
+    cachedMeaning --> unresolved --> capture --> cacheDesign
+
+    subgraph initialResolution[Resolve what is already known]
+        resolveKnown[Resolve each known requirement against<br/>its approved-parts list or schematic pin]
+        verifyKnown[Batch live-verify catalog identity,<br/>stock, price, MPN and library class]
+        chooseByRank[Choose the first in-stock approved part<br/>by rank; retain shortage and provenance]
+        rail[Render design overview and colored rail<br/>green covered; red short or unpicked;<br/>amber unnamed; neutral unverifiable; dashed DNP]
+    end
+
+    cacheDesign --> resolveKnown --> verifyKnown --> chooseByRank --> rail
+
+    open([Engineer opens a component])
+    rail --> open
+    open --> lineKind{What does the line already know?}
+
+    lineKind -->|DNP| showDnp[Show DNP state and optional<br/>Populate this run action]
+    lineKind -->|Exact schematic pin| verifyMounted[Live-verify the pinned or mounted part]
+    lineKind -->|Deterministic or<br/>cached SpecKey| loadAvl[Load approved-parts list]
+    lineKind -->|Incomplete family| familySearch[Run bounded family and footprint search]
+    lineKind -->|Unresolved red or amber| lazyRead[Run one lazy part reading]
+
+    subgraph interpretation[Lazy image-assisted interpretation]
+        dossier[Build dossier<br/>designator, value, attributes, footprint,<br/>optional pinned catalog record and images]
+        readIntent[Interpret family, subtype, polarity or channel,<br/>mount, visible cues and uncertainty]
+        acceptRead{Confidence sufficient<br/>and canonical SpecKey returned?}
+        saveRead[Cache reading by part facts,<br/>read-plan version and image digest]
+        applySpec[Apply SpecKey to requirement<br/>and resolve the row again]
+        leaveVisible[Leave line visibly unresolved<br/>for engineer judgment]
+    end
+
+    lazyRead --> dossier --> readIntent --> saveRead --> acceptRead
+    acceptRead -->|yes| applySpec --> resolveKnown
+    acceptRead -->|no| leaveVisible
+
+    familySearch --> familyPlan[Interpret family plus footprint geometry<br/>into catalog package spellings]
+    familyPlan --> executeSearch
+
+    loadAvl --> verifyAvl[Live-verify the whole approved list<br/>in one batched catalog call]
+    verifyAvl --> detail[Show mounted primary and checked alternates<br/>with current stock, price, package and class]
+    verifyMounted --> detail
+    chooseByRank --> loadAvl
+
+    applySpec --> searchReady[Seed visible search words and proof terms]
+    leaveVisible --> searchReady
+    detail --> searchChoice{Need a new primary<br/>or more alternates?}
+    searchChoice -->|no| covered[Keep automatic mounted choice]
+    searchChoice -->|yes| searchReady
+
+    subgraph search[Discover broadly, then prove narrowly]
+        editTerms[Engineer accepts or edits visible terms,<br/>category and sieve constraints]
+        pressSearch([Click Search])
+        planSearch[Create or reuse a query plan<br/>engineer edits always outrank generated terms]
+        executeSearch[Send coarse net to parts index<br/>keyword, package, code or one trusted value parameter]
+        liveVerify[Live-verify every discovered code<br/>catalog class, parameters, stock and price]
+        sieve[Prove every required term against<br/>typed index data or live catalog facts]
+        proven{Every term proved?}
+        candidates[Eligible candidates table]
+        misses[Rejected table with failed or<br/>unprovable reason for each term]
+    end
+
+    searchReady --> editTerms --> pressSearch --> planSearch --> executeSearch
+    executeSearch --> liveVerify --> sieve --> proven
+    proven -->|yes| candidates
+    proven -->|no| misses
+    misses --> editTerms
+
+    candidates --> selectAction{Engineer selection}
+
+    subgraph approval[Selection saves immediately]
+        radio[Select radio<br/>this part mounts]
+        checkbox[Check alternate<br/>this part is approved]
+        uncheck[Uncheck approved part<br/>remove it with audit history]
+        needKey{Requirement already has<br/>a recorded SpecKey?}
+        deriveKey[Name the requirement from the design,<br/>engineer terms and selected catalog part]
+        firstPick{Approved list empty?}
+        rankOne[Record selected part as rank 1<br/>permanent preferred primary]
+        orderOverride[Store order-only override<br/>approved ranking is unchanged]
+        appendAlt[Append alternate to approved list<br/>after existing ranked choices]
+        removeAlt[Remove choice and close rank gap]
+        resolveAgain[Re-resolve order from approved list,<br/>live stock and any order override]
+    end
+
+    selectAction -->|radio| radio --> needKey
+    selectAction -->|check| checkbox --> needKey
+    selectAction -->|uncheck| uncheck --> removeAlt --> resolveAgain
+    needKey -->|no| deriveKey --> firstPick
+    needKey -->|yes| firstPick
+    firstPick -->|yes, radio pick| rankOne --> resolveAgain
+    firstPick -->|no, radio differs| orderOverride --> resolveAgain
+    firstPick -->|checkbox adds a backup| appendAlt --> resolveAgain
+
+    resolveAgain --> automatic{Preferred primary has<br/>enough live stock?}
+    automatic -->|yes| primary[Mount rank-1 primary]
+    automatic -->|no| nextAlt[Try approved alternates in rank order]
+    nextAlt --> stockAlt{An alternate has enough stock?}
+    stockAlt -->|yes| substituted[Mount first stocked alternate automatically]
+    stockAlt -->|no| short[Keep line red and show shortage]
+    primary --> rail
+    substituted --> rail
+    short --> rail
+    covered --> rail
+```
+
 ## A representative Hendley validation design
 
 Hendley is best tested with several small circuits on one schematic, not with a
