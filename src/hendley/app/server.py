@@ -58,7 +58,7 @@ from .ui import PAGE_HTML
 DEFAULT_OUTDIR = "~/tmp/hendley_output"
 DEFAULT_DRAFT_PATH = "~/.hendley/draft.json"
 DEFAULT_CACHE_PATH = "~/.hendley/design-cache.json"
-READ_PLAN_SCHEMA_VERSION = 11
+READ_PLAN_SCHEMA_VERSION = 13
 
 
 class PackageListing(list):
@@ -456,7 +456,24 @@ class HendleyApp:
                 line.manufacturer = None
                 line.provider_refs = {}
                 continue
-            if cached and (cached["result"] or {}).get("spec"):
+            # A visual LLM answer is more than its compact SpecKey: its full
+            # cached reading carries the executable live-catalog proof plan.
+            # Reapplying only the SpecKey here would make the row look resolved
+            # enough to skip ``/api/read`` on open, after which the UI falls
+            # back to a fresh words-only search and silently loses class,
+            # polarity, ratings, and package proof.  Keep it lazy on visual
+            # designs; opening the row reuses the cached reading without a
+            # model call.  Engineer-recorded corrections remain authoritative.
+            cached_can_resolve = ((cached or {}).get("source") == "user"
+                                  or not visual_available)
+            if cached and not cached_can_resolve:
+                # The serialized design cache may itself carry the compact
+                # spec written by an earlier lazy read.  It has the same loss
+                # of proof-plan context as reapplying the DB entry, so remove
+                # it before the normal unresolved-row path below.
+                line.spec = None
+            if (cached and cached_can_resolve
+                    and (cached["result"] or {}).get("spec")):
                 # what was RECORDED for this line outranks any spec already on
                 # it (a read-time guess, or one cached with the last design):
                 # the record is what the approved-parts list is keyed by, so a
@@ -820,7 +837,10 @@ class HendleyApp:
                 param: t["value"]
                 for param, column in NET_COLUMNS.items()
                 for t in sieve
-                if t.get("op") == "eq" and t.get("field") == column
+                if (t.get("op") == "eq"
+                    or (param == "package" and t.get("op") == "in"
+                        and isinstance(t.get("value"), list)))
+                if t.get("field") == column
             }
             if fts:
                 # the keyword net is the words PLUS whatever net params survived

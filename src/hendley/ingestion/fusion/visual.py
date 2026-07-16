@@ -11,7 +11,7 @@ import time
 import zlib
 from pathlib import Path
 
-VISUAL_SCHEMA_VERSION = 3
+VISUAL_SCHEMA_VERSION = 4
 DEFAULT_WINDOWS_DIR = r"C:\tmp\hendley-visual"
 DEFAULT_LOCAL_DIR = "~/tmp/hendley-visual"
 
@@ -95,6 +95,92 @@ def _recompress_png(path: Path) -> None:
         return
 
 
+def _schematic_detail(path: Path) -> Path | None:
+    """Create a lossless crop of the populated schematic drawing region.
+
+    ``WINDOW FIT`` includes the sheet frame, so a sparse page can reduce a
+    transistor arrow or diode bar to a few pixels in model transport.  Decode
+    ordinary 8-bit RGB/RGBA Fusion PNGs, ignore the frame/title margins, and
+    crop around non-white drawing pixels.  Unsupported PNGs remain harmless.
+    """
+    try:
+        data = path.read_bytes()
+        if not data.startswith(b"\x89PNG\r\n\x1a\n"):
+            return None
+        pos, idat, ihdr = 8, bytearray(), None
+        while pos + 12 <= len(data):
+            size = struct.unpack(">I", data[pos:pos + 4])[0]
+            kind, payload = data[pos + 4:pos + 8], data[pos + 8:pos + 8 + size]
+            if kind == b"IHDR":
+                ihdr = struct.unpack(">IIBBBBB", payload)
+            elif kind == b"IDAT":
+                idat.extend(payload)
+            pos += size + 12
+        if not ihdr:
+            return None
+        width, height, depth, color, compression, filtering, interlace = ihdr
+        channels = {2: 3, 6: 4}.get(color)
+        if not channels or depth != 8 or compression or filtering or interlace:
+            return None
+        packed = zlib.decompress(bytes(idat))
+        stride = width * channels
+        rows, prior, at = [], bytearray(stride), 0
+        for _ in range(height):
+            mode, scan = packed[at], bytearray(packed[at + 1:at + 1 + stride])
+            at += stride + 1
+            for x in range(stride):
+                left = scan[x - channels] if x >= channels else 0
+                up = prior[x]
+                upper_left = prior[x - channels] if x >= channels else 0
+                if mode == 1:
+                    scan[x] = (scan[x] + left) & 255
+                elif mode == 2:
+                    scan[x] = (scan[x] + up) & 255
+                elif mode == 3:
+                    scan[x] = (scan[x] + ((left + up) // 2)) & 255
+                elif mode == 4:
+                    p = left + up - upper_left
+                    pa, pb, pc = abs(p - left), abs(p - up), abs(p - upper_left)
+                    scan[x] = (scan[x] + (left if pa <= pb and pa <= pc
+                                          else up if pb <= pc else upper_left)) & 255
+                elif mode != 0:
+                    return None
+            rows.append(scan)
+            prior = scan
+        x0, x1 = int(width * .08), int(width * .92)
+        y0, y1 = int(height * .08), int(height * .88)
+        points = []
+        for y in range(y0, y1):
+            row = rows[y]
+            for x in range(x0, x1):
+                px = row[x * channels:x * channels + 3]
+                if min(px) < 240:
+                    points.append((x, y))
+        if not points:
+            return None
+        left, right = min(x for x, _ in points), max(x for x, _ in points)
+        top, bottom = min(y for _, y in points), max(y for _, y in points)
+        pad = max(24, int(max(right - left, bottom - top) * .08))
+        left, right = max(x0, left - pad), min(x1 - 1, right + pad)
+        top, bottom = max(y0, top - pad), min(y1 - 1, bottom + pad)
+        if (right - left) >= width * .8 and (bottom - top) >= height * .7:
+            return None
+        out_width, out_height = right - left + 1, bottom - top + 1
+        raw = b"".join(b"\x00" + bytes(row[left * channels:(right + 1) * channels])
+                       for row in rows[top:bottom + 1])
+        detail = path.with_name(path.stem + "-detail.png")
+        chunks = []
+        for kind, payload in (
+            (b"IHDR", struct.pack(">IIBBBBB", out_width, out_height, 8, color, 0, 0, 0)),
+            (b"IDAT", zlib.compress(raw, level=9)), (b"IEND", b"")):
+            chunks.append(struct.pack(">I", len(payload)) + kind + payload
+                          + struct.pack(">I", zlib.crc32(kind + payload) & 0xffffffff))
+        detail.write_bytes(b"\x89PNG\r\n\x1a\n" + b"".join(chunks))
+        return detail
+    except (OSError, ValueError, IndexError, zlib.error, struct.error):
+        return None
+
+
 def _settle_eagle(bridge, command: str, seconds: float = 0.75) -> None:
     bridge.run_eagle(command)
     time.sleep(seconds)
@@ -137,7 +223,12 @@ def capture_visual_evidence(bridge, design: str, dpi: int = 300,
             if _fresh_export(path, lambda: bridge.run_eagle(
                     f"EXPORT IMAGE {windows_dir}\\{filename} {dpi};")):
                 exported.append(path)
-                manifest_sheets.append({**sheet, "image": str(path.resolve())})
+                detail = _schematic_detail(path)
+                if detail:
+                    exported.append(detail)
+                manifest_sheets.append({**sheet, "image": str(path.resolve()),
+                                        "detailImage": (str(detail.resolve())
+                                                        if detail else None)})
         # Airwires are routing state, not package evidence. They can cross the
         # target and make the model associate a nearby pad or footprint with it.
         board_name = f"{stem}-board.png"
@@ -226,6 +317,8 @@ def add_board_crops(bridge, manifest: dict | None,
         metadata["boardCrops"] = crops
         paths = [Path(str(s["image"])) for s in metadata.get("sheets", [])
                  if s.get("image")]
+        paths.extend(Path(str(s["detailImage"]))
+                     for s in metadata.get("sheets", []) if s.get("detailImage"))
         if metadata.get("boardImage"):
             paths.append(Path(str(metadata["boardImage"])))
         paths.extend(Path(c["image"]) for c in crops)

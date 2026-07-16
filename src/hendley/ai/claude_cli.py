@@ -122,7 +122,9 @@ The index (jlcsearch) has one endpoint per category, plus a keyword endpoint.
 NET — the query. It honours ONLY these params. It SILENTLY IGNORES every
 other param (an unknown name is not an error: you get 100 unfiltered rows
 that LOOK filtered):
-  - package        exact string, no wildcards ("0603", "SOD-323")
+  - package        exact string, no wildcards ("0603", "SOD-323"); or a list
+                   of exact catalog spellings only when the supplied live
+                   evidence says they are the same physical land
   - resistance     ohms      (resistors, resistor_arrays)
   - capacitance    farads    (capacitors; 100n = 1e-7)
   - search         keywords  (ONLY on the "components" endpoint)
@@ -295,7 +297,14 @@ HOW TO READ IT
   use them to distinguish broad classes such as polarized/electrolytic versus
   ordinary capacitors; zener/TVS/schottky/ordinary diodes; and MOSFET/BJT/JFET
   plus channel or polarity where the symbol actually shows it. The board image
-  may support mount/package conclusions but not electrical class. In Fusion
+  may support mount/package conclusions but not electrical class.
+  For a BJT, trace the emitter arrowhead geometrically relative to the base
+  line: arrowhead tip away from the base is NPN; arrowhead tip toward the base
+  is PNP. Never infer BJT polarity from the supply rail, high-side/low-side
+  placement, or assumed current flow. When the sheet shows adjacent counterpart
+  symbols, compare their arrowheads before answering; do not assign both the
+  same polarity unless their arrow geometry truly matches.
+  In Fusion
   board exports, a red rectangular copper pad with no visible drill is an SMD
   pad; a through-hole pad has a visible drilled hole (often a dark or colored
   circular center). Do not call two undrilled pads through-hole merely because
@@ -348,6 +357,11 @@ WHAT TO HAND BACK
   standard package is known, put it in BOTH `net.package` and the package sieve
   term so discovery narrows before the 100-row cap and proof still remains
   authoritative.
+  One physical land may have several exact catalog spellings. When the supplied
+  measured notes or catalog evidence identifies such a set, put the full list
+  in `net.package` and use one `package in` sieve term with that same list. The
+  executor fires one narrow request per spelling and unions them. Never invent
+  an alias from punctuation, a component name, or a library footprint alone.
   When "catalog" is present, build the SIEVE FROM catalog.parameters — one term
   per parameter that genuinely constrains the part, each field spelled VERBATIM
   as the catalog spells it, each unit declared. The engineer sees these terms
@@ -407,6 +421,11 @@ Choose a mode:
                Put package + the one value param in the net; put EVERY
                constraint (including those two) in the sieve.
 
+`net.package` is normally one exact catalog string. It may be a list of exact
+catalog spellings only when the supplied live evidence establishes that they
+are the same physical land; pair it with one `package in` sieve term containing
+the identical list. Never infer aliases from punctuation or a part name.
+
 sieve ops: eq, ne, lte, gte, lt, gt, contains, isTrue, isFalse.
 An "or better" reading is your job: 1% → tolerance lte 0.01; 25V → voltage
 gte 25; 1/4W → power_watts gte 250.
@@ -421,7 +440,7 @@ confidence: 0..1, honest.
 
 Answer with ONLY this JSON object, no prose, no code fences:
 {{"mode": "parametric|fts|code", "category": "...",
-  "net": {{"package": "...", "resistance": 0}},
+  "net": {{"package": "... or [exact, spellings]", "resistance": 0}},
   "sieve": [{{"field": "...", "op": "eq|ne|lte|gte|lt|gt|contains|isTrue|isFalse",
               "value": 0, "unit": ""}}],
   "lookingFor": {{"kind": "...", "value": "...", "package": "...",
@@ -774,8 +793,9 @@ class ClaudeCLIInterpreter:
         crops = [c for c in (visual.get("boardCrops") or [])
                  if str(c.get("designator") or "") == target]
         crop_images = [str(c.get("image")) for c in crops if c.get("image")]
-        sheet_images = [str(s.get("image")) for s in (visual.get("sheets") or [])
-                        if s.get("image")]
+        sheet_images = [str(s.get("detailImage") or s.get("image"))
+                        for s in (visual.get("sheets") or [])
+                        if s.get("detailImage") or s.get("image")]
         # The complete board adds little once a centered, dimensioned crop is
         # available, and other components' crops add no evidence for this part.
         # Keeping the attachment set target-scoped also prevents a multi-sheet

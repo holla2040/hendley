@@ -17,7 +17,11 @@ Refresh activates the known-existing first sheet with `EDIT .S1`, enumerates
 `electronics.Sheet`, selects only those returned sheets with `EDIT .S<n>`,
 runs `WINDOW FIT`, pauses for Fusion's deferred drawing-context update, removes
 any stale output, and exports each complete sheet with Fusion Electronics'
-`EXPORT IMAGE` command. It also fits and exports the board after `BOARD`, with
+`EXPORT IMAGE` command. Sparse sheets are also losslessly cropped to their
+populated drawing region. This removes the page frame and whitespace that can
+otherwise reduce a transistor arrow or diode bar to a few pixels during model
+transport; the complete sheet remains in the manifest as revision evidence.
+It also fits and exports the board after `BOARD`, with
 the `UNROUTED` layer temporarily hidden so airwires cannot be mistaken for
 package evidence. Each unresolved placement gets a centered 12 mm × 12 mm board
 crop whose exact physical span is recorded in the manifest. Export is
@@ -42,17 +46,29 @@ stays deliberately broad; every electrical, class, mount, and dimensional claim
 is repeated in the live sieve. A dimensioned crop may support a diameter token
 such as `D5`, while catalog `Diameter = 5 mm` supplies the proof.
 
-The image digest and visual schema version are part of the lazy-read cache key.
-Changing the drawing therefore triggers a new judgment; an unchanged drawing
-reuses the cached result. User decisions retain higher provenance than an AI
-reading.
+The image digest, visual schema version, and read-plan schema are part of the
+lazy-read cache key. Changing the drawing or proof protocol therefore triggers
+a new judgment; an unchanged drawing reuses the cached result. On cache load a
+visual LLM result remains an unresolved lazy-open row: opening it restores the
+cached full reading and executable proof plan without another model call.
+Reapplying only its compact `SpecKey` would lose class, polarity, ratings, and
+package proof. User decisions retain higher provenance and may resolve the row
+immediately.
+
+A physical land can have several exact package spellings in the live catalog.
+When measured evidence establishes that equivalence, `net.package` may carry
+the spelling set. The executor sends one narrow request per spelling, unions
+and deduplicates the rows, and proves every candidate's live package against
+the complete set. It never widens to a bare capped search or infers an alias
+from punctuation, a component name, or an index class flag.
 
 ## Consequences
 
 - New schematics should not require C/D/Q-specific Python edits merely because
   their symbols convey a different subtype.
-- Full sheets preserve nearby circuit context. The requested designator is
-  included in the dossier so the model must locate the correct symbol.
+- Full sheets preserve nearby circuit context; whitespace-trimmed detail images
+  keep small symbol geometry readable. The requested designator is included in
+  the dossier so the model must locate the correct symbol.
 - Generic or unreadable symbols remain uncertain and visible to the engineer.
 - Board imagery supports package and mount evidence, but does not establish
   electrical class.

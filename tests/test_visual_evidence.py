@@ -3,6 +3,7 @@ from pathlib import Path
 from hendley.ingestion.fusion.bridge import FusionBridge
 from hendley.ingestion.fusion.visual import (
     _recompress_png,
+    _schematic_detail,
     add_board_crops,
     capture_visual_evidence,
 )
@@ -42,7 +43,7 @@ def test_capture_enumerates_existing_sheets_and_exports_board(tmp_path, monkeypa
     assert any("WINDOW (10 61) (22 73);" in c for c in bridge.commands)
     assert [s["number"] for s in got["sheets"]] == [1, 2]
     assert len(got["images"]) == 4 and len(got["digest"]) == 64
-    assert got["schemaVersion"] == 3
+    assert got["schemaVersion"] == 4
     assert got["boardCrops"][0]["widthMm"] == 12
 
 
@@ -121,6 +122,34 @@ def test_fusion_png_is_losslessly_recompressed(tmp_path):
     after = path.read_bytes()
     assert len(after) < len(before) / 10
     assert after.startswith(b"\x89PNG\r\n\x1a\n")
+
+
+def test_sparse_schematic_gets_a_zoomed_detail_image(tmp_path):
+    import struct
+    import zlib
+
+    width, height = 100, 80
+    pixels = bytearray(b"\xff\xff\xff" * width * height)
+    for y in range(35, 45):
+        for x in range(42, 58):
+            pixels[(y * width + x) * 3:(y * width + x + 1) * 3] = b"\xff\x00\x00"
+    raw = b"".join(b"\x00" + pixels[y * width * 3:(y + 1) * width * 3]
+                   for y in range(height))
+    path = tmp_path / "sheet.png"
+    chunks = []
+    for kind, payload in (
+        (b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)),
+        (b"IDAT", zlib.compress(raw)), (b"IEND", b"")):
+        chunks.append(struct.pack(">I", len(payload)) + kind + payload
+                      + struct.pack(">I", zlib.crc32(kind + payload) & 0xffffffff))
+    path.write_bytes(b"\x89PNG\r\n\x1a\n" + b"".join(chunks))
+
+    detail = _schematic_detail(path)
+
+    assert detail and detail.is_file()
+    header = detail.read_bytes()
+    got_width, got_height = struct.unpack(">II", header[16:24])
+    assert got_width < width and got_height < height
 
 
 def test_board_crop_phase_never_returns_to_schematic(tmp_path, monkeypatch):

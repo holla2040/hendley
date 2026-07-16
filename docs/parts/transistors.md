@@ -48,7 +48,10 @@ Measured catalog rating names include `Drain to Source Voltage` for MOSFETs,
 schematic actually states; threshold, on-resistance, gain, dissipation, and
 pinout remain engineering choices when absent.
 
-For this library, `SOT23-3` normalizes to `SOT-23`. The live catalog also has a
-separate `SOT-23-3` spelling, but one search plan must use one exact package
-net. Do not let two identical library footprints normalize differently merely
-because their symbols differ.
+For this library, `SOT23-3` maps to one physical land. Live catalog records use
+both exact spellings `SOT-23` and `SOT-23-3` for that land. Use both spellings
+as a multi-package discovery net and repeat the full set in one live `package
+in` proof term. The executor sends one narrow request per spelling and unions
+the results; do not widen to a bare search that can hit the 100-row cap. Do not
+let two identical library footprints map differently merely because their
+symbols differ.

@@ -444,6 +444,39 @@ def test_lazy_read_cache_is_invalidated_when_visual_evidence_changes(tmp_path):
         server.server_close()
 
 
+def test_visual_cache_load_keeps_full_read_plan_lazy_for_the_ui(tmp_path):
+    interp = CountingInterpreter(confidence=0.9)
+    call, server = _mystery_app(tmp_path, interp)
+    try:
+        data = call("/api/intake", {"productionQuantity": 5})
+        visual = {"digest": "same-design", "schemaVersion": 3}
+        first = call("/api/read", {"lineIndex": 0,
+                                    "requirements": data["requirements"],
+                                    "visualEvidence": visual})
+        assert first["cached"] is False and interp.read_calls == 1
+
+        # Simulate the visual manifest persisted by a real Fusion Refresh.
+        cache = tmp_path / "design-cache.json"
+        saved = json.loads(cache.read_text())
+        saved["visualEvidence"] = visual
+        saved["requirements"]["lines"][0]["spec"] = first["requirementSpec"]
+        cache.write_text(json.dumps(saved))
+
+        loaded = call("/api/intake-cache")["cached"]
+        assert [u["designators"] for u in loaded["uninterpreted"]] == [["C7"]]
+        assert loaded["requirements"]["lines"][0].get("spec") is None
+
+        again = call("/api/read", {"lineIndex": 0,
+                                    "requirements": loaded["requirements"],
+                                    "visualEvidence": visual})
+        assert again["cached"] is True
+        assert again["reading"]["search"] == "47uF 50V"
+        assert interp.read_calls == 1
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
 def test_visual_read_cache_is_scoped_to_the_exact_designator(tmp_path):
     interp = CountingInterpreter(confidence=0.9)
     call, server = _mystery_app(tmp_path, interp)

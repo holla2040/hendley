@@ -79,8 +79,17 @@ def run_search(datasource: DataSource, plan: dict,
     had to satisfy — both go on screen: a query the engineer cannot see is a
     query they cannot correct.
     """
-    query = _query(plan)
-    rows = datasource.discover(query) if query else []
+    queries = _queries(plan)
+    rows = []
+    seen_rows: set[str] = set()
+    for query in queries:
+        for row in datasource.discover(query):
+            code = str(row.get("code") or "")
+            if code and code in seen_rows:
+                continue
+            if code:
+                seen_rows.add(code)
+            rows.append(row)
     if plan.get("mode") == "code":
         code = str((plan.get("net") or {}).get("code") or "").strip().upper()
         rows = [{"code": code}] if code else []
@@ -104,7 +113,9 @@ def run_search(datasource: DataSource, plan: dict,
                 {"field": p["field"], "why": p["why"]} for p in failed]})
         else:
             candidates.append(row)
+    query = queries[0] if queries else None
     return {"candidates": candidates, "misses": misses, "query": query,
+            "queries": queries,
             "proved": sieve, "scanned": len(cands), "truncated": truncated}
 
 
@@ -132,6 +143,31 @@ def _query(plan: dict) -> dict | None:
         return {"category": "components", "params": params}
     category = str(plan.get("category") or "").strip()
     return {"category": category, "params": net} if category else None
+
+
+def _queries(plan: dict) -> list[dict]:
+    """Expand a same-land package vocabulary into narrow discovery nets.
+
+    The catalog accepts one package spelling per request.  A physical land may
+    have several catalog spellings, so a plan may put their exact strings in
+    ``net.package`` as a list.  Each spelling gets its own capped request; the
+    caller unions the rows and the sieve proves every result against the whole
+    set.  This is discovery plumbing, never an alias judgment.
+    """
+    package = (plan.get("net") or {}).get("package")
+    if not isinstance(package, list):
+        query = _query(plan)
+        return [query] if query else []
+    queries = []
+    for spelling in dict.fromkeys(str(p).strip() for p in package):
+        if not spelling:
+            continue
+        one = {**plan, "net": {**(plan.get("net") or {}),
+                               "package": spelling}}
+        query = _query(one)
+        if query:
+            queries.append(query)
+    return queries
 
 
 def _provable(term: dict) -> bool:
@@ -196,8 +232,10 @@ def _full_sieve(plan: dict) -> list[dict]:
     for param, column in NET_COLUMNS.items():
         if param in (plan.get("net") or {}) and _squash(column) not in seen:
             seen[_squash(column)] = len(sieve)
-            sieve.append({"field": column, "op": "eq",
-                          "value": plan["net"][param], "fromNet": True})
+            value = plan["net"][param]
+            sieve.append({"field": column,
+                          "op": "in" if isinstance(value, list) else "eq",
+                          "value": value, "fromNet": True})
     return sieve
 
 

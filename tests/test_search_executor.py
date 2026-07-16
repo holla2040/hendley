@@ -485,3 +485,23 @@ def test_a_term_may_name_a_SET_of_packages_for_one_land():
     assert set(missed) == {"C5199842", "C52121503"}
     # the reason names what it IS and what was wanted — readable, not a code
     assert missed["C5199842"] == "is 'MSOP-8', not SOIC-8 or SOP-8"
+
+
+def test_a_multi_package_net_unions_narrow_requests_and_proves_the_land():
+    src = LyingIndex(SP3485)
+    got = run_search(src, {
+        "mode": "fts", "category": "components",
+        "net": {"search": "SP3485", "package": ["SOIC-8", "SOP-8"]},
+        "sieve": []})
+
+    assert src.queries == [
+        {"category": "components",
+         "params": {"search": "SP3485", "package": "SOIC-8"}},
+        {"category": "components",
+         "params": {"search": "SP3485", "package": "SOP-8"}},
+    ]
+    assert got["queries"] == src.queries
+    assert [c["code"] for c in got["candidates"]] == ["C8963", "C668205"]
+    assert got["proved"] == [{"field": "package", "op": "in",
+                              "value": ["SOIC-8", "SOP-8"],
+                              "fromNet": True}]
