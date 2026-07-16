@@ -2,8 +2,9 @@
 
 > **Picking this up fresh? Read [`HANDOFF.md`](HANDOFF.md).** It holds the current
 > state, the open work in priority order, the measured facts you must not re-derive,
-> and the two things that will otherwise waste your day: Fusion's `BOARD;` switch is
-> **one-way** (work from `~/.hendley/design-cache.json` instead), and `pytest` cannot
+> and the two things that will otherwise waste your day: Fusion's MCP proxy can
+> wedge on a board-to-schematic return (use the cached design or reset the MCP
+> server once), and `pytest` cannot
 > tell you the page never calls the API (use `scripts/ui_check.py`).
 
 ## Purpose
@@ -437,12 +438,14 @@ concrete `providers/*` or `datasources/jlc` — only the base protocols.
   - `live_design.py` — live extraction behind `hendley pcba`:
     `extract_schematic()` (Part + part-scoped Attribute reads; excludes
     GND/supply pseudo-parts and the title block), `extract_board()` (probes
-    `electronics.Element`, fires the one-way `BOARD;` switch when needed,
+    `electronics.Element`, fires `BOARD;` when needed; `EDIT .S1;` can request
+    schematic context but may require an MCP reset after board context),
     joins `electronics.Package` for footprint names), `is_dnp()`, `Placement`,
-     `natural_key()`.
+    `natural_key()`.
   - `visual.py` — best-effort Refresh-time image evidence with no model call:
-    enumerated schematic sheets, clean board export, and dimensioned unresolved
-    placement crops. Fusion dispatch is deferred, so capture settles the view,
+    enumerated schematic sheets plus populated-region details, clean board
+    export, and dimensioned unresolved placement crops. Fusion dispatch is
+    deferred, so capture settles the view,
     deletes stale output, and waits for a fresh PNG. `EXPORT IMAGE` omits the
     visible grid; crop bounds provide physical scale.
   - `parts_json.py` — the `DesignPart` model and `load_parts_json()` (the
@@ -621,13 +624,12 @@ of their words into the existing tooling.** Four standing rules for that role:
 **⭐ The one-prompt job — "Generate the files necessary for JLCPCB"** (or any
 ask for the BOM/CPL/order files): run **`hendley pcba`**. One command, no
 scratch scripts, no hand-built bridge pipeline — it reads the live design over
-the HTTP bridge (schematic first, then the one-way `BOARD;` switch), applies
+the HTTP bridge (schematic first, then a deliberate `BOARD;` transition), applies
 `data/cpl-rotations.json`, verifies stock against the live JLC API, and writes
 **exactly two files** — `bom.csv` + `cpl.csv` — to `~/tmp/hendley_output/`.
-Preconditions: Fusion open with the design's **schematic view active** (and the
-port-forward up). Afterward: relay the stock report (nonzero exit = blockers),
-remind the user the engine is left on the board context (click the schematic
-tab before re-running), and if they mention having to hand-rotate a part in
+Preconditions: Fusion open with the Electronics design active and no modal
+dialog (and the port-forward up). Afterward: relay the stock report (nonzero
+exit = blockers), and if they mention having to hand-rotate a part in
 JLC's order preview, add the correction to `data/cpl-rotations.json` (keyed by
 LCSC/footprint) so it's automatic from then on.
 
@@ -808,19 +810,22 @@ part" — jlcsearch is the discovery surface.
 All component routes are `POST` with a JSON body, even getter-shaped names.
 Null body fields are omitted to match the Java SDK's `toJSON()`.
 
-## ⚠️ Before ANY Fusion read — ask, and WAIT
+## ⚠️ Before ANY Fusion read
 
-Before any schematic read (bridge `electronics.Part` reads, `hendley app` intake,
-`hendley pcba`): **tell Craig to bring the schematic view to the front in Fusion, then
-STOP and wait for his confirmation.** One short line — *"Bring the schematic to the front
-in Fusion — say go."* Do not read first and diagnose afterwards.
+Ensure the Electronics design is active and no modal dialog is open. Hendley
+tries `EDIT .S1;` when schematic entities are unavailable, but this Fusion MCP
+build can wedge its proxy when returning from board context. If reads remain
+empty and `EDIT .S1;` reports recursive proxy failure, toggle the Fusion MCP
+server or restart Fusion once; do not keep retrying it.
 
-**Why:** the `BOARD;` switch is **one-way** and an open dialog silently blocks reads — they
-come back **empty, not erroring**. He asked for this gate explicitly after getting a wall
-of diagnosis instead of a one-line ask.
+An open dialog still silently blocks reads—they come back **empty, not
+erroring**. Do not discover sheets by incrementing `EDIT .S<N>`: Fusion creates
+a missing sheet. Read `electronics.Sheet` first, then switch only to returned
+sheet numbers.
 
-**And you usually get ONE read per session.** Spend it on a full Refresh, which caches the
-whole design to `~/.hendley/design-cache.json` — then work from that cache indefinitely
+A full Refresh captures every schematic sheet before its one-way-for-that-run
+`BOARD;` transition and caches the whole design to
+`~/.hendley/design-cache.json`; use that cache for repeatable UI work
 (`scripts/ui_check.py --live` does exactly this). See `HANDOFF.md`.
 
 ## Fusion access from WSL (read side)

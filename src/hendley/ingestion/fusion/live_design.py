@@ -1,9 +1,10 @@
 """Live Fusion design extraction — schematic parts and board placements.
 
 The read side of the ``hendley pcba`` flow: pull the open design over the HTTP
-bridge (parts + part-scoped attributes), switch the electronics engine's
-current drawing to the schematic when needed (``EDIT .S1;``), read it, switch
-to the board (``BOARD;``), and read the placements. All state stays in memory; turning the
+bridge (parts + part-scoped attributes), request schematic sheet 1 when needed
+(``EDIT .S1;``), read it, switch to the board (``BOARD;``), and read the
+placements. The current MCP proxy may wedge on a later return from board, so
+callers should read schematic data first. All state stays in memory; turning the
 extraction into JLCPCB order files is the provider adapter's job
 (:mod:`hendley.providers.jlcpcb.order_files`).
 
@@ -29,8 +30,8 @@ Extraction rules (verified live, documented in ``docs/fusion-notes.md``):
   ``BOARD;`` switch. The headline is what distinguishes a 150-mil ``SO16`` from a
   300-mil one; the name alone cannot.
 - Board entities read empty until the board is the engine's current drawing;
-  ``BOARD;`` switches it (without raising the board window). ``EDIT .S1;``
-  switches back to schematic sheet 1 even when the board layout is frontmost.
+  ``BOARD;`` switches it without raising the board window. ``EDIT .S1;`` can
+  request schematic sheet 1, but some MCP sessions wedge on a board return.
 """
 
 from __future__ import annotations
@@ -179,8 +180,8 @@ def extract_schematic(bridge: FusionBridge) -> tuple[str, list[DesignPart]]:
 def extract_board(bridge: FusionBridge) -> list[Placement]:
     """Read all board placements, switching the engine to the board if needed.
 
-    Read the schematic first for a coherent snapshot. A later schematic read can
-    return from the board with ``EDIT .S1;``.
+    Read the schematic first for a coherent snapshot. Do not depend on a later
+    board-to-schematic return in the same MCP session.
     """
     probe = bridge.read("electronics.Element", {"pagination": {"limit": 1, "offset": 0}})
     if not probe.get("items"):

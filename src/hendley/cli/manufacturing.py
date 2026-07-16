@@ -139,7 +139,7 @@ def cmd_pcba(client, args) -> int:
     from ..requirements import requirements_from_design
 
     bridge = bridge_mod.FusionBridge(host=args.fusion_host)
-    design, parts = extract_schematic(bridge)  # must run before the one-way BOARD; switch
+    design, parts = extract_schematic(bridge)
     print(f"design '{design}': {len(parts)} part(s) read from the schematic", file=sys.stderr)
     placements = extract_board(bridge)
     print(f"{len(placements)} placement(s) read from the board "

@@ -365,13 +365,12 @@ The two follow-ups are closed for this branch:
 1. Bare TVS voltage is explicitly *not* a shop `Vrwm` convention. The structured
    `intent.ratingAmbiguous` guard prevents automatic acceptance without parsing
    component-specific words in Python.
-2. The remaining dirty worktree was audited. Its eight files form an older
-   reversible-Fusion-context documentation/comment set. That claim conflicts
-   with the later live behavior recorded here: returning from board can wedge
-   this MCP proxy, so Refresh deliberately makes its one `BOARD` transition
-   only after all schematic capture. The older edits remain preserved and
-   unstaged for an explicit reconciliation; committing them now would publish
-   contradictory operating instructions.
+2. The older reversible-Fusion-context documentation/comment set was audited
+   and reconciled across the repository. Documentation now records both facts:
+   `EDIT .S1;` can complete a healthy round trip, but this MCP build may wedge
+   its proxy on a board return. Refresh therefore makes its one `BOARD`
+   transition only after all schematic capture, and a wedged proxy is reset
+   once rather than retried.
 
-The definitive post-acceptance run completed with `320 passed in 49.72s`;
+The definitive post-follow-up run completed with `322 passed in 50.17s`;
 Ruff and `git diff --check` were clean.

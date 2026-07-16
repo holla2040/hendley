@@ -106,9 +106,9 @@ files** to `~/tmp/hendley_output/` (override with `-o DIR`):
 
 Under the hood it: reads the schematic (parts + attributes; GND/supply symbols
 and the title block are excluded), switches the electronics engine to the board
-with the EAGLE `BOARD;` command (**one-way** — there is no command back, so the
-schematic is always read first; the board window is not visibly raised, but
-reactivate the schematic in the Fusion UI before the next run), reads the
+with the EAGLE `BOARD;` command after schematic extraction. `EDIT .S1;` can
+request schematic context when needed, but a wedged MCP proxy may require one
+server/Fusion reset rather than repeated retries. It reads the
 placements and footprint names, applies rotation corrections (below), and
 finally runs the same live JLC stock check as `hendley stock` — exiting nonzero
 on out-of-stock / not-found parts so it can gate a submission. `--no-verify`

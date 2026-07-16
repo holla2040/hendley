@@ -76,8 +76,11 @@ optional compatibility backend: set `HENDLEY_INTERPRETER=claude`.
 **6. Connect Fusion** (needed for the Refresh button to read your design):
 
 - In Fusion on Windows: open your Electronics document, enable
-  **Preferences > General > API > Fusion MCP Server**, and keep the
-  **schematic view active** with no dialog open.
+  **Preferences > General > API > Fusion MCP Server**, with no dialog open.
+  Hendley attempts to activate schematic sheet 1 automatically. This Fusion
+  MCP build can occasionally wedge when returning from board context; if a
+  Refresh reports empty Electronics reads/recursive proxy failure, toggle the
+  MCP server or restart Fusion once.
 - Forward Fusion's port so WSL can reach it. Get the gateway IP inside WSL —
   `ip route | grep default` (e.g. `172.17.64.1`) — then in PowerShell as
   Administrator:
@@ -164,9 +167,15 @@ After any fix, re-run the WSL check above (or just hit Refresh).
 Everything happens in the app: click **Refresh** to read the design and check
 live stock, click any red part to search and approve an alternate, set the
 board quantity, and **Export BOM/CPL** when every row is green. Before each
-Refresh, make the schematic the current document in Fusion (click its tab) —
-a Refresh leaves Fusion on the board view. The guide is
+Refresh, ensure the Electronics design is active and no dialog is open.
+Hendley requests schematic sheet 1 automatically, captures all sheets, then
+leaves the engine in board context. If the MCP proxy is wedged on a return,
+toggle the server or restart Fusion once. The guide is
 [`docs/app.md`](docs/app.md).
+
+Image-derived intent still fails closed on ambiguous ratings: bare `18V TVS`
+does not automatically mean reverse stand-off voltage and cannot resolve the
+requirement until that parameter or an exact part/family is supplied.
 
 ### Refresh-to-approved-parts flow
 

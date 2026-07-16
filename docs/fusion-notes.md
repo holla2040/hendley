@@ -197,6 +197,11 @@ more. `FusionBridge.read_all()` pages at `limit` 1000 per batch (with a
 
 ## Object model (what we walk)
 
+- `electronics.Sheet` = every existing top-level schematic sheet. Columns
+  include `number`, `name`, `description`, `headline`, bounds (`x1`…`y2`) and
+  `module_object_id`. Read this before issuing `EDIT .S<number>`; `EDIT` creates
+  a sheet when the number does not exist. Verified on the seven-sheet
+  `hendley test` fixture, 2026-07-15.
 - `electronics.Part` = a placed component **instance** on the schematic.
   Columns: `object_id`, `name` (designator, e.g. `U1`/`R1`), `value`
   (e.g. `22k`, or a supply-net name like `GND` for power symbols),
@@ -402,7 +407,7 @@ before using** (this is the "unsaved by default" caveat below).
   `Electron.run "VALUE R6 330"` — so even the value change Hendley used to defer
   to a manual step can now go in the `.scr`/command stream.
 
-## ⭐ Board placements over the bridge — the one-way `BOARD` switch (verified)
+## ⭐ Board/schematic context, sheets, and MCP proxy limits
 
 Board-side entities (`electronics.Element` etc.) read **empty** while the
 *schematic* view is active — `{"items":[]}`, not an error (same failure shape as
@@ -413,19 +418,67 @@ board layout over the same channel:
 app.executeTextCommand('Electron.run "BOARD;"')   # via fusion_mcp_execute
 ```
 
-⚠️ **The switch is ONE-WAY** (maintainer-confirmed): there is no command to
-return to the schematic view. So **read everything schematic-side first**
-(`electronics.Part` + scoped `electronics.Attribute`), then switch, then read
-the board.
+In a healthy proxy session, this command requests schematic sheet 1:
+
+```python
+app.executeTextCommand('Electron.run "EDIT .S1;"')
+```
+
+One complete live round trip succeeded on `hendley test`, 2026-07-15:
+`EDIT .S1;` exposed 36 `electronics.Part` rows and zero Element rows;
+`BOARD;` exposed 30 `electronics.Element` rows and zero Part rows; returning
+with `EDIT .S1;` restored the same 36 Part rows and zero Element rows. Later
+live runs established an important operational limit: this Fusion MCP build can
+wedge its script proxy on the board-to-schematic return, producing empty entity
+reads and recursive proxy stack errors. Therefore Refresh captures every
+schematic sheet first and treats its subsequent `BOARD;` as one-way for the
+remainder of that run. If the proxy is wedged, toggle the MCP server or restart
+Fusion once; repeated `EDIT .S1;` retries do not heal it.
+`EDIT .S2;`, etc. activate other schematic sheets. **Never probe upward until one fails:** Autodesk's `EDIT`
+semantics create a missing sheet. Enumerate first:
+
+```python
+bridge.read_all("electronics.Sheet")
+```
+
+The live `hendley test` design returned exactly sheet numbers 1–7 with
+`pagination.hasMore=false` on 2026-07-15.
+
+### Image evidence: settle, export fresh, and crop to scale
+
+Electronics commands dispatched through `Electron.run` can finish after the
+bridge request returns. Do not issue `WINDOW` and immediately trust an existing
+PNG: that produced identical sheet files and full-board images under crop
+filenames. The visual capture path now:
+
+1. changes context and window;
+2. waits briefly for Fusion to settle;
+3. removes the previous output file;
+4. fires `EXPORT IMAGE`;
+5. waits for a non-empty new PNG.
+
+Sparse schematic pages also receive a lossless crop around the populated
+drawing region, preserving small diode bars and transistor arrows during model
+transport. The clean board export brackets capture with `DISPLAY -UNROUTED;` and
+`DISPLAY UNROUTED;`. Airwires are routing state, not package evidence. Each
+unresolved placement also gets a 12 mm square window centered on its board
+coordinates. The manifest records that exact span, allowing image analysis to
+measure a can diameter or pad span.
+
+`GRID MM 1.0` was tested live. It changes the visible Fusion canvas, but native
+`EXPORT IMAGE` omits display-grid overlays; the Electronics workspace also has
+no `app.activeViewport` for `saveAsImageFile`. Dimensioned crop bounds are the
+reliable automated scale mechanism.
 
 ⚠️ **The switch does NOT visibly raise the board window** (maintainer-observed,
 live): the schematic can stay the front window throughout while `BOARD;` flips
 the electronics **engine's current-drawing context** — which is what the bridge
 queries. The context later reverts to the schematic on its own (observed after
 the user next interacts with the schematic window), after which Element reads
-are empty again. Treat "which entity reads non-empty" — not the visible window —
-as the source of truth, and tell the user to make the schematic current (click
-its tab/canvas) before the next schematic-first run.
+are empty again. Treat "which entity reads non-empty"—not the visible
+window—as the source of truth. Hendley may try `EDIT .S1;` when schematic
+entities are empty, but callers must recognize the wedged-proxy failure above
+and reset once rather than looping.
 
 After the switch (verified live on `comet`, 2026-07-10):
 
@@ -444,8 +497,8 @@ This whole flow is committed as **`hendley pcba`** (bridge:
 `src/hendley/ingestion/fusion/bridge.py`; live read:
 `src/hendley/ingestion/fusion/live_design.py`; BOM/CPL + rotation
 corrections: `src/hendley/providers/jlcpcb/order_files.py`; command:
-`src/hendley/cli/manufacturing.py`) — schematic read, one-way `BOARD;`
-switch, placement read, rotation corrections, live JLC stock check, and
+`src/hendley/cli/manufacturing.py`) — schematic read (`EDIT .S1;` when the
+layout is current), `BOARD;` placement read, rotation corrections, live JLC stock check, and
 exactly two output files (`bom.csv` + `cpl.csv`). Do-not-populate parts — a
 schematic `DNP` attribute set to anything but empty/`0`, or a board element
 whose `populate` flag is off — are excluded from both files and from the

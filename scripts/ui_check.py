@@ -16,8 +16,9 @@ Setup (once):
     ~/.venvs/pw/bin/playwright install chromium
 
 --live needs NO FUSION: it replays the design from ~/.hendley/design-cache.json,
-which the app writes on every Refresh. Fusion's BOARD; switch is one-way, so you
-usually get ONE read per session — spend it, then work from the cache for ever.
+which the app writes on every Refresh. Cache replay is faster and more
+repeatable than live reads, and avoids provoking a Fusion MCP proxy that can
+wedge on a board-to-schematic return.
 
 Screenshots land in /tmp/hendley-ui/. Look at them. A page that renders wrong
 raises no exception.
@@ -152,7 +153,8 @@ def main() -> int:
                  if ln.get("family")]
         if not lines:
             print("no family lines in the design cache — Refresh the app against "
-                  "Fusion once (schematic fronted) to write it")
+                  "Fusion once to write it (reset the MCP server only if its "
+                  "proxy is wedged)")
             return 1
 
     errors: list[str] = []
