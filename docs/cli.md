@@ -66,6 +66,7 @@ hendley scr swaps.json -o changes.scr
 | `hendley fusion PARTS.json` | Validate and optionally enrich Fusion parts-export data. |
 | `hendley stock PARTS.json` | Check BOM inventory and return nonzero on blocking stock problems. |
 | `hendley pcba` (alias: `hendley jlc`) | Generate the JLCPCB PCBA order files (`bom.csv` + `cpl.csv`) from the live Fusion design, rotation-corrected and stock-checked; exits nonzero on stock blockers. |
+| `hendley mcp` | Run the MCP server on stdio — Claude Code launches it; see [`mcp.md`](mcp.md). |
 | `hendley app` | Start the local web app (the single-page order workbench) on 127.0.0.1 — the primary interface. |
 | `hendley db lookup\|record\|rerank\|remove\|list\|refresh` | The house-parts knowledge base: House Parts with deliberately ranked, audited Part Choices (the AVL). Local SQLite; only `refresh` hits the live API. |
 | `hendley resolve REQUEST.json` | Resolve a Requirements BOM against the AVLs + live stock at the order's board count; `--queue` writes the batched approval queue for escalations; exits 1 on escalations. |

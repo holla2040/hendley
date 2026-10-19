@@ -1,0 +1,13 @@
+{
+  "autodeskProduct": "Fusion",
+  "type": "addin",
+  "id": "f1898503-bcb7-4c89-8842-af2793eb75e6",
+  "author": "SolOhm LLC",
+  "description": {
+    "": "SPIKE: open the Hendley app in a Fusion palette (ADR-0010)"
+  },
+  "version": "0.0.1",
+  "runOnStartup": false,
+  "supportedOS": "windows|mac",
+  "editEnabled": true
+}

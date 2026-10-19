@@ -96,6 +96,23 @@ def load_credentials(path: str | os.PathLike | None = None) -> Credentials:
     return _parse_keys(keys_path.read_text())
 
 
+def optional_key(label: str, env: str) -> str | None:
+    """One optional distributor key (DigiKey, Mouser): the ``env`` variable,
+    else a ``<label>: <value>`` line anywhere in ``.keys``. None when neither
+    has it — callers report the source as not configured instead of failing.
+    """
+    value = os.environ.get(env)
+    if value:
+        return value
+    path = os.environ.get("HENDLEY_KEYS")
+    keys_path = Path(path) if path else _project_root() / ".keys"
+    if not keys_path.exists():
+        return None
+    m = re.search(rf"^\s*{label}\s*:\s*(\S+)\s*$", keys_path.read_text(),
+                  re.IGNORECASE | re.MULTILINE)
+    return m.group(1) if m else None
+
+
 def _read_endpoint() -> str:
     """Endpoint override order: HENDLEY_ENDPOINT env, else the default API host.
 

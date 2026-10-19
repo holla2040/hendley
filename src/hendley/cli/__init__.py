@@ -35,6 +35,18 @@ from .manufacturing import cmd_bom, cmd_fusion, cmd_pcba, cmd_stock
 from .migration import cmd_scr
 
 
+def cmd_mcp(client, args: argparse.Namespace) -> int:
+    import os
+
+    from ..mcpserver import main as mcp_main
+
+    if args.keys:       # the tools build their sources lazily; point them here
+        os.environ["HENDLEY_KEYS"] = os.path.abspath(args.keys)
+
+    mcp_main()
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="hendley", description="JLCPCB parts inventory client.")
     p.add_argument("--keys", help="Path to the .keys credentials file (overrides discovery).")
@@ -219,6 +231,9 @@ def build_parser() -> argparse.ArgumentParser:
                     help="Don't open the browser automatically.")
     sp.set_defaults(func=cmd_app)
 
+    sp = sub.add_parser("mcp", help="Run the MCP server on stdio (Claude Code launches this).")
+    sp.set_defaults(func=cmd_mcp)
+
     sp = sub.add_parser("scr", help="Generate a Fusion .scr migration script from swap files.")
     sp.add_argument("swaps_json", nargs="+",
                     help="One or more swap JSON files; merged into one combo script.")
@@ -239,6 +254,7 @@ def main(argv: list[str] | None = None) -> int:
         args.command == "scr"
         or args.command == "bom"
         or args.command == "app"  # live access is constructed lazily per request
+        or args.command == "mcp"  # likewise, per tool call
         or (args.command == "db" and getattr(args, "db_action", None) != "refresh")
         or (args.command == "fusion" and getattr(args, "no_enrich", False))
         or (args.command == "alternates" and getattr(args, "list_categories", False))

@@ -24,6 +24,7 @@ class PartFact:
     manufacturer: str | None = None
     description: str | None = None
     offer_class: str | None = None  # e.g. JLC's "Basic"/"Extended" libraryType
+    lifecycle: str | None = None  # distributor's lifecycle text, e.g. "Active", "Obsolete"
     price_tiers: list[dict] = field(default_factory=list)  # raw tier rows
     provenance: str = ""  # data source name, e.g. "jlc-api"
     fetched_at: str | None = None  # ISO-8601 UTC

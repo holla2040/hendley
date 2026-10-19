@@ -16,6 +16,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8", "ruff>=0.4"]
+mcp = ["mcp>=2.3,<3"]
 
 [project.scripts]
 hendley = "hendley.cli:main"

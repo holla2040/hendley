@@ -13,6 +13,29 @@ Updated 2026-07-16. Read `CLAUDE.md` first, especially the glossary. This docume
 dashboard, not a development diary: current behavior, known limits, expensive facts,
 remaining work, and decisions that require Craig.
 
+## MCP server + US distributors (branch `mcp-server`, 2026-10-19)
+
+Started on Linux, continuing on Windows/WSL where Fusion runs. Design:
+[ADR-0010](docs/adr/0010-mcp-server-and-us-distributors.md); usage:
+[`docs/mcp.md`](docs/mcp.md).
+
+- **Done + verified live:** `hendley mcp` (stdio, 5 tools); DigiKey and Mouser
+  `DataSource`s verified by exact MPN (keys are in Craig's `.keys`, apps named
+  "Hendley" on both portals); jlcsearch reachable keyless. 351 tests pass.
+- **Not verified live yet:** `search_parts` / `part_detail` — the Linux box had
+  no JLC block in `.keys`. First thing on WSL: copy `.keys` (all three blocks),
+  register the server (`docs/mcp.md` → Setup), ask Claude in another repo
+  "find me a 3.3V LDO in SOT-23, Basic part, and check US availability".
+- **Fusion add-in spike** (`fusion-addin/`, throwaway): can a palette host the
+  Hendley app inside Fusion's Electronics workspace? Run it per
+  `fusion-addin/README.md` and fill in its answer table. Craig's goal for it:
+  type "find me a 3.3V LDO" without leaving Fusion.
+- **Library-part creation** in Fusion (symbol + footprint) is wanted but
+  unexplored — no repo has tried EAGLE library commands over the bridge.
+- **Open decision for Craig:** should a part picked while drawing be recorded
+  as an approved choice in the parts DB (so `pcba` resolves it later)? Until
+  answered, `approved_parts` is read-only.
+
 ## Standing rules
 
 1. **Hendley never changes electrical/design content in Fusion.** Read-only

@@ -487,6 +487,8 @@ such as `1kV` and `1000V` without parsing component names.
 - [`docs/app.md`](docs/app.md) — the app: the single-page order workbench
 - [`docs/cli.md`](docs/cli.md) — the CLI: commands, order files, the
   design-change workflow, the `.scr` format, the Python API
+- [`docs/mcp.md`](docs/mcp.md) — `hendley mcp`: part search + DigiKey/Mouser
+  availability as Claude Code tools, from any project
 - [`docs/vision.md`](docs/vision.md) — why the project exists
 - [`docs/PRD.md`](docs/PRD.md) — product scope, workflows, acceptance criteria
 - [`docs/architecture.md`](docs/architecture.md) — modules, interfaces, and

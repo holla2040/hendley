@@ -30,3 +30,4 @@ scratch-*/
 
 # OS
 .DS_Store
+fusion-addin/**/hendley-addin.log
