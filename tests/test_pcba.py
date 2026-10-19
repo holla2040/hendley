@@ -92,9 +92,13 @@ def test_schematic_read_returns_from_frontmost_board_with_edit_s1(monkeypatch):
             self.schematic = False
             self.commands = []
 
+        def active_document_name(self):
+            return "hendley test brd"   # the board is the front document
+
         def read_all(self, entity_type, obj=None, page=1000):
             if entity_type == "electronics.Schematic":
-                return [{"name": "hendley test sch.sch"}]
+                # reads empty from the board (measured 2026-10-19)
+                return [{"name": "hendley test sch.sch"}] if self.schematic else []
             if entity_type == "electronics.Part":
                 return ([{"object_id": 1, "name": "C3", "value": "10u/25V",
                           "device_object_id": 10}] if self.schematic else [])

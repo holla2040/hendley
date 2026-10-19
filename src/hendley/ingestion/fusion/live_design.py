@@ -174,6 +174,20 @@ def ensure_board(bridge: FusionBridge) -> None:
 
 def extract_schematic(bridge: FusionBridge) -> tuple[str, list[DesignPart]]:
     """Read the open design's name and real parts (schematic must be current first)."""
+    part_rows = bridge.read_all("electronics.Part")
+    if not part_rows:
+        # Verified live 2026-07-15: EDIT .S1 works across editor contexts and
+        # makes schematic entities readable while the layout is frontmost.
+        ensure_schematic(bridge)
+        part_rows = bridge.read_all("electronics.Part")
+    if not part_rows:
+        raise BridgeError(
+            "no schematic parts readable — the schematic is empty, or a modal "
+            "dialog is open in Fusion"
+        )
+    # The name only after the schematic is current: from the board,
+    # electronics.Schematic reads empty and the fallback is the BOARD document's
+    # name ("comet brd", measured 2026-10-19).
     design = "unknown"
     schematics = bridge.read_all("electronics.Schematic")
     if schematics:
@@ -187,18 +201,6 @@ def extract_schematic(bridge: FusionBridge) -> tuple[str, list[DesignPart]]:
         read_name = getattr(bridge, "active_document_name", None)
         if read_name:
             design = str(read_name() or "").strip() or "unknown"
-
-    part_rows = bridge.read_all("electronics.Part")
-    if not part_rows:
-        # Verified live 2026-07-15: EDIT .S1 works across editor contexts and
-        # makes schematic entities readable while the layout is frontmost.
-        ensure_schematic(bridge)
-        part_rows = bridge.read_all("electronics.Part")
-    if not part_rows:
-        raise BridgeError(
-            "no schematic parts readable — the schematic is empty, or a modal "
-            "dialog is open in Fusion"
-        )
     # The library FOOTPRINT, read schematic-side — no board switch needed. The
     # device already names its package; joining electronics.Package gives us the
     # footprint's NAME and, crucially, its HEADLINE, which is where the geometry

@@ -39,10 +39,13 @@ its known lies (ADR-0007) are already handled by the sieve.
    breaks, lead time, datasheet and product URLs. They do not discover; JLC
    remains the discovery path. `PartFact` gains one optional field,
    `lifecycle`.
-4. **Read-only, both directions.** The server never writes to Fusion (standing
-   rule) and, in v1, never writes the house-parts DB. Whether a part chosen
-   while drawing should be recorded as an approved choice is an open question
-   for Craig; until he answers, `approved_parts` only reads.
+4. **Never writes Fusion; writes the parts DB only through `approve_part`.**
+   The server never writes to Fusion (standing rule). Craig decided
+   (2026-10-19) that a part approved during schematic capture is recorded as
+   an approved choice, so `hendley pcba` resolves it later. `approve_part`
+   takes a placed designator rather than an agent-written spec: the key is
+   named from the live schematic line by the app's own path, because a key
+   that differs from what Refresh derives would never be looked up.
 5. **Python still does not rank or pick.** Candidates come back in index order
    with the facts; the agent recommends using Craig's bias (same package first,
    then high stock, then price).

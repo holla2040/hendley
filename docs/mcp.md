@@ -47,8 +47,22 @@ DigiKey: developer.digikey.com → Organization → Production App with
 | `part_detail(codes)` | live JLC facts for C-codes: MPN, package, Basic/Extended, stock, tiers, parameters, datasheet |
 | `us_availability(mpns)` | DigiKey + Mouser per exact MPN: stock, lifecycle, price breaks, lead time, links |
 | `approved_parts(kind?)` | the house-parts DB (approved ranked choices) — read only |
+| `approve_part(designator, code, alternates?)` | record a part approved while drawing: reads the placed line from the live schematic, names its requirement the way Refresh does, live-verifies every code and its package, then records it through the app's approval path |
 
-Read-only throughout: no Fusion writes, no DB writes, no ranking in Python.
+No Fusion writes and no ranking in Python. The one DB write is
+`approve_part`, and only on the engineer's say-so (Craig, 2026-10-19). The
+part must already be placed: the key is named from the schematic line
+exactly as Refresh names it, so the next Refresh and `hendley pcba` look up
+the list it wrote. The first code becomes the chosen part of a new list;
+on an existing list it joins as an alternate. It answers
+`resolvesOnRefresh` by re-running Refresh's own lookup on the same parts.
+Verified live on Comet (R8, U2) against a copy of the parts DB.
+
+Known limits: alternates must share the first code's catalog package, so
+one land spelled two ways (SOIC-8 / SOP-8) is refused (add it in the app);
+the first code's package is taken from the requirement the app names, as in
+the app; a part marked not-populated only on the board is not caught (the
+board is not read); from the board view it switches Fusion to the schematic.
 
 ## Verified 2026-10-19 (Linux)
 

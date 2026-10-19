@@ -35,9 +35,8 @@ Started on Linux, continuing on Windows/WSL where Fusion runs. Design:
   `fusion-addin/README.md`. Drawing-time search = Claude Code + `hendley mcp`.
 - **Library-part creation** in Fusion (symbol + footprint) is wanted but
   unexplored — no repo has tried EAGLE library commands over the bridge.
-- **Open decision for Craig:** should a part picked while drawing be recorded
-  as an approved choice in the parts DB (so `pcba` resolves it later)? Until
-  answered, `approved_parts` is read-only.
+- **Decided 2026-10-19:** a part approved while drawing is recorded in the
+  parts DB — `approve_part(designator, code, alternates)`; see `docs/mcp.md`.
 
 ## Standing rules
 
