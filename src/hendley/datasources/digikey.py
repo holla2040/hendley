@@ -87,7 +87,7 @@ class DigiKeyDataSource:
             out[mpn] = PartFact(
                 ref=mpn,
                 found=True,
-                stock=hit.get("QuantityAvailable"),
+                stock=_stock(hit),
                 mpn=hit.get("ManufacturerProductNumber"),
                 manufacturer=(hit.get("Manufacturer") or {}).get("Name"),
                 description=(hit.get("Description") or {}).get("ProductDescription"),
@@ -101,6 +101,20 @@ class DigiKeyDataSource:
 
     def discover(self, query: dict) -> list[dict]:
         return []           # ADR-0010: US distributors verify, JLC discovers
+
+
+def _stock(product: dict) -> int | None:
+    """DigiKey often omits ``QuantityAvailable`` (measured 2026-10-19: at 0
+    for CL10A105KB8NNNC, and for stocked DSS34 / 1SMA4744A too), while each
+    ``ProductVariations[]`` still carries ``QuantityAvailableforPackageType``.
+    The variations share one pool, so their largest count is the stock. With
+    neither present the stock is honestly unknown."""
+    if product.get("QuantityAvailable") is not None:
+        return product["QuantityAvailable"]
+    counts = [v.get("QuantityAvailableforPackageType")
+              for v in product.get("ProductVariations") or []]
+    counts = [c for c in counts if c is not None]
+    return max(counts) if counts else None
 
 
 def _buyable(product: dict) -> dict | None:

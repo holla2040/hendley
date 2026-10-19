@@ -53,6 +53,18 @@ def test_digikey_keeps_only_the_exact_mpn():
     assert fact.lifecycle == "Active" and fact.stock == 500
 
 
+def test_digikey_omitted_quantity_is_zero_not_unknown():
+    """DigiKey may drop QuantityAvailable; the variations still carry it."""
+    product = _dk_product("X")
+    del product["QuantityAvailable"]
+    for v in product["ProductVariations"]:
+        v["QuantityAvailableforPackageType"] = 0
+    assert _dk(lambda kw: [product]).verify(["X"])["X"].stock == 0
+
+    del product["ProductVariations"]
+    assert _dk(lambda kw: [product]).verify(["X"])["X"].stock is None
+
+
 def test_digikey_a_near_miss_is_not_found():
     ds = _dk(lambda kw: [_dk_product(kw + "-7")])
     assert not ds.verify(["AP2112K-3.3TRG1"])["AP2112K-3.3TRG1"].found
