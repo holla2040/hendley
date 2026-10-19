@@ -95,7 +95,9 @@ def _default_bridge(host: str | None):
 def _default_interpreter(backend: str | None = None, model: str | None = None):
     import os
 
-    backend = (backend or os.environ.get("HENDLEY_INTERPRETER", "codex")).strip().lower()
+    # --model names a Codex model, so on its own it selects Codex.
+    backend = (backend or os.environ.get("HENDLEY_INTERPRETER")
+               or ("codex" if model else "claude")).strip().lower()
     if backend == "codex":
         from ..ai.codex_cli import CodexCLIInterpreter
 

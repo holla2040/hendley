@@ -85,20 +85,21 @@ def test_codex_failure_is_an_unavailable_interpreter(monkeypatch):
         {"designator": "D1", "value": "", "footprint": "D-SOD323"}) is None
 
 
-def test_backend_selection_defaults_to_codex_and_keeps_claude(monkeypatch):
+def test_backend_selection_defaults_to_claude_and_keeps_codex(monkeypatch):
     from hendley.ai.claude_cli import ClaudeCLIInterpreter
     from hendley.app.server import ApiError, _default_interpreter
 
     monkeypatch.delenv("HENDLEY_INTERPRETER", raising=False)
-    assert isinstance(_default_interpreter(), CodexCLIInterpreter)
-    monkeypatch.setenv("HENDLEY_INTERPRETER", "claude")
     assert isinstance(_default_interpreter(), ClaudeCLIInterpreter)
+    assert isinstance(_default_interpreter(model="gpt-test"), CodexCLIInterpreter)
+    monkeypatch.setenv("HENDLEY_INTERPRETER", "codex")
+    assert isinstance(_default_interpreter(), CodexCLIInterpreter)
     monkeypatch.setenv("HENDLEY_INTERPRETER", "unknown")
     with pytest.raises(ApiError, match="expected 'codex' or 'claude'"):
         _default_interpreter()
 
 
-def test_app_cli_defaults_to_codex_and_can_select_claude():
+def test_app_cli_leaves_backend_unset_and_can_select_either():
     from hendley.cli import build_parser
 
     parser = build_parser()

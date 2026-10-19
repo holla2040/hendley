@@ -20,12 +20,13 @@ Two realities broke deterministic intake on the first real design pull:
 ## Decision
 
 1. **Interpreter = a replaceable CLI adapter behind the `Interpreter` protocol**
-   (`hendley/ai/`). Codex is the default transport: ephemeral, read-only
-   `codex exec`, riding the user's existing Codex login with no API key. Use
-   `HENDLEY_CODEX_BIN` and optional `HENDLEY_CODEX_MODEL` overrides. Set
-   `HENDLEY_INTERPRETER=claude` to use the original Claude CLI compatibility
-   backend (`claude -p … --output-format json`), where `HENDLEY_CLAUDE_BIN`
-   overrides the binary. Any failure (missing binary, timeout, non-JSON)
+   (`hendley/ai/`). Claude is the default transport (`claude -p …
+   --output-format json`), riding the user's Claude Code login with no API
+   key; `HENDLEY_CLAUDE_BIN` overrides the binary. Set
+   `HENDLEY_INTERPRETER=codex` for the Codex transport: ephemeral, read-only
+   `codex exec`, with `HENDLEY_CODEX_BIN` and optional `HENDLEY_CODEX_MODEL`
+   overrides. (Codex was the default 2026-07-15 → 2026-10-19; Craig reverted
+   it: Hendley is a Claude Code project.) Any failure (missing binary, timeout, non-JSON)
    degrades to the fallback, never breaks the flow.
 2. **Every judgment is cached** in the knowledge DB (`interpretations`
    table, schema v4) keyed by the verbatim strings, with provenance
