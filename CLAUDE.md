@@ -253,10 +253,12 @@ concrete `providers/*` or `datasources/jlc` — only the base protocols.
   unsieved, to the resolver. `family_of()` holds the rule; `FAMILY_PREFIXES`
   the designators.
 - `src/hendley/ai/` — the interpretation tier (ADR-0005/0006/0007):
-  `Interpreter` protocol + `codex_cli.py` (default: ephemeral, read-only
-  `codex exec`, rides the user's Codex login; `HENDLEY_CODEX_BIN` and optional
-  `HENDLEY_CODEX_MODEL` overrides). `HENDLEY_INTERPRETER=claude` retains the
-  `claude_cli.py` compatibility backend. **Refresh is cache-only:** it
+  `Interpreter` protocol + `claude_cli.py` (default: `claude -p`, rides the
+  user's Claude Code login; `HENDLEY_CLAUDE_BIN` overrides). `codex_cli.py` is
+  the alternative (`HENDLEY_INTERPRETER=codex` or `--interpreter codex`;
+  ephemeral read-only `codex exec`, `HENDLEY_CODEX_BIN` / `HENDLEY_CODEX_MODEL`).
+  Only the Codex backend attaches schematic images today (ADR-0009); Claude
+  reads the text dossier. **Refresh is cache-only:** it
   reads Fusion, applies exact/deterministic/cached knowledge, and never launches
   an agent process. An uncached unresolved part is judged only when the engineer
   opens its red/yellow panel; that one lazy read supplies the SpecKey and is
@@ -438,8 +440,10 @@ concrete `providers/*` or `datasources/jlc` — only the base protocols.
   - `live_design.py` — live extraction behind `hendley pcba`:
     `extract_schematic()` (Part + part-scoped Attribute reads; excludes
     GND/supply pseudo-parts and the title block), `extract_board()` (probes
-    `electronics.Element`, fires `BOARD;` when needed; `EDIT .S1;` can request
-    schematic context but may require an MCP reset after board context),
+    `electronics.Element`, then `ensure_board()` fires `EDIT .brd;` only when
+    `electronics.Board` reads empty — a no-op EDIT latches Fusion's script
+    channel; `ensure_schematic()` does the same with `EDIT .S1;`, which may
+    require an MCP reset after board context),
     joins `electronics.Package` for footprint names), `is_dnp()`, `Placement`,
     `natural_key()`.
   - `visual.py` — best-effort Refresh-time image evidence with no model call:
@@ -624,7 +628,7 @@ of their words into the existing tooling.** Four standing rules for that role:
 **⭐ The one-prompt job — "Generate the files necessary for JLCPCB"** (or any
 ask for the BOM/CPL/order files): run **`hendley pcba`**. One command, no
 scratch scripts, no hand-built bridge pipeline — it reads the live design over
-the HTTP bridge (schematic first, then a deliberate `BOARD;` transition), applies
+the HTTP bridge (schematic first, then a deliberate `EDIT .brd;` transition), applies
 `data/cpl-rotations.json`, verifies stock against the live JLC API, and writes
 **exactly two files** — `bom.csv` + `cpl.csv` — to `~/tmp/hendley_output/`.
 Preconditions: Fusion open with the Electronics design active and no modal
@@ -824,7 +828,7 @@ a missing sheet. Read `electronics.Sheet` first, then switch only to returned
 sheet numbers.
 
 A full Refresh captures every schematic sheet before its one-way-for-that-run
-`BOARD;` transition and caches the whole design to
+board transition and caches the whole design to
 `~/.hendley/design-cache.json`; use that cache for repeatable UI work
 (`scripts/ui_check.py --live` does exactly this). See `HANDOFF.md`.
 

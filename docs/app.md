@@ -6,7 +6,7 @@ Refresh checks validated search history before the visual reader. An exact
 stable-library identity attaches the previously approved specification and AVL;
 the normal resolver live-verifies the list and mounts the first choice covering
 this build, falling through existing alternates without another pick. Opening
-the component also runs a fresh discovery search without Codex planning. Weaker
+the component also runs a fresh discovery search without agent planning. Weaker
 matches remain optional suggestions. Typed edits win. Provenance, Forget,
 catalog-failure Retry, and activity appear with the search.
 
@@ -15,8 +15,8 @@ Python stdlib only, zero extra dependencies, bound to `127.0.0.1`.
 
 ```bash
 hendley app            # serves http://127.0.0.1:8341/ and opens the browser
-hendley app --interpreter claude  # use Claude instead of the Codex default
-hendley app --model gpt-5.6-terra # select the Codex model for this run
+hendley app --interpreter codex   # use Codex instead of the Claude default
+hendley app --interpreter codex --model gpt-5.6-terra  # and pick its model
 ```
 
 One page — the order workbench (2026-07 redesign) — a thin surface over the
@@ -273,8 +273,9 @@ WSL2 — the port forward up: see
 [Reaching Fusion from WSL2](fusion-notes.md#reaching-fusion-from-wsl2--the-windows-port-forward).
 
 No modal dialog may be open—an open dialog makes reads come back empty. Hendley
-uses `EDIT .S1;` when necessary to request schematic sheet 1, reads every
-enumerated sheet, then uses `BOARD;` to read placements. That transition is
+uses `EDIT .S1;` only when the schematic is not current, reads every
+enumerated sheet, then uses `EDIT .brd;` to read placements (again only when
+needed: a no-op EDIT latches Fusion's script channel until Esc). That transition is
 one-way for the remainder of the Refresh. Some Fusion MCP builds wedge their
 script proxy when returning from board; if reads stay empty and `EDIT .S1;`
 reports recursive proxy failure, toggle the MCP server or restart Fusion once.
@@ -289,8 +290,9 @@ awaited. Board exports temporarily hide `UNROUTED`, and unresolved placements
 receive centered 12 mm × 12 mm crops with their physical span recorded. Sparse
 schematic pages also receive whitespace-trimmed detail images so small symbol
 geometry remains readable. Opening a red/yellow unresolved part sends only its
-own board crop plus schematic detail sheets to Codex—not other placements or a
-redundant complete board. Unchanged images reuse the cached reading; a changed
+own board crop plus schematic detail sheets to the interpreter (attached as
+images by Codex; the Claude backend gets the text dossier only)—not other
+placements or a redundant complete board. Unchanged images reuse the cached reading; a changed
 digest or read-plan schema forces a new one.
 
 The reading's intent is executable. Candidate class is proved against the live

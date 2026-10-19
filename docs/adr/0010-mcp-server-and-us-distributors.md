@@ -51,7 +51,10 @@ its known lies (ADR-0007) are already handled by the sieve.
 
 - Distributor keys are optional. Without them `us_availability` reports
   "not configured" per source instead of failing.
-- The in-Fusion path ("type the request without leaving Fusion") is a separate
-  question: a Fusion add-in palette hosting the Hendley app. Whether an add-in
-  can show a palette in the Electronics workspace is unverified — see
-  `fusion-addin/README.md`. It reuses the same search either way.
+- The in-Fusion path ("type the request without leaving Fusion") was tested
+  as a Fusion add-in palette hosting the Hendley app (`fusion-addin/`). It
+  works: a button in the schematic toolbar, the app in a docked palette,
+  searchable over a schematic. **Shelved 2026-10-19:** it is the same web app
+  in a panel that must be made very wide, taking about half the screen from
+  the schematic, for nothing a browser beside Fusion lacks. Drawing-time search
+  goes through this MCP server instead.

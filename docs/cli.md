@@ -107,8 +107,9 @@ files** to `~/tmp/hendley_output/` (override with `-o DIR`):
 
 Under the hood it: reads the schematic (parts + attributes; GND/supply symbols
 and the title block are excluded), switches the electronics engine to the board
-with the EAGLE `BOARD;` command after schematic extraction. `EDIT .S1;` can
-request schematic context when needed, but a wedged MCP proxy may require one
+with the EAGLE `EDIT .brd;` command after schematic extraction, only if the
+board is not already current (a no-op EDIT latches Fusion's script channel).
+`EDIT .S1;` can request schematic context when needed, but a wedged MCP proxy may require one
 server/Fusion reset rather than repeated retries. It reads the
 placements and footprint names, applies rotation corrections (below), and
 finally runs the same live JLC stock check as `hendley stock` — exiting nonzero
@@ -159,7 +160,7 @@ to land in Fusion, and that is this workflow.
 There is **one** design-change workflow. A part needs to change — it's **out of
 stock**, you want a **different package**, or a **different value** — and the
 path is the same each time; only the trigger differs. It runs as an interactive
-Codex session in this repo: Codex reads
+Claude Code session in this repo: Claude reads
 the live design and does the JLC lookups, **you** make the design decision, and
 **Fusion** is where the change is written (the Electronics *object* API is
 read-only, but the `.scr` can be applied either manually or fired over the bridge

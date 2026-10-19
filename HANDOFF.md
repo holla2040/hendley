@@ -19,17 +19,20 @@ Started on Linux, continuing on Windows/WSL where Fusion runs. Design:
 [ADR-0010](docs/adr/0010-mcp-server-and-us-distributors.md); usage:
 [`docs/mcp.md`](docs/mcp.md).
 
-- **Done + verified live:** `hendley mcp` (stdio, 5 tools); DigiKey and Mouser
-  `DataSource`s verified by exact MPN (keys are in Craig's `.keys`, apps named
-  "Hendley" on both portals); jlcsearch reachable keyless. 351 tests pass.
-- **Not verified live yet:** `search_parts` / `part_detail` — the Linux box had
-  no JLC block in `.keys`. First thing on WSL: copy `.keys` (all three blocks),
-  register the server (`docs/mcp.md` → Setup), ask Claude in another repo
-  "find me a 3.3V LDO in SOT-23, Basic part, and check US availability".
-- **Fusion add-in spike** (`fusion-addin/`, throwaway): can a palette host the
-  Hendley app inside Fusion's Electronics workspace? Run it per
-  `fusion-addin/README.md` and fill in its answer table. Craig's goal for it:
-  type "find me a 3.3V LDO" without leaving Fusion.
+- **Done + verified live (WSL, 2026-10-19):** all 5 `hendley mcp` tools,
+  including `search_parts` / `part_detail` against live JLC, and the whole
+  Comet BOM through `part_detail` + `us_availability`. 355 tests pass.
+  A new machine's public IP must be on the JLC app's allowlist.
+- **Search gaps (open, `docs/mcp.md` → Verified):** the jlcsearch `ldos`
+  table is sparse (misses C5446, the obvious Basic 3.3 V SOT-23 LDO); keyword
+  search returns unrelated parts; a free search asks one package word, not the
+  land's spellings. `us_availability` matches MPN only, and generic MPNs
+  resolve to a different maker at DigiKey/Mouser.
+- **Interpreter is Claude again** (`claude -p`); Codex is `--interpreter codex`.
+- **Fusion add-in spike: shelved 2026-10-19.** A palette can host the app in
+  the Electronics workspace (all three questions yes), but it needs about half
+  the screen and adds nothing over a browser beside Fusion. See
+  `fusion-addin/README.md`. Drawing-time search = Claude Code + `hendley mcp`.
 - **Library-part creation** in Fusion (symbol + footprint) is wanted but
   unexplored — no repo has tried EAGLE library commands over the bridge.
 - **Open decision for Craig:** should a part picked while drawing be recorded
@@ -56,8 +59,9 @@ Started on Linux, continuing on Windows/WSL where Fusion runs. Design:
   visual evidence. Opening an uncached red/yellow part performs one lazy reading
   and caches its full executable proof plan; visual cache hydration deliberately
   keeps the row lazy so the plan is not reduced to a compact SpecKey.
-- Codex is the default interpretation backend (`codex exec --ephemeral` in a
-  read-only sandbox). `HENDLEY_INTERPRETER=claude` retains the former backend.
+- Claude (`claude -p`) is the default interpretation backend again
+  (2026-10-19: "This is a Claude Code project"). `HENDLEY_INTERPRETER=codex`
+  selects Codex, which alone attaches schematic images today (ADR-0009).
 - Keeps exact provider codes, manufacturer MPNs, incomplete families, specifications,
   local labels, DNP parts, and unresolved parts distinct.
 - Resolves approved part lists against live JLC stock and exports gated BOM/CPL files.
@@ -142,6 +146,15 @@ Started on Linux, continuing on Windows/WSL where Fusion runs. Design:
   with exactly seven sheets (1–7) on 2026-07-15. Full round trip measured:
   S1 = 36 Part / 0 Element; board = 0 Part / 30 Element; returned S1 =
   36 Part / 0 Element.
+- **A no-op `EDIT` latches Fusion's script channel** (opening the editor or
+  sheet that is already current): every later script is refused with "Cannot
+  perform 'script' while a command dialog is open", no dialog is visible, and
+  only Esc in Fusion clears it (isolated in ThomsonLint, 2026-08-28). It broke
+  a Comet Refresh on 2026-10-19. Intake now probes the active editor with a
+  read (`electronics.Sheet` / `electronics.Board`) and switches only when
+  needed, with `EDIT .brd;` replacing `BOARD;`; one-sheet designs get no
+  `EDIT` at all. Verified live on Comet: 24 lines, 33 placements, sheet and
+  board images, channel still clear afterwards.
 - `MP`/`MF` are stale import metadata, never identity. Read `MPN`; exact JLC identity is
   `LCSC`/providerRefs.
 - Unresolved-part intent is lazy and image-assisted. Refresh makes no model

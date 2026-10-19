@@ -46,10 +46,10 @@ cd hendley
 ./hendley app
 ```
 
-The app serves `http://127.0.0.1:8341/` and opens your browser. Codex is the
-default agent interpreter; launch with `./hendley app --interpreter claude` to
-use Claude for that run. Select a Codex model explicitly with, for example,
-`./hendley app --model gpt-5.6-terra`; otherwise Codex uses its current model.
+The app serves `http://127.0.0.1:8341/` and opens your browser. Claude Code
+(`claude -p`) is the agent interpreter; launch with
+`./hendley app --interpreter codex` to use Codex for that run
+(`--model gpt-5.6-terra` picks its model and implies Codex).
 The Windows
 browser reaches that address directly — no networking setup is needed for the
 app itself.
@@ -67,17 +67,12 @@ JLCAPI:
 The app starts without it, but live stock checks and searches need it. Never
 commit `.keys` or any secret.
 
-**5. Install Codex CLI and log in** (inside WSL). Hendley uses an ephemeral,
-read-only `codex exec` when you open an uncached red/yellow part:
-
-```bash
-codex login
-```
-
-Install the CLI from the official Codex CLI instructions if `codex` is not yet
-available. It rides your Codex login—no separate API key. Without it the app
-still works, but leaves new ambiguous parts unresolved. Claude remains an
-optional compatibility backend: set `HENDLEY_INTERPRETER=claude`.
+**5. Install Claude Code and log in** (inside WSL). Hendley runs `claude -p`
+when you open an uncached red/yellow part or type a search. It rides your
+Claude Code login—no separate API key. Without it the app still works, but
+leaves new ambiguous parts unresolved. Codex is the alternative backend
+(`HENDLEY_INTERPRETER=codex`, after `codex login`); today it is the only one
+that also sends the schematic crop images (ADR-0009).
 
 **6. Connect Fusion** (needed for the Refresh button to read your design):
 
@@ -116,7 +111,7 @@ curl -s -m5 -o /dev/null -w '%{http_code}\n' -H 'Host: 127.0.0.1:27182' \
   -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"ping","version":"0"}}}'
 ```
 
-For a complete read-only health check—including schematic rows, the `BOARD;`
+For a complete read-only health check—including schematic rows, the board
 transition, placement rows, and context restoration—run:
 
 ```bash

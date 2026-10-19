@@ -67,11 +67,23 @@ def run(context):
         cmd.commandCreated.add(created)
         _handlers.append(created)
 
-        # Question 1: list every workspace and try to put the button in its
-        # first toolbar panel. The log says which ones took it.
-        for i in range(ui.workspaces.count):
-            ws = ui.workspaces.item(i)
-            panels = [ws.toolbarPanels.item(j).id for j in range(ws.toolbarPanels.count)]
+        # Question 1: try to put the button in the first toolbar panel of every
+        # workspace. ui.workspaces includes some with no product type yet, whose
+        # toolbarPanels raise; Fusion says to fetch them by product type instead,
+        # so the Electronics product is asked for explicitly. The log says which
+        # ones took the button.
+        workspaces = [ui.workspaces.item(i) for i in range(ui.workspaces.count)]
+        try:
+            ecad = ui.workspacesByProductType("EcadDesignProductType")
+            workspaces += [ecad.item(i) for i in range(ecad.count)]
+        except Exception as exc:
+            log(f"workspacesByProductType(EcadDesignProductType) FAILED: {exc}")
+        for ws in workspaces:
+            try:
+                panels = [ws.toolbarPanels.item(j).id for j in range(ws.toolbarPanels.count)]
+            except Exception as exc:
+                log(f"workspace {ws.id}: no toolbarPanels ({exc})")
+                continue
             log(f"workspace {ws.id} product={ws.productType} panels={panels}")
             if not panels:
                 continue
