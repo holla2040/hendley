@@ -2,8 +2,9 @@
 
 The read side of the ``hendley pcba`` flow: pull the open design over the HTTP
 bridge (parts + part-scoped attributes), request schematic sheet 1 when needed
-(``EDIT .S1;``), read it, switch to the board (``BOARD;``), and read the
-placements. The current MCP proxy may wedge on a later return from board, so
+(``EDIT .S1;``), read it, switch to the board (``EDIT .brd;``), and read the
+placements. Every switch is probed first: a no-op EDIT latches Fusion's script
+channel (see "Editor switching" below). The current MCP proxy may wedge on a later return from board, so
 callers should read schematic data first. All state stays in memory; turning the
 extraction into JLCPCB order files is the provider adapter's job
 (:mod:`hendley.providers.jlcpcb.order_files`).
@@ -27,11 +28,12 @@ Extraction rules (verified live, documented in ``docs/fusion-notes.md``):
   1000 V).
 - The library FOOTPRINT and its geometry come from ``electronics.Device`` →
   ``electronics.Package`` (``name`` + ``headline``), read schematic-side with no
-  ``BOARD;`` switch. The headline is what distinguishes a 150-mil ``SO16`` from a
+  board switch. The headline is what distinguishes a 150-mil ``SO16`` from a
   300-mil one; the name alone cannot.
 - Board entities read empty until the board is the engine's current drawing;
-  ``BOARD;`` switches it without raising the board window. ``EDIT .S1;`` can
-  request schematic sheet 1, but some MCP sessions wedge on a board return.
+  ``EDIT .brd;`` switches to it (the switch ThomsonLint verified).
+  ``EDIT .S1;`` can request schematic sheet 1, but some MCP sessions wedge on a
+  board return.
 """
 
 from __future__ import annotations
@@ -120,6 +122,56 @@ def part_from_row(part_row: dict, attrs: dict[str, str],
     )
 
 
+# ---------------------------------------------------------------------------
+# Editor switching
+# ---------------------------------------------------------------------------
+#
+# A no-op EDIT (opening the editor or sheet that is already open) arms Fusion's
+# dialog latch: every later script is refused with "Cannot perform 'script'
+# while a command dialog is open", no dialog is visible, and only Esc in the
+# Fusion window clears it. A real switch does not latch. (Isolated by A/B test
+# in holla2040/ThomsonLint, 2026-08-28; it latched a 2026-10-19 Refresh here.)
+# So probe the active editor with a read — reads are never latched — and
+# switch only when the probe says the target is not already current.
+
+LATCHED = ("Fusion's script channel is latched (an invisible dialog — a known "
+           "Fusion bug). Press Esc once in the Fusion window, then retry.")
+
+
+def _readable(bridge: FusionBridge, entity_type: str) -> bool:
+    probe = bridge.read(entity_type, {"pagination": {"limit": 1, "offset": 0}})
+    return bool(probe.get("items"))
+
+
+def _switch(bridge: FusionBridge, command: str, entity_type: str) -> None:
+    result = bridge.run_eagle(command) or {}
+    if result.get("success") is False:
+        detail = result.get("error") or result.get("message") or result
+        hint = f" {LATCHED}" if "command dialog is open" in str(detail) else ""
+        raise BridgeError(f"Fusion refused {command} {detail}{hint}")
+    for _ in range(20):  # Fusion changes Electronics context asynchronously.
+        if _readable(bridge, entity_type):
+            return
+        time.sleep(0.5)
+    raise BridgeError(f"{command} was accepted but {entity_type} never became "
+                      "readable")
+
+
+def ensure_schematic(bridge: FusionBridge) -> None:
+    """Make the schematic the current editor, firing ``EDIT .S1;`` only if it
+    is not. Sheet 1 necessarily exists in a paired schematic; never probe
+    higher numbers because EDIT creates a missing sheet."""
+    if not _readable(bridge, "electronics.Sheet"):
+        _switch(bridge, "EDIT .S1;", "electronics.Sheet")
+
+
+def ensure_board(bridge: FusionBridge) -> None:
+    """Make the board the current editor, firing ``EDIT .brd;`` only if it is
+    not (``electronics.Board`` reads empty from the schematic editor)."""
+    if not _readable(bridge, "electronics.Board"):
+        _switch(bridge, "EDIT .brd;", "electronics.Board")
+
+
 def extract_schematic(bridge: FusionBridge) -> tuple[str, list[DesignPart]]:
     """Read the open design's name and real parts (schematic must be current first)."""
     design = "unknown"
@@ -138,19 +190,16 @@ def extract_schematic(bridge: FusionBridge) -> tuple[str, list[DesignPart]]:
 
     part_rows = bridge.read_all("electronics.Part")
     if not part_rows:
-        # Verified live 2026-07-15: unlike BOARD;, EDIT .S1 works across editor
-        # contexts and makes schematic entities readable while the layout is
-        # frontmost. Sheet 1 necessarily exists in a paired schematic; never
-        # probe higher numbers because EDIT creates a missing sheet.
-        bridge.run_eagle("EDIT .S1;")
-        time.sleep(0.75)  # Fusion changes Electronics context asynchronously.
+        # Verified live 2026-07-15: EDIT .S1 works across editor contexts and
+        # makes schematic entities readable while the layout is frontmost.
+        ensure_schematic(bridge)
         part_rows = bridge.read_all("electronics.Part")
     if not part_rows:
         raise BridgeError(
-            "no schematic parts readable even after EDIT .S1 — check for open "
-            "modal dialogs and confirm the Electronics design has a schematic"
+            "no schematic parts readable — the schematic is empty, or a modal "
+            "dialog is open in Fusion"
         )
-    # The library FOOTPRINT, read schematic-side — no BOARD; switch needed. The
+    # The library FOOTPRINT, read schematic-side — no board switch needed. The
     # device already names its package; joining electronics.Package gives us the
     # footprint's NAME and, crucially, its HEADLINE, which is where the geometry
     # lives ("Small Outline package 150 mil"). This used to be thrown away — the
@@ -237,16 +286,12 @@ def extract_board(bridge: FusionBridge) -> list[Placement]:
     Read the schematic first for a coherent snapshot. Do not depend on a later
     board-to-schematic return in the same MCP session.
     """
-    probe = bridge.read("electronics.Element", {"pagination": {"limit": 1, "offset": 0}})
-    if not probe.get("items"):
-        switched = bridge.run_eagle("BOARD;")
-        if switched.get("success") is False:
-            detail = switched.get("error") or switched.get("message") or switched
-            raise BridgeError(f"Fusion refused BOARD;: {detail}")
+    if not _readable(bridge, "electronics.Element"):
+        ensure_board(bridge)
     elements = bridge.read_all("electronics.Element")
     if not elements:
         raise BridgeError(
-            "no board placements readable even after the BOARD; switch — "
+            "no board placements readable even after switching to the board — "
             "is a board part of this design, and is Fusion free of modal dialogs?"
         )
     packages = {p["object_id"]: p.get("name") for p in bridge.read_all("electronics.Package")}

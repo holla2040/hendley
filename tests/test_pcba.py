@@ -107,6 +107,10 @@ def test_schematic_read_returns_from_frontmost_board_with_edit_s1(monkeypatch):
                 return []
             return []
 
+        def read(self, entity_type, obj=None):
+            ready = entity_type == "electronics.Sheet" and self.schematic
+            return {"items": [{"number": 1}] if ready else []}
+
         def run_eagle(self, command):
             self.commands.append(command)
             self.schematic = command == "EDIT .S1;"
@@ -115,8 +119,31 @@ def test_schematic_read_returns_from_frontmost_board_with_edit_s1(monkeypatch):
     design, parts = extract_schematic(bridge)
 
     assert bridge.commands == ["EDIT .S1;"]
-    assert sleeps == [0.75]
+    assert sleeps == []  # the probe after the switch already reads the sheet
     assert design == "hendley test" and [p.designator for p in parts] == ["C3"]
+
+
+def test_empty_schematic_fires_no_edit():
+    """A no-op EDIT latches Fusion's script channel, so an empty schematic
+    that is already current must fail with no command at all."""
+    class EmptySchematic:
+        def __init__(self):
+            self.commands = []
+
+        def read(self, entity_type, obj=None):
+            return {"items": [{"number": 1}] if entity_type == "electronics.Sheet"
+                    else []}
+
+        def read_all(self, entity_type, obj=None, page=1000):
+            return []
+
+        def run_eagle(self, command):
+            self.commands.append(command)
+
+    bridge = EmptySchematic()
+    with pytest.raises(BridgeError, match="schematic is empty"):
+        extract_schematic(bridge)
+    assert bridge.commands == []
 
 
 def test_schematic_name_falls_back_to_active_fusion_document():
@@ -150,7 +177,7 @@ def test_board_switch_surfaces_fusions_actual_rejection():
         def run_eagle(self, command):
             return {"success": False, "error": "command dialog is open"}
 
-    with pytest.raises(BridgeError, match="command dialog is open"):
+    with pytest.raises(BridgeError, match="command dialog is open.*Press Esc"):
         extract_board(DialogOpen())
 
 

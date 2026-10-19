@@ -109,15 +109,16 @@ class FakeBridge:
         self.board_switched = False
 
     def read(self, entity_type, obj=None):
-        if entity_type == "electronics.Element" and not self.board_switched:
-            return {"items": []}  # board not current yet → triggers BOARD;
+        if (entity_type in ("electronics.Element", "electronics.Board")
+                and not self.board_switched):
+            return {"items": []}  # board not current yet → triggers EDIT .brd;
         return {"items": self._rows(entity_type, obj)}
 
     def read_all(self, entity_type, obj=None, page=1000):
         return self._rows(entity_type, obj)
 
     def run_eagle(self, command):
-        assert command == "BOARD;"
+        assert command == "EDIT .brd;"
         self.board_switched = True
         return {}
 
@@ -133,6 +134,8 @@ class FakeBridge:
             return [{"name": k, "value": v} for k, v in attrs.items()]
         if entity_type == "electronics.Element":
             return list(ELEMENTS) if self.board_switched else []
+        if entity_type == "electronics.Board":
+            return [{"object_id": 1}] if self.board_switched else []
         if entity_type == "electronics.Package":
             return list(PACKAGES)
         if entity_type == "electronics.Device":

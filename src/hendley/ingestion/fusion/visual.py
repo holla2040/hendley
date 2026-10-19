@@ -11,6 +11,9 @@ import time
 import zlib
 from pathlib import Path
 
+from .bridge import BridgeError
+from .live_design import LATCHED, ensure_board, ensure_schematic
+
 VISUAL_SCHEMA_VERSION = 4
 DEFAULT_WINDOWS_DIR = r"C:\tmp\hendley-visual"
 DEFAULT_LOCAL_DIR = "~/tmp/hendley-visual"
@@ -182,7 +185,14 @@ def _schematic_detail(path: Path) -> Path | None:
 
 
 def _settle_eagle(bridge, command: str, seconds: float = 0.75) -> None:
-    bridge.run_eagle(command)
+    """Fire a view command and let Fusion settle. A refusal raises: once the
+    channel is latched every later export would wait out its timeout, or save
+    the still-open sheet under another sheet's name."""
+    result = bridge.run_eagle(command) or {}
+    if result.get("success") is False:
+        detail = result.get("error") or result.get("message") or result
+        hint = f" {LATCHED}" if "command dialog is open" in str(detail) else ""
+        raise BridgeError(f"Fusion refused {command} {detail}{hint}")
     time.sleep(seconds)
 
 
@@ -200,9 +210,9 @@ def capture_visual_evidence(bridge, design: str, dpi: int = 300,
     try:
         local_dir.mkdir(parents=True, exist_ok=True)
         # Sheet entities are context-sensitive and read empty on the board.
-        # Sheet 1 necessarily exists in a paired schematic; activate it before
-        # enumerating, then never probe beyond the returned rows.
-        _settle_eagle(bridge, "EDIT .S1;")
+        # Make the schematic current before enumerating, then never probe
+        # beyond the returned rows.
+        ensure_schematic(bridge)
         sheets = sorted(
             ({"number": int(row["number"]), "name": str(row.get("name") or ""),
               "description": str(row.get("description") or "")}
@@ -215,10 +225,18 @@ def capture_visual_evidence(bridge, design: str, dpi: int = 300,
         stem = _slug(design)
         exported: list[Path] = []
         manifest_sheets: list[dict] = []
-        for sheet in sheets:
-            number = sheet["number"]
+        # A no-op EDIT latches Fusion's script channel (live_design, "Editor
+        # switching"). One sheet needs no EDIT at all; with several, sheet 1 goes
+        # last so each EDIT is a real switch, except possibly the first.
+        by_number = {s["number"]: s for s in sheets}
+        order = sorted(by_number)
+        if len(order) > 1 and order[0] == 1:
+            order = order[1:] + [1]
+        for number in order:
+            sheet = by_number[number]
             filename = f"{stem}-sheet-{number}.png"
-            _settle_eagle(bridge, f"EDIT .S{number}; WINDOW FIT;")
+            _settle_eagle(bridge, "WINDOW FIT;" if len(order) == 1
+                          else f"EDIT .S{number}; WINDOW FIT;")
             path = local_dir / filename
             if _fresh_export(path, lambda: bridge.run_eagle(
                     f"EXPORT IMAGE {windows_dir}\\{filename} {dpi};")):
@@ -229,11 +247,13 @@ def capture_visual_evidence(bridge, design: str, dpi: int = 300,
                 manifest_sheets.append({**sheet, "image": str(path.resolve()),
                                         "detailImage": (str(detail.resolve())
                                                         if detail else None)})
+        manifest_sheets.sort(key=lambda s: s["number"])
         # Airwires are routing state, not package evidence. They can cross the
         # target and make the model associate a nearby pad or footprint with it.
         board_name = f"{stem}-board.png"
         board_path = local_dir / board_name
-        _settle_eagle(bridge, "BOARD; WINDOW FIT; DISPLAY -UNROUTED;")
+        ensure_board(bridge)
+        _settle_eagle(bridge, "WINDOW FIT; DISPLAY -UNROUTED;")
         _fresh_export(board_path, lambda: bridge.run_eagle(
             f"EXPORT IMAGE {windows_dir}\\{board_name} {dpi};"))
         bridge.run_eagle("DISPLAY UNROUTED;")
@@ -248,7 +268,7 @@ def capture_visual_evidence(bridge, design: str, dpi: int = 300,
             crop_name = f"{stem}-board-{_slug(designator)}.png"
             crop_path = local_dir / crop_name
             _settle_eagle(
-                bridge, f"BOARD; DISPLAY -UNROUTED; "
+                bridge, f"DISPLAY -UNROUTED; "
                 f"WINDOW ({x - half:g} {y - half:g}) "
                 f"({x + half:g} {y + half:g});")
             fresh = _fresh_export(crop_path, lambda: bridge.run_eagle(
@@ -291,6 +311,7 @@ def add_board_crops(bridge, manifest: dict | None,
     dpi = int(manifest.get("dpi") or 300)
     crops: list[dict] = []
     try:
+        ensure_board(bridge)
         for target in targets:
             try:
                 designator = str(target["designator"])
@@ -301,7 +322,7 @@ def add_board_crops(bridge, manifest: dict | None,
             filename = f"{stem}-board-{_slug(designator)}.png"
             path = local_dir / filename
             _settle_eagle(
-                bridge, f"BOARD; DISPLAY -UNROUTED; "
+                bridge, f"DISPLAY -UNROUTED; "
                 f"WINDOW ({x - half:g} {y - half:g}) "
                 f"({x + half:g} {y + half:g});")
             fresh = _fresh_export(path, lambda: bridge.run_eagle(

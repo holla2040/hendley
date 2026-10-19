@@ -10,18 +10,27 @@ from hendley.ingestion.fusion.visual import (
 
 
 class ExportBridge:
-    def __init__(self, local_dir: Path):
+    def __init__(self, local_dir: Path, sheets=None):
         self.local_dir = local_dir
         self.commands = []
+        self.board = False
+        self.sheets = sheets or [{"number": 2, "name": "Power"},
+                                 {"number": 1, "name": "Input"}]
+
+    def read(self, entity_type, obj=None):
+        if entity_type == "electronics.Board":
+            return {"items": [{"object_id": 1}] if self.board else []}
+        return {"items": self.read_all(entity_type)[:1]}
 
     def read_all(self, entity_type):
-        if entity_type == "electronics.Sheet":
-            return [{"number": 2, "name": "Power"},
-                    {"number": 1, "name": "Input"}]
+        if entity_type == "electronics.Sheet" and not self.board:
+            return list(self.sheets)
         return []
 
     def run_eagle(self, command):
         self.commands.append(command)
+        if command == "EDIT .brd;":
+            self.board = True
         if "EXPORT IMAGE" in command:
             export = command.split("EXPORT IMAGE", 1)[1]
             filename = export.split("\\")[-1].split()[0]
@@ -37,9 +46,13 @@ def test_capture_enumerates_existing_sheets_and_exports_board(tmp_path, monkeypa
         bridge, "hendley test",
         targets=[{"designator": "C3", "x": 16, "y": 67}])
 
-    assert bridge.commands[0] == "EDIT .S1;"
-    assert bridge.commands[1] == "EDIT .S1; WINDOW FIT;"
-    assert bridge.commands[2].startswith("EXPORT IMAGE")
+    # The schematic is already current: no EDIT .S1 up front, and sheet 1 is
+    # captured last so every EDIT is a real switch (a no-op EDIT latches).
+    assert bridge.commands[0] == "EDIT .S2; WINDOW FIT;"
+    assert bridge.commands[1].startswith("EXPORT IMAGE")
+    assert bridge.commands[2] == "EDIT .S1; WINDOW FIT;"
+    assert "EDIT .brd;" in bridge.commands
+    assert not any("BOARD;" in c for c in bridge.commands)
     assert any("WINDOW (10 61) (22 73);" in c for c in bridge.commands)
     assert [s["number"] for s in got["sheets"]] == [1, 2]
     assert len(got["images"]) == 4 and len(got["digest"]) == 64
@@ -47,12 +60,28 @@ def test_capture_enumerates_existing_sheets_and_exports_board(tmp_path, monkeypa
     assert got["boardCrops"][0]["widthMm"] == 12
 
 
+def test_one_sheet_design_fires_no_edit(tmp_path, monkeypatch):
+    monkeypatch.setenv("HENDLEY_VISUAL_DIR", str(tmp_path))
+    bridge = ExportBridge(tmp_path, sheets=[{"number": 1, "name": ""}])
+
+    got = capture_visual_evidence(bridge, "comet")
+
+    assert not any(c.startswith("EDIT .S") for c in bridge.commands)
+    assert bridge.commands[0] == "WINDOW FIT;"
+    assert [s["number"] for s in got["sheets"]] == [1]
+
+
 def test_capture_without_sheet_rows_is_a_nonfatal_noop(tmp_path, monkeypatch):
     monkeypatch.setenv("HENDLEY_VISUAL_DIR", str(tmp_path))
+    monkeypatch.setattr("hendley.ingestion.fusion.live_design.time.sleep",
+                        lambda seconds: None)
 
     class NoSheets:
         def run_eagle(self, command):
             assert command == "EDIT .S1;"
+
+        def read(self, entity_type, obj=None):
+            return {"items": []}
 
         def read_all(self, entity_type):
             return []
@@ -60,26 +89,32 @@ def test_capture_without_sheet_rows_is_a_nonfatal_noop(tmp_path, monkeypatch):
     assert capture_visual_evidence(NoSheets(), "empty") is None
 
 
-def test_capture_settles_after_returning_from_board_before_reading_sheets(
+def test_capture_from_board_switches_to_schematic_before_reading_sheets(
         tmp_path, monkeypatch):
     monkeypatch.setenv("HENDLEY_VISUAL_DIR", str(tmp_path))
     events = []
-    monkeypatch.setattr("hendley.ingestion.fusion.visual.time.sleep",
-                        lambda seconds: events.append(("sleep", seconds)))
 
-    class DeferredContext:
+    class FromBoard:
+        schematic = False
+
         def run_eagle(self, command):
             events.append(("command", command))
+            self.schematic = command == "EDIT .S1;" or self.schematic
+
+        def read(self, entity_type, obj=None):
+            events.append(("probe", entity_type))
+            return {"items": [{"number": 1}] if self.schematic else []}
 
         def read_all(self, entity_type):
             events.append(("read", entity_type))
             return []
 
-    capture_visual_evidence(DeferredContext(), "deferred")
+    capture_visual_evidence(FromBoard(), "deferred")
 
-    assert events[:3] == [
+    assert events[:4] == [
+        ("probe", "electronics.Sheet"),
         ("command", "EDIT .S1;"),
-        ("sleep", 0.75),
+        ("probe", "electronics.Sheet"),
         ("read", "electronics.Sheet"),
     ]
 
@@ -156,6 +191,7 @@ def test_board_crop_phase_never_returns_to_schematic(tmp_path, monkeypatch):
     monkeypatch.setenv("HENDLEY_VISUAL_DIR", str(tmp_path))
     monkeypatch.setenv("HENDLEY_FUSION_VISUAL_DIR", r"C:\hendley")
     bridge = ExportBridge(tmp_path)
+    bridge.board = True  # extract_board already made the board current
     sheet = tmp_path / "sheet.png"
     sheet.write_bytes(b"sheet")
     manifest = {"schemaVersion": 3, "design": "test", "dpi": 300,
