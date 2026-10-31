@@ -879,6 +879,13 @@ reader can't see JLC attrs" — was the cause of earlier empty reads;
 > use `fusion_mcp_execute` to change a design, do not generate or run a `.scr`.** The
 > designer edits the schematic in Fusion; you read it back. Kept below only so nobody
 > re-discovers it and assumes it is sanctioned.
+>
+> **2026-10-30, Fusion Insider 2707.0.73:** the object API is no longer read-only
+> there — `adsk.electron` objects have setters (`Part.value`, `Element.x`, …) and
+> `EcadDrawing.executeCommands` runs EAGLE command batches with per-command
+> results. **The prohibition above covers these too.** A setter is a design edit;
+> do not use one. Details in `docs/fusion-notes.md` → "Insider build: writable
+> object API".
 
 The Electronics **object** API is read-only, but the **EAGLE command interpreter
 is reachable over the same HTTP endpoint** — the one thing we long thought

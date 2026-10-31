@@ -296,6 +296,34 @@ that case Hendley reads Fusion's `activeDocument.name` through the read-only
 execute channel. It must not collapse multiple designs into a shared `unknown`
 draft namespace.
 
+## Insider build: writable object API (2026-10-30)
+
+Fusion Insider 2707.0.73 changes the premise of the next section: the
+Electronics object API is **not** read-only there (preview API, "may change").
+
+- **Setters** on most `adsk.electron` objects — `Part.value`, `Element.x/y/
+  angle/locked`, `Net.name`, `Instance.angle`, `Grid.distance`, `Layer.color`,
+  library `Package`/`Symbol`/`Pin` fields, and more. Verified by write + readback
+  on a scratch design.
+- **`EcadDrawing.executeCommands`** (`Board` / `Schematic` / `Library`) runs a
+  batch of EAGLE commands and returns a status and messages per command, with
+  `stopOnError` / `rollbackOnError`.
+- **`electronics.Error`** returns Fusion's DRC/ERC results (code, description,
+  type, state, layer, x/y).
+
+**What this means for Hendley: nothing changes in how it behaves.** Hendley is
+read-only against the design by policy (CLAUDE.md, "Retired 2026-07-13"), and
+that policy covers the new setters and `executeCommands` — a setter is a design
+edit. The read side Hendley uses (`fusion_mcp_electronics_read`, pagination,
+the handshake) is unchanged.
+
+**Worth watching:** the same release notes announce a **Public Components** tab
+in the Place panel backed by Avnet's catalog (30,000+ components). This build
+ships its strings and icon (`ppwTabPublicComponents`, ~80 `ppwAvnet*` strings,
+including "Install the Avnet Fusion add-in from the Autodesk App Store, then
+click Recheck"), but the tab was not visible and no API exposes the catalog. If
+it becomes reachable it could be a sourcing input alongside JLC/DigiKey.
+
 ## ⭐ The WRITE path — driving the EAGLE command line over HTTP (RESOLVED)
 
 **Background / the old wrong conclusion.** The Fusion *Electronics object API*
