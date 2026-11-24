@@ -204,3 +204,43 @@ def test_board_crop_phase_never_returns_to_schematic(tmp_path, monkeypatch):
 
     assert got["boardCrops"][0]["designator"] == "Q2"
     assert not any(command.startswith("EDIT") for command in bridge.commands)
+
+
+def _dirs(monkeypatch, *, wsl, local=None, fusion=None):
+    from hendley.ingestion.fusion import visual
+
+    monkeypatch.setattr(visual, "running_under_wsl", lambda: wsl)
+    for name, value in (("HENDLEY_VISUAL_DIR", local), ("HENDLEY_FUSION_VISUAL_DIR", fusion)):
+        if value is None:
+            monkeypatch.delenv(name, raising=False)
+        else:
+            monkeypatch.setenv(name, value)
+    return visual._visual_dirs()
+
+
+def test_native_visual_dir_is_one_path_for_fusion_and_python(monkeypatch, tmp_path):
+    local, fusion = _dirs(monkeypatch, wsl=False, local=str(tmp_path))
+    assert local == tmp_path and fusion == str(tmp_path.absolute())
+
+
+def test_wsl_keeps_the_windows_to_linux_mapping(monkeypatch):
+    local, fusion = _dirs(monkeypatch, wsl=True)
+    assert local == Path("~/tmp/hendley-visual").expanduser()
+    assert fusion == r"C:\tmp\hendley-visual"
+
+
+def test_native_windows_default_is_the_folder_fusion_writes(monkeypatch):
+    if __import__("os").name != "nt":
+        import pytest
+        pytest.skip("a Windows path is only meaningful as a local Path on Windows")
+    local, fusion = _dirs(monkeypatch, wsl=False)
+    assert str(local) == fusion == r"C:\tmp\hendley-visual"
+
+
+def test_fusion_file_joins_in_the_fusion_hosts_flavour():
+    from hendley.ingestion.fusion.visual import _fusion_file
+
+    assert _fusion_file(r"C:\tmp\hendley-visual", "a.png") == r"C:\tmp\hendley-visual\a.png"
+    assert _fusion_file("/Users/craig/tmp/hendley-visual", "a.png") == \
+        "/Users/craig/tmp/hendley-visual/a.png"
+    assert _fusion_file("/Users/a b/tmp", "a.png") == "'/Users/a b/tmp/a.png'"

@@ -9,14 +9,51 @@ import re
 import struct
 import time
 import zlib
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 
-from .bridge import BridgeError
+from .bridge import BridgeError, running_under_wsl
 from .live_design import LATCHED, ensure_board, ensure_schematic
 
 VISUAL_SCHEMA_VERSION = 4
 DEFAULT_WINDOWS_DIR = r"C:\tmp\hendley-visual"
-DEFAULT_LOCAL_DIR = "~/tmp/hendley-visual"
+# WSL only: the Linux side of DEFAULT_WINDOWS_DIR (~/tmp → /mnt/c/tmp symlink).
+DEFAULT_WSL_LOCAL_DIR = "~/tmp/hendley-visual"
+# Native macOS/Linux: a real POSIX path Fusion (same user, same OS) can write.
+DEFAULT_POSIX_DIR = "~/tmp/hendley-visual"
+
+
+def _visual_dirs() -> tuple[Path, str]:
+    """``(local_dir, fusion_dir)``: where Python reads the PNGs, and the same
+    folder as Fusion names it in ``EXPORT IMAGE``.
+
+    Natively (Windows, macOS) Fusion and Python share one filesystem, so the
+    two are the same path: ``C:\\tmp\\hendley-visual`` on Windows (the folder
+    Fusion has always written), ``~/tmp/hendley-visual`` expanded to an absolute
+    path elsewhere. Only under WSL do they differ — Fusion writes the Windows
+    path and Python reads it through the ``~/tmp`` → ``/mnt/c/tmp`` link.
+    ``HENDLEY_VISUAL_DIR`` overrides the local dir (and, natively, the Fusion
+    dir with it); ``HENDLEY_FUSION_VISUAL_DIR`` overrides the Fusion dir.
+    """
+    local_env = os.environ.get("HENDLEY_VISUAL_DIR")
+    fusion_env = os.environ.get("HENDLEY_FUSION_VISUAL_DIR")
+    if running_under_wsl():
+        local = Path(local_env or DEFAULT_WSL_LOCAL_DIR).expanduser()
+        return local, fusion_env or DEFAULT_WINDOWS_DIR
+    if local_env:
+        local = Path(local_env).expanduser()
+    elif os.name == "nt":
+        local = Path(DEFAULT_WINDOWS_DIR)
+    else:
+        local = Path(DEFAULT_POSIX_DIR).expanduser()
+    return local, fusion_env or str(local.absolute())
+
+
+def _fusion_file(fusion_dir: str, filename: str) -> str:
+    """Join in the Fusion host's own path flavour, quoted if it has spaces."""
+    windows = "\\" in fusion_dir or re.match(r"^[A-Za-z]:", fusion_dir)
+    flavour = PureWindowsPath if windows else PurePosixPath
+    path = str(flavour(fusion_dir) / filename)
+    return f"'{path}'" if any(c.isspace() for c in path) else path
 
 
 def _slug(value: str) -> str:
@@ -200,13 +237,12 @@ def capture_visual_evidence(bridge, design: str, dpi: int = 300,
                             targets: list[dict] | None = None) -> dict | None:
     """Export every existing sheet and the board without invoking a model.
 
-    Fusion writes on Windows. The defaults name the same shared directory as
-    ``C:\\tmp\\hendley-visual`` in Fusion and ``~/tmp/hendley-visual`` in WSL.
+    Fusion writes the PNGs; Python reads them back from the same folder
+    (:func:`_visual_dirs` — one path natively, the Windows/WSL pair under WSL).
     Failures are non-fatal
     because images enrich an otherwise valid design read.
     """
-    local_dir = Path(os.environ.get("HENDLEY_VISUAL_DIR", DEFAULT_LOCAL_DIR)).expanduser()
-    windows_dir = os.environ.get("HENDLEY_FUSION_VISUAL_DIR", DEFAULT_WINDOWS_DIR)
+    local_dir, fusion_dir = _visual_dirs()
     try:
         local_dir.mkdir(parents=True, exist_ok=True)
         # Sheet entities are context-sensitive and read empty on the board.
@@ -239,7 +275,7 @@ def capture_visual_evidence(bridge, design: str, dpi: int = 300,
                           else f"EDIT .S{number}; WINDOW FIT;")
             path = local_dir / filename
             if _fresh_export(path, lambda: bridge.run_eagle(
-                    f"EXPORT IMAGE {windows_dir}\\{filename} {dpi};")):
+                    f"EXPORT IMAGE {_fusion_file(fusion_dir, filename)} {dpi};")):
                 exported.append(path)
                 detail = _schematic_detail(path)
                 if detail:
@@ -255,7 +291,7 @@ def capture_visual_evidence(bridge, design: str, dpi: int = 300,
         ensure_board(bridge)
         _settle_eagle(bridge, "WINDOW FIT; DISPLAY -UNROUTED;")
         _fresh_export(board_path, lambda: bridge.run_eagle(
-            f"EXPORT IMAGE {windows_dir}\\{board_name} {dpi};"))
+            f"EXPORT IMAGE {_fusion_file(fusion_dir, board_name)} {dpi};"))
         bridge.run_eagle("DISPLAY UNROUTED;")
         board_crops: list[dict] = []
         for target in targets or []:
@@ -272,7 +308,7 @@ def capture_visual_evidence(bridge, design: str, dpi: int = 300,
                 f"WINDOW ({x - half:g} {y - half:g}) "
                 f"({x + half:g} {y + half:g});")
             fresh = _fresh_export(crop_path, lambda: bridge.run_eagle(
-                f"EXPORT IMAGE {windows_dir}\\{crop_name} {dpi};"))
+                f"EXPORT IMAGE {_fusion_file(fusion_dir, crop_name)} {dpi};"))
             bridge.run_eagle("DISPLAY UNROUTED; WINDOW FIT;")
             if fresh:
                 exported.append(crop_path)
@@ -305,8 +341,7 @@ def add_board_crops(bridge, manifest: dict | None,
     """
     if not manifest:
         return None
-    local_dir = Path(os.environ.get("HENDLEY_VISUAL_DIR", DEFAULT_LOCAL_DIR)).expanduser()
-    windows_dir = os.environ.get("HENDLEY_FUSION_VISUAL_DIR", DEFAULT_WINDOWS_DIR)
+    local_dir, fusion_dir = _visual_dirs()
     stem = _slug(str(manifest.get("design") or "design"))
     dpi = int(manifest.get("dpi") or 300)
     crops: list[dict] = []
@@ -326,7 +361,7 @@ def add_board_crops(bridge, manifest: dict | None,
                 f"WINDOW ({x - half:g} {y - half:g}) "
                 f"({x + half:g} {y + half:g});")
             fresh = _fresh_export(path, lambda: bridge.run_eagle(
-                f"EXPORT IMAGE {windows_dir}\\{filename} {dpi};"))
+                f"EXPORT IMAGE {_fusion_file(fusion_dir, filename)} {dpi};"))
             bridge.run_eagle("DISPLAY UNROUTED; WINDOW FIT;")
             if fresh:
                 crops.append({"designator": designator,
