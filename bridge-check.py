@@ -13,14 +13,19 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT / "src"))
 
-from hendley.ingestion.fusion.bridge import DEFAULT_PORT, FusionBridge  # noqa: E402
+from hendley.ingestion.fusion.bridge import (  # noqa: E402
+    DEFAULT_PORT,
+    BridgeError,
+    FusionBridge,
+)
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--host",
-        help="Fusion host (default: HENDLEY_FUSION_HOST or the WSL gateway)",
+        help="Fusion host (default: HENDLEY_FUSION_HOST, else 127.0.0.1, "
+        "else the WSL gateway under WSL)",
     )
     parser.add_argument("--port", type=int, default=DEFAULT_PORT)
     parser.add_argument("--timeout", type=int, default=10)
@@ -35,7 +40,11 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
-    bridge = FusionBridge(host=args.host, port=args.port, timeout=args.timeout)
+    try:
+        bridge = FusionBridge(host=args.host, port=args.port, timeout=args.timeout)
+    except BridgeError as exc:  # nothing reachable
+        print(f"FAIL  {type(exc).__name__}: {exc}", file=sys.stderr)
+        return 1
     started_on_board = False
 
     try:

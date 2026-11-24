@@ -5,11 +5,14 @@ MCP Server" — that Autodesk toggle is the only thing here named "MCP"). This
 module speaks the verified handshake from ``docs/fusion-notes.md`` ("Talking to
 Fusion over HTTP — the full recipe") so a fresh checkout needs no session notes:
 
-- Connect to the **Windows host / WSL gateway IP**, never ``127.0.0.1`` from
-  WSL2 (Fusion listens on the Windows loopback; a ``netsh`` port-forward bridges
-  it — see README "Reading from Fusion Electronics").
-- ...but send ``Host: 127.0.0.1:<port>`` on every request — the server validates
-  the ``Host`` header and 403s ("Invalid Host header") on the gateway IP.
+- Connect to wherever Fusion answers: ``127.0.0.1`` when Hendley runs on the
+  same OS as Fusion (native Windows / macOS, or mirrored-mode WSL), else — only
+  under WSL2 NAT networking — the **WSL gateway IP**, where a ``netsh``
+  port-forward bridges to Fusion's Windows loopback (README "Running under WSL2
+  (legacy)"). See :func:`default_host`.
+- Send ``Host: 127.0.0.1:<port>`` on every request — the server validates the
+  ``Host`` header and 403s ("Invalid Host header") on the gateway IP. Harmless
+  (and literally true) on loopback.
 - Capture the ``MCP-Session-Id`` **response header** from ``initialize`` and
   resend it on every later request.
 - ``POST`` a ``notifications/initialized`` message before any ``tools/call``.
@@ -21,35 +24,93 @@ from __future__ import annotations
 
 import json
 import os
+import platform
+import socket
 import subprocess
+import sys
 import urllib.request
 
 DEFAULT_PORT = 27182
+LOOPBACK = "127.0.0.1"
 
 
 class BridgeError(RuntimeError):
     """Raised when the Fusion bridge returns an error or an unusable response."""
 
 
-def _default_gateway() -> str:
+def running_under_wsl() -> bool:
+    """True inside a WSL1/WSL2 Linux distro (Fusion then runs on the Windows side)."""
+    if not sys.platform.startswith("linux"):
+        return False
+    if os.environ.get("WSL_DISTRO_NAME") or os.environ.get("WSL_INTEROP"):
+        return True
+    return "microsoft" in platform.release().lower()
+
+
+def _port_answers(host: str, port: int, timeout: float) -> bool:
+    """A quick TCP connect probe — no HTTP is sent."""
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            return True
+    except OSError:
+        return False
+
+
+def _default_gateway() -> str | None:
     """The Windows host IP as seen from WSL2 = the default route's gateway."""
-    out = subprocess.check_output(["ip", "route"], text=True)
+    try:
+        out = subprocess.run(["ip", "route"], capture_output=True, text=True, check=False,
+                             encoding="utf-8", errors="replace", timeout=5).stdout
+    except (OSError, subprocess.SubprocessError):
+        return None
     for line in out.splitlines():
         if line.startswith("default"):
-            return line.split()[2]
-    raise BridgeError("no default gateway found; pass the Fusion host explicitly")
+            parts = line.split()
+            if len(parts) > 2:
+                return parts[2]
+    return None
+
+
+def default_host(port: int = DEFAULT_PORT) -> str:
+    """Pick the host that actually reaches Fusion.
+
+    1. Loopback, if it answers a quick connect probe — native Windows/macOS
+       (Fusion on the same OS) and mirrored-mode WSL.
+    2. Only when running under WSL: the default-route gateway, where the NAT-mode
+       ``netsh`` port-forward listens.
+    3. Otherwise a :class:`BridgeError` naming what was tried.
+    """
+    if _port_answers(LOOPBACK, port, 0.25):
+        return LOOPBACK
+    tried = [f"{LOOPBACK}:{port}"]
+    if running_under_wsl():
+        gateway = _default_gateway()
+        if gateway:
+            if _port_answers(gateway, port, 1.0):
+                return gateway
+            tried.append(f"{gateway}:{port} (WSL gateway)")
+        else:
+            tried.append("the WSL gateway (no default route found)")
+    hint = ("is the WSL port-forward up? (README, 'Running under WSL2 (legacy)')"
+            if running_under_wsl() else "")
+    raise BridgeError(
+        f"Fusion is not reachable (tried {', '.join(tried)}). Is Fusion running "
+        "with Preferences > General > API > Fusion MCP Server enabled?"
+        + (f" {hint}" if hint else "")
+        + " Set HENDLEY_FUSION_HOST or pass the host explicitly to override.")
 
 
 class FusionBridge:
     """One HTTP session to Fusion's local endpoint.
 
     Host resolution order: explicit ``host`` arg → ``HENDLEY_FUSION_HOST`` env →
-    the WSL default-gateway IP. The session id is held in-process and created
-    lazily on the first call.
+    :func:`default_host` (loopback if it answers, else the WSL gateway when under
+    WSL, else :class:`BridgeError`). The session id is held in-process and
+    created lazily on the first call.
     """
 
     def __init__(self, host: str | None = None, port: int = DEFAULT_PORT, timeout: int = 60):
-        self.host = host or os.environ.get("HENDLEY_FUSION_HOST") or _default_gateway()
+        self.host = host or os.environ.get("HENDLEY_FUSION_HOST") or default_host(port)
         self.url = f"http://{self.host}:{port}/mcp"
         self._loopback = f"127.0.0.1:{port}"  # what the Host header must read as
         self.timeout = timeout

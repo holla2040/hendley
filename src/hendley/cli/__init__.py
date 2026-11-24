@@ -113,7 +113,8 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--no-verify", action="store_true",
                     help="Skip the live JLC stock check (no credentials needed).")
     sp.add_argument("--fusion-host",
-                    help="Fusion bridge host (default: HENDLEY_FUSION_HOST, else the WSL gateway).")
+                    help="Fusion bridge host (default: HENDLEY_FUSION_HOST, else "
+                         "127.0.0.1, else the WSL gateway under WSL).")
     sp.add_argument("--rotations",
                     help="Path to cpl-rotations.json (default: data/cpl-rotations.json, "
                          "found by walking up from the cwd).")
@@ -219,8 +220,8 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("-o", "--outdir", default="~/tmp/hendley_output",
                     help="Order-file output directory (default: ~/tmp/hendley_output).")
     sp.add_argument("--fusion-host",
-                    help="Fusion bridge host (default: HENDLEY_FUSION_HOST, else the "
-                         "WSL gateway).")
+                    help="Fusion bridge host (default: HENDLEY_FUSION_HOST, else "
+                         "127.0.0.1, else the WSL gateway under WSL).")
     sp.add_argument("--interpreter", choices=("codex", "claude"),
                     help="Agent CLI used for unresolved parts (default: claude; "
                          "HENDLEY_INTERPRETER is the fallback).")
@@ -269,8 +270,8 @@ def main(argv: list[str] | None = None) -> int:
         return args.func(client, args)
     except urllib.error.URLError as exc:
         print(f"error: cannot reach the Fusion bridge ({exc.reason}). Is Fusion running with "
-              "the MCP Server enabled and the port-forward in place? See README "
-              "\"Reading from Fusion Electronics\".", file=sys.stderr)
+              "the MCP Server enabled (and, under WSL, the port-forward in place)? "
+              "See README \"Setup\".", file=sys.stderr)
         return 1
     except (JLCError, BridgeError, FileNotFoundError, ValueError) as exc:
         print(f"error: {exc}", file=sys.stderr)
