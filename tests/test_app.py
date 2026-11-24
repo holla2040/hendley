@@ -9,6 +9,7 @@ import json
 import threading
 import urllib.request
 from http.server import ThreadingHTTPServer
+from pathlib import Path
 
 import pytest
 
@@ -273,7 +274,7 @@ def test_full_resolution_flow_intake_to_emit(client, tmp_path):
     # 7c: emit — files + gate + snapshot
     emitted = client("/api/emit", {"resolution": resolved["resolution"]})
     assert emitted["readyToUpload"] and emitted["blockers"] == []
-    assert [p.split("/")[-1] for p in emitted["files"]] == ["bom.csv", "cpl.csv"]
+    assert [Path(p).name for p in emitted["files"]] == ["bom.csv", "cpl.csv"]
     bom = (tmp_path / "out" / "bom.csv").read_text()
     assert "22k,R1,R-0603,C_NEW" in bom and "TP1" not in bom
     assert emitted["snapshot"] and emitted["snapshot"].endswith(".snapshot.json")

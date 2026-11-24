@@ -20,8 +20,8 @@ which the app writes on every Refresh. Cache replay is faster and more
 repeatable than live reads, and avoids provoking a Fusion MCP proxy that can
 wedge on a board-to-schematic return.
 
-Screenshots land in /tmp/hendley-ui/. Look at them. A page that renders wrong
-raises no exception.
+Screenshots land in hendley-ui/ under the platform temp dir (each path is
+printed). Look at them. A page that renders wrong raises no exception.
 """
 from __future__ import annotations
 
@@ -37,7 +37,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "src"))
 from hendley.app.server import HendleyApp, make_handler  # noqa: E402
 from hendley.datasources.base import PartFact  # noqa: E402
 
-OUT = pathlib.Path("/tmp/hendley-ui")
+OUT = pathlib.Path(tempfile.gettempdir()) / "hendley-ui"
 
 # A family part, and the catalog's real rows for it. The wide body and the DIP
 # answer to the name "ULN2003" and neither can go on a 150-mil land.
@@ -150,7 +150,7 @@ def main() -> int:
     lines = []
     if live:
         cache = json.loads(
-            (pathlib.Path.home() / ".hendley/design-cache.json").read_text())
+            (pathlib.Path.home() / ".hendley/design-cache.json").read_text(encoding="utf-8"))
         lines = [(" ".join(ln["designators"]), i)
                  for i, ln in enumerate(cache["requirements"]["lines"])
                  if ln.get("family")]
