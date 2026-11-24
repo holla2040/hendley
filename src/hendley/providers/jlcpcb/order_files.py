@@ -51,7 +51,7 @@ def load_rotations(path: str | Path | None = None) -> list[dict]:
     found = find_rotations_file(path)
     if found is None:
         return []
-    return json.loads(Path(found).read_text()).get("corrections", [])
+    return json.loads(Path(found).read_text(encoding="utf-8")).get("corrections", [])
 
 
 def rotation_for(corrections: list[dict], jlc_code: str | None, footprint: str | None) -> dict | None:
@@ -140,7 +140,7 @@ def build_cpl_rows(
 
 
 def write_csv(rows: list[dict], fields: tuple[str, ...], path: Path) -> None:
-    with path.open("w", newline="") as f:
+    with path.open("w", encoding="utf-8", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=list(fields))
         writer.writeheader()
         writer.writerows(rows)

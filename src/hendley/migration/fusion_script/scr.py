@@ -116,7 +116,7 @@ class PartSwap:
 
 def load_swaps_json(path: str | Path) -> list[PartSwap]:
     """Load a swaps JSON file (object-with-``swaps`` or bare list) into PartSwaps."""
-    doc = json.loads(Path(path).read_text())
+    doc = json.loads(Path(path).read_text(encoding="utf-8"))
     swaps = doc.get("swaps") if isinstance(doc, dict) else doc
     if not isinstance(swaps, list):
         raise ValueError("swaps JSON must be a list, or an object with a 'swaps' list")

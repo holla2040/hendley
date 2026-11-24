@@ -65,7 +65,7 @@ def cmd_bom(client, args) -> int:
     design, production_quantity, lines, raw_doc = load_resolution_json(args.resolution_json)
     csv_text = render_bom_csv(lines)
     if args.output:
-        Path(args.output).write_text(csv_text)
+        Path(args.output).write_text(csv_text, encoding="utf-8", newline="")
         rendered = sum(1 for x in lines if not x.dnp)
         print(f"wrote {rendered} BOM line(s) to {args.output}", file=sys.stderr)
     else:
@@ -97,12 +97,12 @@ def _cmd_bom_pcbway(args) -> int:
 
     from ..providers.pcbway.adapter import PCBWayAdapter, render_pcbway_csv
 
-    raw_doc = json.loads(Path(args.resolution_json).read_text())
+    raw_doc = json.loads(Path(args.resolution_json).read_text(encoding="utf-8"))
     if not isinstance(raw_doc, dict):
         raw_doc = {"lines": raw_doc}
     csv_text = render_pcbway_csv(raw_doc)
     if args.output:
-        Path(args.output).write_text(csv_text)
+        Path(args.output).write_text(csv_text, encoding="utf-8", newline="")
         rendered = sum(1 for x in raw_doc.get("lines") or [] if not x.get("dnp"))
         print(f"wrote {rendered} BOM line(s) to {args.output}", file=sys.stderr)
     else:
@@ -210,7 +210,7 @@ def cmd_pcba(client, args) -> int:
     paths = JLCPCBAdapter().export(
         resolution, outdir, rotations=args.rotations,
         on_note=lambda msg: print(msg, file=sys.stderr))
-    counts = [max(0, sum(1 for _ in p.open()) - 1) for p in paths]
+    counts = [max(0, sum(1 for _ in p.open(encoding="utf-8")) - 1) for p in paths]
     print(f"wrote {paths[0]} ({counts[0]} lines) and "
           f"{paths[1]} ({counts[1]} placements)", file=sys.stderr)
 

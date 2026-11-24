@@ -53,7 +53,7 @@ class CodexCLIInterpreter(ClaudeCLIInterpreter):
         try:
             proc = subprocess.run(
                 argv, input=prompt, capture_output=True, text=True,
-                timeout=self.timeout,
+                encoding="utf-8", errors="replace", timeout=self.timeout,
             )
         except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
             return None

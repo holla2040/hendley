@@ -28,6 +28,9 @@ def _cli_envelope(text: str) -> str:
 def _run_with(monkeypatch, stdout: str, returncode: int = 0):
     def fake_run(cmd, **kw):
         assert cmd[1] == "-p" and cmd[-2:] == ["--output-format", "json"]
+        # Windows caps a command line near 32K: the prompt goes on stdin.
+        assert cmd[2:4] == ["--input-format", "text"] and kw["input"]
+        assert kw["input"] not in cmd and kw.get("encoding") == "utf-8"
         return subprocess.CompletedProcess(cmd, returncode, stdout=stdout, stderr="")
     monkeypatch.setattr(subprocess, "run", fake_run)
     return ClaudeCLIInterpreter(binary="claude-fake")
@@ -342,7 +345,8 @@ def test_the_zener_note_reaches_diode_interpretation(monkeypatch):
               "confidence": 0.9, "rationale": "shop alias, engineer confirms"}
 
     def fake_run(cmd, **kw):
-        seen.append(cmd[2])
+        assert kw["input"] not in cmd   # the prompt rides stdin, never argv
+        seen.append(kw["input"])
         return subprocess.CompletedProcess(
             cmd, 0, stdout=_cli_envelope(json.dumps(answer)), stderr="")
 
@@ -375,7 +379,8 @@ def test_diode_prompt_carries_deterministic_zener_evidence(monkeypatch):
               "qualifier": "zener", "confidence": 0.9, "rationale": "explicit Z"}
 
     def fake_run(cmd, **kw):
-        seen.append(cmd[2])
+        assert kw["input"] not in cmd   # the prompt rides stdin, never argv
+        seen.append(kw["input"])
         return subprocess.CompletedProcess(
             cmd, 0, stdout=_cli_envelope(json.dumps(answer)), stderr="")
 

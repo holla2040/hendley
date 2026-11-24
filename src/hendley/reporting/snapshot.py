@@ -70,5 +70,5 @@ def write_release_snapshot(
         },
         "resolution": resolution_doc,
     }
-    path.write_text(json.dumps(doc, indent=2, ensure_ascii=False) + "\n")
+    path.write_text(json.dumps(doc, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     return path

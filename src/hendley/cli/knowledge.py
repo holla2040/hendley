@@ -122,7 +122,7 @@ def cmd_resolve(client, args) -> int:
     result = resolve(store, requirements, datasource=datasource, strategy=strategy)
     text = json.dumps(result, indent=2, ensure_ascii=False)
     if args.output:
-        Path(args.output).write_text(text + "\n")
+        Path(args.output).write_text(text + "\n", encoding="utf-8")
     else:
         print(text)
     print(format_escalation_report(result), file=sys.stderr)
@@ -132,7 +132,7 @@ def cmd_resolve(client, args) -> int:
         queue = build_approval_queue(store, requirements, result,
                                      datasource=datasource, strategy=strategy)
         Path(args.queue).write_text(
-            json.dumps(queue, indent=2, ensure_ascii=False) + "\n")
+            json.dumps(queue, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
         print(f"approval queue ({len(queue['entries'])} entr(y/ies)): {args.queue}",
               file=sys.stderr)
     return 1 if result["escalations"] else 0

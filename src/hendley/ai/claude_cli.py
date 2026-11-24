@@ -959,12 +959,18 @@ class ClaudeCLIInterpreter:
         # The Claude compatibility backend has no repository-proven local-image
         # transport. It accepts this shared argument and falls back to the text
         # dossier; Codex attaches the actual files.
-        argv = [self.binary, "-p", prompt, "--output-format", "json"]
+        # The prompt goes on stdin, not argv: part notes are pasted in whole and
+        # Windows caps a command line near 32K characters. `claude --help`:
+        # --input-format "text" (default) applies to --print; with no prompt
+        # argument it says "Provide a prompt ... through stdin or as a prompt
+        # argument when using --print".
+        argv = [self.binary, "-p", "--input-format", "text", "--output-format", "json"]
         if tools:
             argv += ["--allowedTools", tools]
         try:
             proc = subprocess.run(
-                argv, capture_output=True, text=True, timeout=self.timeout,
+                argv, input=prompt, capture_output=True, text=True,
+                encoding="utf-8", errors="replace", timeout=self.timeout,
             )
         except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
             return None

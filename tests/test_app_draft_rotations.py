@@ -111,6 +111,20 @@ def test_draft_roundtrip_and_clear(app):
     assert app.api_draft_get({"design": "demo"})["draft"] is None
 
 
+def test_draft_and_rotations_are_utf8_on_every_platform(app, tmp_path):
+    """Windows Python defaults to cp1252; Ω and µ must still round-trip as UTF-8,
+    and the committed rotations file must stay LF."""
+    draft = {"overrides": {"R1": {"value": "10kΩ", "note": "4.7µF"}}}
+    app.api_draft_put({"design": "Ω board", "draft": draft})
+    raw = (tmp_path / "draft.json").read_bytes()
+    assert "10kΩ".encode() in raw and "4.7µF".encode() in raw
+    assert app.api_draft_get({"design": "Ω board"})["draft"] == draft
+
+    app.api_rotation({"footprint": "R-0603Ω", "rotationOffsetDeg": 90, "note": "µ"})
+    raw = (tmp_path / "cpl-rotations.json").read_bytes()
+    assert "R-0603Ω".encode() in raw and b"\r\n" not in raw
+
+
 def test_draft_requires_design(app):
     with pytest.raises(ApiError, match="design"):
         app.api_draft_put({"draft": {}})

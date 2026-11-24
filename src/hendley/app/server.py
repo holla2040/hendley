@@ -382,7 +382,7 @@ class HendleyApp:
         doc["savedAt"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
         try:
             self.cache_path.parent.mkdir(parents=True, exist_ok=True)
-            self.cache_path.write_text(json.dumps(doc, ensure_ascii=False))
+            self.cache_path.write_text(json.dumps(doc, ensure_ascii=False), encoding="utf-8")
         except OSError:
             pass  # the cache is a convenience — never break intake
 
@@ -391,7 +391,7 @@ class HendleyApp:
         answers given since the read stick, and the LLM is never consulted on
         a cache load."""
         try:
-            doc = json.loads(self.cache_path.read_text())
+            doc = json.loads(self.cache_path.read_text(encoding="utf-8"))
         except (FileNotFoundError, json.JSONDecodeError):
             return {"cached": None}
         try:
@@ -1435,7 +1435,7 @@ class HendleyApp:
         contents = {}
         for p in paths:  # lets the page save copies via the browser's picker
             try:
-                contents[Path(p).name] = Path(p).read_text()
+                contents[Path(p).name] = Path(p).read_text(encoding="utf-8")
             except OSError:
                 pass
         return {
@@ -1462,7 +1462,7 @@ class HendleyApp:
 
     def api_rotations(self, params: dict) -> dict:
         path = self._rotations_file()
-        doc = json.loads(path.read_text())
+        doc = json.loads(path.read_text(encoding="utf-8"))
         return {"corrections": doc.get("corrections", []), "path": str(path)}
 
     def api_rotation(self, body: dict) -> dict:
@@ -1478,7 +1478,7 @@ class HendleyApp:
         except (KeyError, TypeError, ValueError):
             raise ApiError("'rotationOffsetDeg' must be an integer")
         path = self._rotations_file()
-        doc = json.loads(path.read_text())
+        doc = json.loads(path.read_text(encoding="utf-8"))
         corrections = doc.setdefault("corrections", [])
         entry = next(
             (c for c in corrections
@@ -1502,14 +1502,15 @@ class HendleyApp:
 
             entry["verified"] = (str(body["note"]) if body.get("note")
                                  else f"{date.today().isoformat()} set via the app")
-        path.write_text(json.dumps(doc, indent=2, ensure_ascii=False) + "\n")
+        path.write_text(json.dumps(doc, indent=2, ensure_ascii=False) + "\n",
+                        encoding="utf-8", newline="")
         return {"corrections": corrections}
 
     # -- draft (in-progress order state; survives page reloads) ---------------
 
     def _read_drafts(self) -> dict:
         try:
-            doc = json.loads(self.draft_path.read_text())
+            doc = json.loads(self.draft_path.read_text(encoding="utf-8"))
         except (FileNotFoundError, json.JSONDecodeError):
             return {"drafts": {}}
         if not isinstance(doc.get("drafts"), dict):
@@ -1518,7 +1519,8 @@ class HendleyApp:
 
     def _write_drafts(self, doc: dict) -> None:
         self.draft_path.parent.mkdir(parents=True, exist_ok=True)
-        self.draft_path.write_text(json.dumps(doc, ensure_ascii=False, indent=2) + "\n")
+        self.draft_path.write_text(json.dumps(doc, ensure_ascii=False, indent=2) + "\n",
+                                   encoding="utf-8")
 
     def api_draft_get(self, params: dict) -> dict:
         design = params.get("design") or ""
@@ -1556,7 +1558,7 @@ class HendleyApp:
         path = self.outdir / name
         if not path.exists():
             raise ApiError("no such snapshot", status=404)
-        return json.loads(path.read_text())
+        return json.loads(path.read_text(encoding="utf-8"))
 
 
 class _NullSource:

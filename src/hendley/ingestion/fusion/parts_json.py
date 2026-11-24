@@ -105,7 +105,7 @@ class DesignPart:
 
 def load_parts_json(path: str | Path) -> list[DesignPart]:
     """Load a Fusion parts-export JSON file into :class:`DesignPart` records."""
-    doc = json.loads(Path(path).read_text())
+    doc = json.loads(Path(path).read_text(encoding="utf-8"))
     parts = doc.get("parts") if isinstance(doc, dict) else doc
     if not isinstance(parts, list):
         raise ValueError("parts JSON must be a list, or an object with a 'parts' list")

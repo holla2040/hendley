@@ -110,7 +110,7 @@ def load_resolution_json(
     the snapshot records exactly the document that was validated and
     rendered, from one read.
     """
-    doc = json.loads(Path(path).read_text())
+    doc = json.loads(Path(path).read_text(encoding="utf-8"))
     if not isinstance(doc, dict):
         doc = {"lines": doc}
     lines = doc.get("lines")

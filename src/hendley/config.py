@@ -93,7 +93,7 @@ def load_credentials(path: str | os.PathLike | None = None) -> Credentials:
         raise FileNotFoundError(
             f"No .keys file found at {keys_path}. Set HENDLEY_KEYS or run from the project root."
         )
-    return _parse_keys(keys_path.read_text())
+    return _parse_keys(keys_path.read_text(encoding="utf-8"))
 
 
 def optional_key(label: str, env: str) -> str | None:
@@ -108,7 +108,7 @@ def optional_key(label: str, env: str) -> str | None:
     keys_path = Path(path) if path else _project_root() / ".keys"
     if not keys_path.exists():
         return None
-    m = re.search(rf"^\s*{label}\s*:\s*(\S+)\s*$", keys_path.read_text(),
+    m = re.search(rf"^\s*{label}\s*:\s*(\S+)\s*$", keys_path.read_text(encoding="utf-8"),
                   re.IGNORECASE | re.MULTILINE)
     return m.group(1) if m else None
 

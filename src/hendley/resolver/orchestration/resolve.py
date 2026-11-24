@@ -47,7 +47,7 @@ from ...providers.base import ProviderStrategy
 
 def load_request_json(path: str | Path) -> RequirementsBom:
     """Load a resolve-request JSON file into the canonical Requirements BOM."""
-    return RequirementsBom.from_dict(json.loads(Path(path).read_text()))
+    return RequirementsBom.from_dict(json.loads(Path(path).read_text(encoding="utf-8")))
 
 
 def _tier_price_at(fact: PartFact | None, qty: int) -> float | None:

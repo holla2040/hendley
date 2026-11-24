@@ -35,7 +35,7 @@ class PCBWayAdapter:
         outdir = Path(outdir).expanduser()
         outdir.mkdir(parents=True, exist_ok=True)
         path = outdir / "pcbway_bom.csv"
-        path.write_text(render_pcbway_csv(resolution))
+        path.write_text(render_pcbway_csv(resolution), encoding="utf-8", newline="")
         return [path]
 
 

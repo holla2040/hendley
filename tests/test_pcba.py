@@ -298,3 +298,11 @@ def test_write_csv_headers_and_rows(tmp_path):
     write_csv(bom, BOM_FIELDS, tmp_path / "bom.csv")
     with (tmp_path / "bom.csv").open() as f:
         assert next(csv.reader(f)) == list(BOM_FIELDS)
+
+
+def test_write_csv_is_utf8_with_crlf_rows_on_every_platform(tmp_path):
+    from hendley.providers.jlcpcb.order_files import write_csv
+
+    path = tmp_path / "bom.csv"
+    write_csv([{"Comment": "10kΩ", "Designator": "R1"}], ("Comment", "Designator"), path)
+    assert path.read_bytes() == "Comment,Designator\r\n10kΩ,R1\r\n".encode()

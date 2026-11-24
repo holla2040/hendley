@@ -17,13 +17,13 @@ def cmd_scr(client, args) -> int:
     for path in args.swaps_json:
         swaps.extend(load_swaps_json(path))
         if design is None:  # pick up "design" from the first file that names one
-            doc = json.loads(Path(path).read_text())
+            doc = json.loads(Path(path).read_text(encoding="utf-8"))
             if isinstance(doc, dict) and doc.get("design"):
                 design = str(doc["design"])
 
     script = render_script(swaps, design=design)
     if args.output:
-        Path(args.output).write_text(script)
+        Path(args.output).write_text(script, encoding="utf-8")
         print(f"wrote {len(swaps)} swap(s) to {args.output}", file=sys.stderr)
         print("run it in Fusion: File > Execute Script  (Electronics workspace active),\n"
               "or in the text command line (Py): "
