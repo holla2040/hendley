@@ -17,9 +17,90 @@ remembering the parts you approve so the next order reuses them — and exports
 > Named after James Garner's character in *The Great Escape*: "the Scrounger",
 > who finds what the team needs.
 
-## Setup (Windows 11 + WSL)
+## Setup
 
-Hendley runs in WSL and talks to Fusion running on Windows.
+Hendley runs natively on the same machine as Fusion — **Windows or macOS** —
+and the commands are the same on both. No WSL and no port-forward.
+
+**1. Prerequisites:** Python 3.10 or newer, and git.
+
+**2. Clone and install:**
+
+```text
+git clone https://github.com/holla2040/hendley.git
+cd hendley
+python -m venv .venv
+```
+
+Activate the venv — Windows PowerShell: `.venv\Scripts\Activate.ps1`; macOS:
+`source .venv/bin/activate` — then:
+
+```text
+pip install -e .
+hendley app
+```
+
+(On macOS use `python3` for the `venv` step if `python` isn't found. If
+PowerShell refuses to run `Activate.ps1`, skip activation and run
+`.venv\Scripts\hendley.exe app` instead.)
+
+The app serves `http://127.0.0.1:8341/` and opens your browser. Claude Code
+(`claude -p`) is the agent interpreter; launch with
+`hendley app --interpreter codex` to use Codex for that run
+(`--model gpt-5.6-terra` picks its model and implies Codex).
+
+**3. Add your JLCPCB credentials.** Create a git-ignored file named `.keys`
+in the repo folder, using the OpenAPI keys from JLCPCB's developer portal:
+
+```text
+JLCAPI:
+    AppID:     <your-app-id>
+    Accesskey: <your-access-key>
+    SecretKey: <your-secret-key>
+```
+
+The app starts without it, but live stock checks and searches need it. Never
+commit `.keys` or any secret.
+
+**4. Install Claude Code and log in.** Hendley runs `claude -p` when you open
+an uncached red/yellow part or type a search. It rides your Claude Code
+login—no separate API key. Without it the app still works, but leaves new
+ambiguous parts unresolved. Codex is the alternative backend
+(`HENDLEY_INTERPRETER=codex`, after `codex login`); today it is the only one
+that also sends the schematic crop images (ADR-0009).
+
+**5. Connect Fusion** (needed for the Refresh button to read your design): in
+Fusion, open your Electronics document and enable **Preferences > General >
+API > Fusion MCP Server**, with no dialog open. Hendley finds it at
+`127.0.0.1:27182` by itself (`--fusion-host` or `HENDLEY_FUSION_HOST`
+overrides). Hendley attempts to activate schematic sheet 1 automatically.
+This Fusion MCP build can occasionally wedge when returning from board
+context; if a Refresh reports empty Electronics reads/recursive proxy
+failure, toggle the MCP server or restart Fusion once.
+
+### Troubleshooting: Refresh can't reach Fusion
+
+1. **Is Fusion's server up?** `curl http://127.0.0.1:27182/mcp` (in Windows
+   PowerShell type `curl.exe`). Any error *response* (e.g. "Server does not
+   offer an SSE stream" / `{"error": "Not Found"}`) means it's **up**. A
+   connection refused means it's down — enable the Fusion MCP Server
+   preference and make sure an Electronics document is open.
+2. **Full read-only health check** — schematic rows, the board transition,
+   placement rows, and context restoration:
+
+   ```text
+   python bridge-check.py
+   ```
+
+   Unlike a bare HTTP check, this reports Fusion command rejections such as an
+   open command dialog instead of reducing them to an empty-placement symptom.
+
+## Running under WSL2 (legacy)
+
+Hendley used to run only inside WSL2, talking to Fusion on the Windows side.
+That still works (Hendley probes loopback first, then the WSL gateway), but
+it needs the port-forward below. The git tag **`wsl-final`** marks the last
+WSL-only version.
 
 **1. Install WSL** (skip if you already have it). In PowerShell as
 Administrator:
@@ -46,56 +127,28 @@ cd hendley
 ./hendley app
 ```
 
-The app serves `http://127.0.0.1:8341/` and opens your browser. Claude Code
-(`claude -p`) is the agent interpreter; launch with
-`./hendley app --interpreter codex` to use Codex for that run
-(`--model gpt-5.6-terra` picks its model and implies Codex).
-The Windows
-browser reaches that address directly — no networking setup is needed for the
-app itself.
+The Windows browser reaches `http://127.0.0.1:8341/` directly. Credentials
+and Claude Code are as in Setup above, installed inside WSL.
 
-**4. Add your JLCPCB credentials.** Create a git-ignored file named `.keys`
-in the repo folder, using the OpenAPI keys from JLCPCB's developer portal:
+**4. Forward Fusion's port so WSL can reach it** (NAT-mode WSL; mirrored-mode
+WSL shares the Windows loopback and needs no forward). Get the gateway IP
+inside WSL — `ip route | grep default` (e.g. `172.17.64.1`) — then in
+PowerShell as Administrator:
 
-```text
-JLCAPI:
-    AppID:     <your-app-id>
-    Accesskey: <your-access-key>
-    SecretKey: <your-secret-key>
+```powershell
+netsh interface portproxy add v4tov4 listenaddress=172.17.64.1 listenport=27182 connectaddress=127.0.0.1 connectport=27182
 ```
 
-The app starts without it, but live stock checks and searches need it. Never
-commit `.keys` or any secret.
+Substitute your gateway IP, and **never use `listenaddress=0.0.0.0`** (it
+breaks Fusion's own connections). The gateway IP can change after a WSL
+restart — re-check it if Refresh stops working. Details and troubleshooting:
+[`docs/fusion-notes.md`](docs/fusion-notes.md).
 
-**5. Install Claude Code and log in** (inside WSL). Hendley runs `claude -p`
-when you open an uncached red/yellow part or type a search. It rides your
-Claude Code login—no separate API key. Without it the app still works, but
-leaves new ambiguous parts unresolved. Codex is the alternative backend
-(`HENDLEY_INTERPRETER=codex`, after `codex login`); today it is the only one
-that also sends the schematic crop images (ADR-0009).
+Image evidence: Fusion writes `C:\tmp\hendley-visual` and Hendley reads
+`~/tmp/hendley-visual`, which must be the same folder (`~/tmp` a symlink to
+`/mnt/c/tmp`), or set `HENDLEY_VISUAL_DIR=/mnt/c/tmp/hendley-visual`.
 
-**6. Connect Fusion** (needed for the Refresh button to read your design):
-
-- In Fusion on Windows: open your Electronics document, enable
-  **Preferences > General > API > Fusion MCP Server**, with no dialog open.
-  Hendley attempts to activate schematic sheet 1 automatically. This Fusion
-  MCP build can occasionally wedge when returning from board context; if a
-  Refresh reports empty Electronics reads/recursive proxy failure, toggle the
-  MCP server or restart Fusion once.
-- Forward Fusion's port so WSL can reach it. Get the gateway IP inside WSL —
-  `ip route | grep default` (e.g. `172.17.64.1`) — then in PowerShell as
-  Administrator:
-
-  ```powershell
-  netsh interface portproxy add v4tov4 listenaddress=172.17.64.1 listenport=27182 connectaddress=127.0.0.1 connectport=27182
-  ```
-
-  Substitute your gateway IP, and **never use `listenaddress=0.0.0.0`** (it
-  breaks Fusion's own connections). The gateway IP can change after a WSL
-  restart — re-check it if Refresh stops working. Details and troubleshooting:
-  [`docs/fusion-notes.md`](docs/fusion-notes.md).
-
-### Troubleshooting: Refresh can't reach Fusion
+### Troubleshooting under WSL: Refresh can't reach Fusion
 
 The app's **Refresh** reads the design over this bridge. When it fails (or a
 manual check from WSL returns `000` / connection refused instead of `200`), work
@@ -111,15 +164,7 @@ curl -s -m5 -o /dev/null -w '%{http_code}\n' -H 'Host: 127.0.0.1:27182' \
   -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"ping","version":"0"}}}'
 ```
 
-For a complete read-only health check—including schematic rows, the board
-transition, placement rows, and context restoration—run:
-
-```bash
-./bridge-check.py
-```
-
-Unlike a bare HTTP check, this reports Fusion command rejections such as an
-open command dialog instead of reducing them to an empty-placement symptom.
+For a complete read-only health check run `./bridge-check.py`.
 
 1. **Is Tailscale running? Turn it off.** This is the one that bites most often.
    Tailscale hijacks the Windows loopback the port-forward relies on, so the
@@ -492,7 +537,7 @@ such as `1kV` and `1000V` without parsing component names.
   house (strategy + adapter, PCBWay as the reference)
 - [`docs/api-reference.md`](docs/api-reference.md) — the JLCPCB OpenAPI contract
 - [`docs/fusion-notes.md`](docs/fusion-notes.md) — Fusion HTTP integration
-  (handshake, reads, writes, WSL2 networking)
+  (handshake, reads, writes, legacy WSL2 networking)
 - [`docs/adr/`](docs/adr/) — architecture decision records
 
 ## License

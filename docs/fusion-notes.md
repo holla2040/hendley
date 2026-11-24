@@ -10,7 +10,8 @@ mixed grouped identities are suggestion-only.
 
 Recorded from **live** Autodesk Fusion sessions, reached from WSL2 Claude Code
 **over plain HTTP** (JSON-RPC `POST`s) through a Windows port-forward (see
-"Reaching Fusion from WSL2" below). Reference design: **`comet`**
+"Reaching Fusion from WSL2" below). Hendley now runs natively on Windows and
+macOS, where Fusion is simply `127.0.0.1:27182`; WSL is the legacy path. Reference design: **`comet`**
 (schematic-only at first capture; a board was added later — see the BOARD
 section). Part values quoted below are session-specific examples — the design
 has changed across captures, so read them as shapes, not current data.
@@ -26,10 +27,11 @@ has changed across captures, so read them as shapes, not current data.
 
 ## Reaching Fusion from WSL2 — the Windows port-forward
 
-If you run Hendley on the same Windows machine as Fusion, `http://127.0.0.1:27182`
-just works. If you run it under **WSL2**, Windows loopback isn't reachable across
-the NAT boundary, so forward the port on the **Windows** side (elevated
-PowerShell).
+If you run Hendley natively on the same machine as Fusion (Windows or macOS —
+the primary setup), `http://127.0.0.1:27182` just works and none of this
+section applies; `FusionBridge` probes loopback first. If you run it under
+**WSL2** (legacy), Windows loopback isn't reachable across the NAT boundary,
+so forward the port on the **Windows** side (elevated PowerShell).
 
 > ⚠️ **Use the WSL gateway IP as `listenaddress`, NOT `0.0.0.0`.** A `0.0.0.0`
 > listener on `27182` sits in front of the *same* loopback port Fusion's server
@@ -115,7 +117,9 @@ handshake end to end, so from Python use it (or just run `hendley pcba` /
 working outside the package. Don't invent another client — run this.
 
 **The rules that bite (each one cost a debugging session to rediscover):**
-- **Never `127.0.0.1` from WSL.** Fusion listens on the *Windows* loopback; from
+- **Natively (Windows/macOS) the URL is `http://127.0.0.1:27182/mcp`** — set
+  `B` to that in the recipe below and skip the gateway line.
+- **Never `127.0.0.1` from (NAT-mode) WSL.** Fusion listens on the *Windows* loopback; from
   WSL2 you must hit the **Windows host IP = the default gateway**
   (`ip route | grep default | awk '{print $3}'`, e.g. `172.17.64.1`). Needs the
   Windows port-forward in place — see "Reaching Fusion from WSL2" above,

@@ -431,12 +431,13 @@ concrete `providers/*` or `datasources/jlc` — only the base protocols.
     plan's own category** now. Keep it that way.
 - `src/hendley/ingestion/fusion/` — reading designs out of Fusion:
   - `bridge.py` — `FusionBridge`: the committed HTTP client for Fusion's local
-    endpoint. Encodes the full verified handshake (gateway IP with spoofed
-    `Host: 127.0.0.1:27182`, `MCP-Session-Id` capture/resend,
-    `notifications/initialized` before any `tools/call`) plus `read()`,
-    `read_all()` (pagination), `execute_script()`, and `run_eagle()` (the
-    `Electron.run` wrapper). Host order: arg → `HENDLEY_FUSION_HOST` → WSL
-    default-gateway IP.
+    endpoint. Encodes the full verified handshake (`Host: 127.0.0.1:27182` on
+    every request — the spoof that lets the WSL gateway through,
+    `MCP-Session-Id` capture/resend, `notifications/initialized` before any
+    `tools/call`) plus `read()`, `read_all()` (pagination), `execute_script()`,
+    and `run_eagle()` (the `Electron.run` wrapper). Host order: arg →
+    `HENDLEY_FUSION_HOST` → `127.0.0.1` if a connect probe answers (native
+    Windows/macOS) → the WSL default-gateway IP, only under WSL → `BridgeError`.
   - `live_design.py` — live extraction behind `hendley pcba`:
     `extract_schematic()` (Part + part-scoped Attribute reads; excludes
     GND/supply pseudo-parts and the title block), `extract_board()` (probes
@@ -451,7 +452,10 @@ concrete `providers/*` or `datasources/jlc` — only the base protocols.
     export, and dimensioned unresolved placement crops. Fusion dispatch is
     deferred, so capture settles the view,
     deletes stale output, and waits for a fresh PNG. `EXPORT IMAGE` omits the
-    visible grid; crop bounds provide physical scale.
+    visible grid; crop bounds provide physical scale. Folder: natively one
+    path for Fusion and Python (`C:\tmp\hendley-visual` on Windows,
+    `~/tmp/hendley-visual` on macOS); under WSL Fusion writes the Windows path
+    and Python reads `~/tmp/hendley-visual`. `HENDLEY_VISUAL_DIR` overrides.
   - `parts_json.py` — the `DesignPart` model and `load_parts_json()` (the
     parts-export ingest contract); `extract_components()` is a **stub** kept
     for an eventual in-Fusion add-in.
@@ -634,7 +638,7 @@ the HTTP bridge (schematic first, then a deliberate `EDIT .brd;` transition), ap
 `data/cpl-rotations.json`, verifies stock against the live JLC API, and writes
 **exactly two files** — `bom.csv` + `cpl.csv` — to `~/tmp/hendley_output/`.
 Preconditions: Fusion open with the Electronics design active and no modal
-dialog (and the port-forward up). Afterward: relay the stock report (nonzero
+dialog (and, under WSL only, the port-forward up). Afterward: relay the stock report (nonzero
 exit = blockers), and if they mention having to hand-rotate a part in
 JLC's order preview, add the correction to `data/cpl-rotations.json` (keyed by
 LCSC/footprint) so it's automatic from then on.
@@ -848,7 +852,10 @@ HTTP.** You call the **`fusion_mcp_electronics_read`** tool by `POST`ing a
 `tools/call` request over HTTP (that's the tool's literal name — it is invoked
 via HTTP, not through any MCP client).
 
-The handshake is **not** "just POST initialize then tools/call": you must hit
+Hendley runs natively on Windows and macOS, where Fusion is just
+`127.0.0.1:27182`; WSL is the legacy path (README "Running under WSL2
+(legacy)"). The handshake is **not** "just POST initialize then tools/call":
+from WSL you must hit
 the **Windows host IP, not `127.0.0.1`** (loopback isn't reachable from WSL) yet
 still **send a `Host: 127.0.0.1:27182` header** (the server now validates `Host`
 and 403s "Invalid Host header" on the gateway IP — connect to the gateway,
@@ -921,7 +928,7 @@ into the electronics interpreter. So Hendley can apply a `.scr` (or any `CHANGE`
 - Full detail + the verification matrix: **`docs/fusion-notes.md` → "The WRITE
   path"**.
 
-⚠️ **WSL port-forward gotcha (cost us a debugging session):** to reach Fusion's
+⚠️ **WSL port-forward gotcha (WSL only; cost us a debugging session):** to reach Fusion's
 Windows-loopback port from WSL2, forward it on Windows with
 `listenaddress=<WSL gateway IP>` (e.g. `172.17.64.1`, from `ip route | grep
 default`) — **never `listenaddress=0.0.0.0`**. A `0.0.0.0:27182` listener hijacks
@@ -949,7 +956,7 @@ See `docs/fusion-notes.md` "Reaching Fusion from WSL2".
 ## Run / test
 
 ```bash
-python -m venv .venv && source .venv/bin/activate
+python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\Activate.ps1
 pip install -e .            # core (requests only)
 pip install -e ".[dev]"     # pytest, ruff
 hendley ping                 # verify credentials + signing
