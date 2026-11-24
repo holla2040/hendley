@@ -14,12 +14,21 @@ def cmd_ping(client: JLCClient, args) -> int:
         data = client.get_component_library_list(page_size=1)
     except JLCError as exc:
         if exc.code in (403, "403"):
-            print(
-                "Signing OK — request authenticated, but this app lacks the component "
-                "API permission.\nEnable it for your app in the JLC console "
-                "(api.jlcpcb.com), then retry."
-            )
-            return 0  # auth works; permission is an account-side toggle
+            # A 403 has more than one cause, so show JLC's own words: a missing
+            # API permission and a client IP that isn't whitelisted both land here.
+            print(f"Signing OK — request authenticated, but JLC refused it: {exc}")
+            if "ip is not allowed" in str(exc).lower():
+                print(
+                    "This computer's public IP address is not on the app's whitelist.\n"
+                    "Add it in the JLC console (api.jlcpcb.com) under IP Whitelisting, "
+                    "then retry."
+                )
+            else:
+                print(
+                    "If the message is about permissions, enable the component API for "
+                    "your app in the JLC console (api.jlcpcb.com), then retry."
+                )
+            return 0  # auth works; the rest is an account-side setting
         if exc.code in (401, "401"):
             print("Signature REJECTED (401). Check the AppID/Accesskey/SecretKey in .keys.")
             return 1
