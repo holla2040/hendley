@@ -474,7 +474,9 @@ concrete `providers/*` or `datasources/jlc` — only the base protocols.
   + attributes) into the EAGLE command-line script the user runs in Fusion
   (`File > Execute Script`, or `neu_dev.run_text_command("SCRIPT …")` in the
   text-command Py mode). The write side: the Electronics **object** API is
-  read-only, but the EAGLE command line **is** reachable over the HTTP
+  read-only (on the builds this was written against; Fusion Insider 2707.0.73
+  adds setters and `executeCommands` — see `docs/fusion-notes.md`. Hendley's
+  no-edit policy is unchanged), but the EAGLE command line **is** reachable over the HTTP
   endpoint via `executeTextCommand('Electron.run "script C:\\path\\changes.scr"')` — so
   Hendley can either hand the user the `.scr` *or* fire it into Fusion over the
   bridge (see "Fusion access from WSL → write side" below). `CHANGE PACKAGE`
@@ -736,7 +738,10 @@ below — to get its designator and the exact package variant names.) Drive it a
    `hendley scr ~/tmp/hendley_output/swap.json -o ~/tmp/hendley_output/changes.scr`.
    Keep the working tree clean.
 6. **Apply in Fusion, then reconcile.** Fusion is the write side (the Electronics
-   *object* API is read-only). Two ways to apply the `.scr`:
+   *object* API is read-only on the builds this was written against; Fusion
+   Insider 2707.0.73 adds setters and `executeCommands` — see
+   `docs/fusion-notes.md`. Hendley's no-edit policy is unchanged). Two ways to
+   apply the `.scr`:
    - **Manual** — the user runs it: *File > Execute Script*.
    - **Over the HTTP bridge (preferred when Fusion's endpoint is reachable)** — fire it from
      Python over HTTP: `executeTextCommand('Electron.run "script C:\\tmp\\changes.scr"')`

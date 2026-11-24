@@ -1,8 +1,10 @@
 """Fusion Electronics integration (read-only) — design-direct part extraction.
 
 Hendley pulls part information **directly from Autodesk Fusion** via the Fusion
-API rather than from an exported BOM. The Fusion Electronics API is currently
-read-only, which is sufficient for our purpose: enumerate the components placed
+API rather than from an exported BOM. The Fusion Electronics API was read-only
+on the builds this was written against (Fusion Insider 2707.0.73 adds setters
+and ``executeCommands``; see ``docs/fusion-notes.md``. Hendley's no-edit policy
+is unchanged). Reading is sufficient for our purpose: enumerate the components placed
 in an electronics design, read their part attributes (manufacturer part number
 and/or LCSC/JLC code), and hand those identifiers to Hendley's JLC query layer
 to report availability, stock, price tiers, and assembly (basic/extended)

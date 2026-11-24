@@ -1,10 +1,12 @@
 """Generate Fusion Electronics command-line scripts (``.scr``) for part swaps.
 
-The Fusion Electronics API is read-only (see :mod:`hendley.fusion`), so Hendley
-cannot mutate a design directly. The one channel that *can* edit the schematic
-is the EAGLE-heritage command line, driven by a ``.scr`` script the user runs
-in Fusion (``File > Execute Script``, or paste into the command line). This
-module turns a list of part swaps into exactly that script.
+The Fusion Electronics API is read-only on the builds this was written against
+(see :mod:`hendley.fusion`; Fusion Insider 2707.0.73 adds setters and
+``executeCommands`` — see ``docs/fusion-notes.md``. Hendley's no-edit policy is
+unchanged), so Hendley cannot mutate a design directly. The one channel that
+*can* edit the schematic is the EAGLE-heritage command line, driven by a
+``.scr`` script the user runs in Fusion (``File > Execute Script``, or paste
+into the command line). This module turns a list of part swaps into exactly that script.
 
 A single swap maps to the verified-working command block::
 

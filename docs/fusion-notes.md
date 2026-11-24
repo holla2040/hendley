@@ -323,6 +323,13 @@ ships its strings and icon (`ppwTabPublicComponents`, ~80 `ppwAvnet*` strings,
 including "Install the Avnet Fusion add-in from the Autodesk App Store, then
 click Recheck"), but the tab was not visible and no API exposes the catalog. If
 it becomes reachable it could be a sourcing input alongside JLC/DigiKey.
+(Strings re-checked 2026-11-24 in
+`%LOCALAPPDATA%\Autodesk\webdeploy\pre-production\6b3b862837384a54e88cc5967cf71bedd5942660\StringTable\en-US\NaElectronUI10.xml`,
+Fusion Insider 2707.1.13 — the install on disk by then, not 2707.0.73: 79 lines
+containing `ppwAvnet`, `ppwTabPublicComponents` = "Public Components", and
+`ppwAvnetAddinBody` = "Avnet add-in is required to use the panel. Install the
+Avnet Fusion add-in from the Autodesk App Store, then click Recheck below." The
+tab's visibility and the lack of a catalog API were not re-checked.)
 
 ## ⭐ The WRITE path — driving the EAGLE command line over HTTP (RESOLVED)
 

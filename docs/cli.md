@@ -163,8 +163,10 @@ path is the same each time; only the trigger differs. It runs as an interactive
 Claude Code session in this repo: Claude reads
 the live design and does the JLC lookups, **you** make the design decision, and
 **Fusion** is where the change is written (the Electronics *object* API is
-read-only, but the `.scr` can be applied either manually or fired over the bridge
-with `Electron.run` — see step 5). `comet` below is just an example design.
+read-only on the builds this was written against, but the `.scr` can be applied
+either manually or fired over the bridge with `Electron.run` — see step 5; Fusion
+Insider 2707.0.73 adds setters and `executeCommands` — see
+[`docs/fusion-notes.md`](fusion-notes.md). Hendley's no-edit policy is unchanged). `comet` below is just an example design.
 
 **Before you start**
 
@@ -213,8 +215,10 @@ with `Electron.run` — see step 5). `comet` below is just an example design.
 **Gotchas**
 
 - Close any modal dialog in Fusion before a read — an open dialog returns empty.
-- The Fusion Electronics **object** API is read-only, but the EAGLE command line
-  is reachable via `Electron.run` (step 5) — so Claude *can* apply the `.scr` over
+- The Fusion Electronics **object** API is read-only on the builds this was
+  written against (Fusion Insider 2707.0.73 adds setters and `executeCommands`;
+  see [`docs/fusion-notes.md`](fusion-notes.md). Hendley's no-edit policy is
+  unchanged), but the EAGLE command line is reachable via `Electron.run` (step 5) — so Claude *can* apply the `.scr` over
   the bridge, or you run it manually. A **bare** `executeTextCommand("script …")`
   does **not** work (hits Fusion's core channel); it must be wrapped in
   `Electron.run "…"`.
@@ -250,8 +254,11 @@ belongs to the agent and to you, never to a parser (ADR-0006).
 
 ### Design writes are explicit
 
-The Fusion Electronics object interface is read-only, but reviewed EAGLE/Fusion
-commands can be executed through Fusion's command channel.
+The Fusion Electronics object interface is read-only on the builds this was
+written against, but reviewed EAGLE/Fusion commands can be executed through
+Fusion's command channel. Fusion Insider 2707.0.73 adds setters and
+`executeCommands`; see [`docs/fusion-notes.md`](fusion-notes.md). Hendley's
+no-edit policy is unchanged.
 
 Hendley can generate a `.scr` file containing package and attribute changes.
 Execution is an explicit engineering action and is separate from automatic BOM
