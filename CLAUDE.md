@@ -943,6 +943,12 @@ See `docs/fusion-notes.md` "Reaching Fusion from WSL2".
 
 - API host: **`https://open.jlcpcb.com`** (the default in `config.py`).
 - `api.jlcpcb.com` is the developer **portal / console**, NOT the API host.
+- **A 403 "The request client ip is not allowed" means the IP whitelist, not a
+  permission.** The JLC app only accepts requests from whitelisted public IPs
+  (console → **IP Whitelisting**). When the JLC API starts failing, check this
+  first: find the machine's current public IP, tell Craig, and he adds it — only
+  he can. Seen 2026-11-24 after the public address changed; `hendley ping` now
+  prints JLC's own message so this is visible.
 - Empirically verified: a **valid** signature → `HTTP 403 {"code":403,...
   insufficient permissions...}`; a **wrong** signature → `HTTP 401 {"code":401,
   ...signature verify failed}`. So signing is correct.
